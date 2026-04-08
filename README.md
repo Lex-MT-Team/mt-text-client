@@ -41,10 +41,13 @@ dotnet run
 
 # Run as MCP server (for AI agent integration)
 dotnet run -- --mcp
+# NOTE: On Windows, prefer pre-built binary to avoid build output polluting MCP stdio:
+#   dotnet build -c Release
+#   MTTextClient.exe --mcp
 
 # Run as MCP server with SSE proxy (recommended for AI agents)
 pip install mcp-proxy
-mcp-proxy --sse-port 8585 -- dotnet run -- --mcp
+mcp-proxy --port 8585 -- "path/to/MTTextClient.exe" --mcp
 ```
 
 ## Usage Modes
@@ -85,13 +88,14 @@ Executes a single command and exits. Useful for scripting.
 
 ```bash
 dotnet run -- --mcp
+# On Windows, use pre-built binary: bin\Release\net8.0\MTTextClient.exe --mcp
 ```
 
 Runs a Model Context Protocol server over stdio (JSON-RPC 2.0). This is the primary integration point for LLMs and autonomous agents.
 
 **With SSE proxy** (recommended):
 ```bash
-mcp-proxy --sse-port 8585 --allow-origin '*' -- dotnet run -- --mcp
+mcp-proxy --port 8585 --allow-origin '*' -- "path/to/MTTextClient.exe" --mcp
 ```
 
 Then point your AI agent to `http://localhost:8585/sse`.
@@ -659,7 +663,7 @@ A zero-dependency browser dashboard is included in `web/index.html`. Connects di
 
 ```bash
 # 1. Start MCP server with SSE proxy
-mcp-proxy --sse-port 8585 --allow-origin '*' -- dotnet run -- --mcp
+mcp-proxy --port 8585 --allow-origin '*' -- "path/to/MTTextClient.exe" --mcp
 
 # 2. Serve the dashboard
 python3 -m http.server 9090 -d web

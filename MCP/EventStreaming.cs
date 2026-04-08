@@ -349,22 +349,38 @@ public sealed class SseEventServer
         _port = port;
     }
 
+    public bool IsRunning { get; private set; }
+
     public void Start()
     {
         _cts = new CancellationTokenSource();
         _listener = new HttpListener();
-        _listener.Prefixes.Add($"http://+:{_port}/");
 
-        try
+        // Try wildcard prefix first; fall back to localhost (no admin rights needed on Windows)
+        string[] prefixes = { $"http://+:{_port}/", $"http://localhost:{_port}/" };
+        foreach (string prefix in prefixes)
         {
-            _listener.Start();
-            Console.Error.WriteLine($"[EVENTS] SSE server listening on http://+:{_port}/");
-            Task.Run(() => AcceptLoop(_cts.Token));
+            _listener.Prefixes.Clear();
+            _listener.Prefixes.Add(prefix);
+            try
+            {
+                _listener.Start();
+                IsRunning = true;
+                Console.Error.WriteLine($"[EVENTS] SSE server listening on {prefix.TrimEnd('/')}");
+                Task.Run(() => AcceptLoop(_cts.Token));
+                return;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[EVENTS] Cannot bind {prefix.TrimEnd('/')} — {ex.Message}");
+                // Reset listener for retry
+                try { _listener.Close(); } catch { }
+                _listener = new HttpListener();
+            }
         }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"[EVENTS] Failed to start SSE server on :{_port} — {ex.Message}");
-        }
+
+        Console.Error.WriteLine($"[EVENTS] SSE server disabled — could not bind port {_port}");
+        IsRunning = false;
     }
 
     public void Stop()

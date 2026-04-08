@@ -1875,7 +1875,7 @@ public sealed class CoreConnection : IDisposable
         var orderSettings = new OrderSettings();
         string resultMsg = "Waiting...";
         _udpClient.SendMoveOrderRequest(Profile.Exchange, marketType, clientOrderId, newPrice,
-            ref orderSettings,
+            in orderSettings,
             (NotificationMessageData result) =>
             {
                 resultMsg = result?.msgString ?? "OK";
