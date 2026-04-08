@@ -1936,6 +1936,8 @@ public sealed class McpServer
             "mt_algos_tpsl_change"   => HandleAlgosTpslChange(arguments),       // MT-024
             "mt_algos_profiling"     => HandleAlgosProfiling(arguments),        // MT-024
             "mt_config_import_algos" => HandleConfigImportAlgos(arguments),      // Direct JSON import
+            "mt_algos_snapshot"      => HandleAlgosSnapshot(arguments),         // State reconciliation
+            "mt_algos_group_by_name" => HandleAlgosGroupByName(arguments),      // State reconciliation
             _ => null
         };
     }
@@ -2125,6 +2127,141 @@ public sealed class McpServer
         };
     }
 
+
+    // State reconciliation: Full snapshot of all groups and algorithms
+    private JObject HandleAlgosSnapshot(JObject arguments)
+    {
+        string? profile = arguments["profile"]?.Value<string>();
+        var result = new JArray();
+
+        IReadOnlyList<CoreConnection> connections = string.IsNullOrEmpty(profile)
+            ? _manager.GetAll()
+            : new[] { _manager.Resolve(profile) }.Where(c => c != null).ToList()!;
+
+        foreach (CoreConnection conn in connections)
+        {
+            if (!conn.IsConnected) continue;
+
+            var serverObj = new JObject
+            {
+                ["profile"] = conn.Name,
+                ["groups"] = new JArray()
+            };
+
+            IReadOnlyList<AlgorithmGroupData> groups = conn.AlgoStore.GetAllGroups();
+            foreach (AlgorithmGroupData g in groups)
+            {
+                var groupObj = new JObject
+                {
+                    ["id"] = g.id,
+                    ["name"] = g.name,
+                    ["type"] = g.groupType.ToString(),
+                    ["algos"] = new JArray()
+                };
+
+                IReadOnlyList<AlgorithmData> algos = conn.AlgoStore.GetByGroup(g.id);
+                foreach (AlgorithmData a in algos)
+                {
+                    ((JArray)groupObj["algos"]!).Add(new JObject
+                    {
+                        ["id"] = a.id,
+                        ["name"] = a.name,
+                        ["symbol"] = a.symbol,
+                        ["signature"] = a.signature,
+                        ["running"] = a.isRunning,
+                        ["market"] = a.marketType.ToString(),
+                        ["group_id"] = a.groupID
+                    });
+                }
+
+                ((JArray)serverObj["groups"]!).Add(groupObj);
+            }
+
+            // Add ungrouped algos (groupID == 0 or group not found)
+            IReadOnlyList<AlgorithmData> allAlgos = conn.AlgoStore.GetAll();
+            var ungrouped = new JArray();
+            foreach (AlgorithmData a in allAlgos)
+            {
+                if (a.groupID == 0 || conn.AlgoStore.FindGroupById(a.groupID) == null)
+                {
+                    ungrouped.Add(new JObject
+                    {
+                        ["id"] = a.id,
+                        ["name"] = a.name,
+                        ["symbol"] = a.symbol,
+                        ["signature"] = a.signature,
+                        ["running"] = a.isRunning,
+                        ["market"] = a.marketType.ToString(),
+                        ["group_id"] = a.groupID
+                    });
+                }
+            }
+            if (ungrouped.Count > 0)
+                serverObj["ungrouped"] = ungrouped;
+
+            serverObj["total_algos"] = allAlgos.Count;
+            serverObj["total_groups"] = groups.Count;
+            result.Add(serverObj);
+        }
+
+        return new JObject
+        {
+            ["snapshot"] = result,
+            ["captured_at"] = DateTime.UtcNow.ToString("o"),
+            ["server_count"] = result.Count
+        };
+    }
+
+    // State reconciliation: Find group by name
+    private JObject HandleAlgosGroupByName(JObject arguments)
+    {
+        string? name = arguments["name"]?.Value<string>();
+        string? profile = arguments["profile"]?.Value<string>();
+
+        if (string.IsNullOrEmpty(name))
+            return new JObject { ["error"] = "name is required" };
+
+        CoreConnection? conn = _manager.Resolve(profile);
+        if (conn == null)
+            return new JObject { ["error"] = "No active connection" };
+
+        AlgorithmGroupData? group = conn.AlgoStore.FindGroupByName(name);
+        if (group == null)
+        {
+            return new JObject
+            {
+                ["found"] = false,
+                ["name"] = name,
+                ["profile"] = conn.Name
+            };
+        }
+
+        IReadOnlyList<AlgorithmData> algos = conn.AlgoStore.GetByGroup(group.id);
+        var algosArr = new JArray();
+        foreach (AlgorithmData a in algos)
+        {
+            algosArr.Add(new JObject
+            {
+                ["id"] = a.id,
+                ["name"] = a.name,
+                ["symbol"] = a.symbol,
+                ["signature"] = a.signature,
+                ["running"] = a.isRunning,
+                ["market"] = a.marketType.ToString()
+            });
+        }
+
+        return new JObject
+        {
+            ["found"] = true,
+            ["group_id"] = group.id,
+            ["name"] = group.name,
+            ["type"] = group.groupType.ToString(),
+            ["algo_count"] = algos.Count,
+            ["algos"] = algosArr,
+            ["profile"] = conn.Name
+        };
+    }
     // MT-009: Snapshot all settings for a profile to a timestamped JSON file
     private JObject HandleConfigSnapshot(JObject arguments)
     {
@@ -2584,6 +2721,17 @@ public sealed class McpServer
             Prop("algo_id",  "integer", "Algorithm ID (0 = all algos for symbol)"),
             Prop("market",   "string",  "Market type: FUTURES | INVERSE | SPOT (default: FUTURES)"),
             Prop("profile",  "string",  "Target server profile"));
+
+        // State reconciliation tools
+        yield return Tool("mt_algos_snapshot",
+            "Return a structured snapshot of all groups and algorithms across all connected profiles. " +
+            "Includes group names, algo IDs, names, symbols, running state, and signatures. " +
+            "Designed for state reconciliation — compare desired vs actual state.",
+            Prop("profile", "string", "Target server profile (omit for all connected)"));
+        yield return Tool("mt_algos_group_by_name",
+            "Find a group by name (case-insensitive). Returns group ID, name, type, and contained algorithms.",
+            Prop("name",    "string", "Group name to search for", required: true),
+            Prop("profile", "string", "Target server profile"));
     }
 
 

@@ -1,6 +1,6 @@
 # MTTextClient
 
-A text-first interface and [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server for [MoonTrader](https://moontrader.com) Core. Connects to one or more MTCore instances over encrypted UDP and exposes **202 MCP tools** across 30+ domains — covering algorithm lifecycle, order execution, market data streaming, fleet management, monitoring, and more.
+A text-first interface and [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server for [MoonTrader](https://moontrader.com) Core. Connects to one or more MTCore instances over encrypted UDP and exposes **204 MCP tools** across 30+ domains — covering algorithm lifecycle, order execution, market data streaming, fleet management, monitoring, and more.
 
 Built in C# / .NET 8.0. ~24,000 lines of code. Zero external service dependencies.
 
@@ -145,7 +145,7 @@ orders positions @eu_west_staging
 
 Fleet commands operate across all connected servers simultaneously.
 
-## MCP Tools — Complete Reference (202 tools)
+## MCP Tools — Complete Reference (204 tools)
 
 ### Connection & Server (4 tools)
 
@@ -178,7 +178,7 @@ Fleet commands operate across all connected servers simultaneously.
 | `mt_core_clear_archive` | Clear archived algorithms |
 | `mt_core_clear_orders` | Clear pending orders |
 
-### Algorithm Lifecycle (28 tools)
+### Algorithm Lifecycle (30 tools)
 
 | Tool | Description |
 |------|-------------|
@@ -194,8 +194,8 @@ Fleet commands operate across all connected servers simultaneously.
 | `mt_algos_verify` | Verify algorithm actually initialized correctly |
 | `mt_algos_save` | Save algorithm to persistent storage |
 | `mt_algos_save_start` | Save and start in one operation |
-| `mt_algos_delete` | Delete an algorithm |
-| `mt_algos_delete_group` | Delete an entire algorithm group |
+| `mt_algos_delete` | Delete an algorithm (idempotent — returns ok if already deleted) |
+| `mt_algos_delete_group` | Delete an entire algorithm group (idempotent — returns ok if already deleted) |
 | `mt_algos_config` | Get algorithm configuration (all parameters) |
 | `mt_algos_config_set` | Set algorithm configuration parameters |
 | `mt_algos_rename` | Rename an algorithm |
@@ -207,6 +207,8 @@ Fleet commands operate across all connected servers simultaneously.
 | `mt_algos_toggle_debug` | Toggle debug mode on an algorithm |
 | `mt_algos_tpsl_change` | Change TP/SL on a running algorithm |
 | `mt_algos_profiling` | Get algorithm profiling data |
+| `mt_algos_snapshot` | Full structured snapshot of all groups/algos across profiles (for state reconciliation) |
+| `mt_algos_group_by_name` | Find a group by name (case-insensitive) with all contained algorithms |
 | `mt_algos_batch_start` | Start multiple algorithms across servers |
 | `mt_algos_batch_stop` | Stop multiple algorithms across servers |
 | `mt_algos_batch_config` | Configure multiple algorithms across servers |
@@ -673,7 +675,7 @@ python3 -m http.server 9090 -d web
 
 ### Features
 
-- Auto-discovers all 202 MCP tools from the running server
+- Auto-discovers all 204 MCP tools from the running server
 - Categorized tool guide with architecture diagram
 - Server profile management (connect, disconnect, switch active)
 - Execute any tool with form-based parameter input

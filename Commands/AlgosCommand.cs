@@ -500,7 +500,8 @@ public sealed class AlgosCommand : ICommand
         AlgorithmData? algo = conn.AlgoStore.FindById(id);
         if (algo == null)
         {
-            return CommandResult.Fail($"[{conn.Name}] Algorithm {id} not found.");
+            return CommandResult.Ok($"[{conn.Name}] Algorithm {id}: already deleted (not found).",
+                new { Server = conn.Name, Id = id, Status = "already_deleted" });
         }
 
         // Safety gate: require explicit confirmation for destructive operations
@@ -866,7 +867,8 @@ public sealed class AlgosCommand : ICommand
         AlgorithmGroupData? group = conn.AlgoStore.FindGroupById(groupId);
         if (group == null)
         {
-            return CommandResult.Fail($"[{conn.Name}] Group {groupId} not found.");
+            return CommandResult.Ok($"[{conn.Name}] Group {groupId}: already deleted (not found).",
+                new { Server = conn.Name, GroupId = groupId, Status = "already_deleted" });
         }
 
         IReadOnlyList<AlgorithmData>? algosInGroup = conn.AlgoStore.GetByGroup(groupId);

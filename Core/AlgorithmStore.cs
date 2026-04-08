@@ -184,6 +184,15 @@ public sealed class AlgorithmStore
         return group;
     }
 
+    /// <summary>Find group by name (case-insensitive). Returns first match or null.</summary>
+    public AlgorithmGroupData? FindGroupByName(string name)
+    {
+        foreach (AlgorithmGroupData g in _groups.Values)
+            if (string.Equals(g.name, name, StringComparison.OrdinalIgnoreCase))
+                return g;
+        return null;
+    }
+
     /// <summary>Search algorithms by name (case-insensitive).</summary>
     public IReadOnlyList<AlgorithmData> Search(string query)
     {
