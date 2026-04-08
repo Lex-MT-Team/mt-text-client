@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>MTTextClient</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="MTShared">
+      <HintPath>lib/MTShared.dll</HintPath>
+    </Reference>
+    <Reference Include="LiteNetLib">
+      <HintPath>lib/LiteNetLib.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+</Project>

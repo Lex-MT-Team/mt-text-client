@@ -1,0 +1,1152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MT Text Client — Dashboard</title>
+<style>
+:root {
+  --bg: #0d1117; --surface: #161b22; --border: #30363d;
+  --text: #e6edf3; --text-dim: #8b949e; --accent: #58a6ff;
+  --green: #3fb950; --red: #f85149; --yellow: #d29922;
+  --purple: #bc8cff; --orange: #f0883e;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  background: var(--bg); color: var(--text); line-height: 1.5; }
+a { color: var(--accent); text-decoration: none; }
+
+/* Header */
+.header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 24px;
+  display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 100; }
+.header h1 { font-size: 18px; font-weight: 600; white-space: nowrap; }
+.header .badge { background: var(--green); color: #000; font-size: 11px; padding: 2px 8px;
+  border-radius: 12px; font-weight: 600; }
+.header .badge.disconnected { background: var(--red); color: #fff; }
+.header .badge.connecting { background: var(--yellow); color: #000; }
+.header .stats { font-size: 13px; color: var(--text-dim); }
+.header .nav-tabs { display: flex; gap: 2px; margin-left: 16px; }
+.header .nav-tab { padding: 6px 14px; border-radius: 6px; font-size: 13px; font-weight: 500;
+  cursor: pointer; color: var(--text-dim); border: none; background: transparent; transition: all 0.15s; }
+.header .nav-tab:hover { background: rgba(88,166,255,0.1); color: var(--text); }
+.header .nav-tab.active { background: var(--accent); color: #000; font-weight: 600; }
+.header .right-group { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.header .refresh-btn { background: var(--border); color: var(--text); border: none; padding: 6px 12px;
+  border-radius: 6px; cursor: pointer; font-size: 12px; transition: all 0.15s; }
+.header .refresh-btn:hover { background: var(--accent); color: #000; }
+
+/* Layout */
+.container { display: flex; height: calc(100vh - 53px); }
+.sidebar { width: 280px; min-width: 280px; background: var(--surface); border-right: 1px solid var(--border);
+  overflow-y: auto; padding: 8px 0; }
+.main { flex: 1; overflow-y: auto; padding: 24px; }
+
+/* Sidebar */
+.sidebar .search { padding: 8px 12px; }
+.sidebar .search input { width: 100%; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; padding: 8px 12px; color: var(--text); font-size: 13px; outline: none; }
+.sidebar .search input:focus { border-color: var(--accent); }
+.sidebar .category { padding: 4px 12px; margin-top: 12px; }
+.sidebar .category-label { font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.5px; color: var(--text-dim); cursor: pointer; display: flex; align-items: center; gap: 6px; }
+.sidebar .category-label:hover { color: var(--accent); }
+.sidebar .category-label .arrow { font-size: 9px; transition: transform 0.15s; }
+.sidebar .category-label .arrow.collapsed { transform: rotate(-90deg); }
+.sidebar .tool-item { padding: 6px 12px 6px 20px; font-size: 13px; cursor: pointer;
+  border-left: 2px solid transparent; transition: all 0.15s; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.sidebar .tool-item:hover { background: rgba(88,166,255,0.08); }
+.sidebar .tool-item.active { background: rgba(88,166,255,0.15); border-left-color: var(--accent);
+  color: var(--accent); }
+.sidebar .tool-item .tool-name { font-family: 'SFMono-Regular', Consolas, monospace; }
+.sidebar .tool-count { font-size: 11px; color: var(--text-dim); padding: 0 12px; margin-top: 2px; }
+
+/* Tool detail */
+.tool-detail { max-width: 900px; }
+.tool-header { margin-bottom: 20px; }
+.tool-header h2 { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 20px; color: var(--accent); }
+.tool-header .desc { color: var(--text-dim); margin-top: 4px; font-size: 14px; }
+
+/* Forms */
+.params-form { background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 16px; margin-bottom: 16px; }
+.params-form h3 { font-size: 13px; color: var(--text-dim); margin-bottom: 12px; text-transform: uppercase;
+  letter-spacing: 0.5px; }
+.param-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.param-row label { width: 160px; min-width: 160px; font-family: 'SFMono-Regular', Consolas, monospace;
+  font-size: 13px; }
+.param-row label .req { color: var(--red); }
+.param-row input, .param-row select { flex: 1; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; padding: 8px 12px; color: var(--text); font-size: 13px;
+  font-family: 'SFMono-Regular', Consolas, monospace; }
+.param-row input:focus, .param-row select:focus { border-color: var(--accent); outline: none; }
+.param-row .param-desc { font-size: 11px; color: var(--text-dim); min-width: 200px; }
+.no-params { color: var(--text-dim); font-style: italic; font-size: 13px; }
+.btn-row { display: flex; gap: 10px; margin-top: 12px; }
+.btn { padding: 8px 20px; border-radius: 6px; border: none; cursor: pointer; font-size: 13px;
+  font-weight: 600; transition: all 0.15s; }
+.btn-primary { background: var(--accent); color: #000; }
+.btn-primary:hover { background: #79c0ff; }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-secondary { background: var(--border); color: var(--text); }
+.btn-secondary:hover { background: #484f58; }
+.btn-danger { background: var(--red); color: #fff; }
+.btn-danger:hover { background: #ff6e6a; }
+.btn-sm { padding: 4px 12px; font-size: 12px; }
+
+/* Response area */
+.response-area { margin-top: 16px; }
+.response-tabs { display: flex; border-bottom: 1px solid var(--border); }
+.response-tab { padding: 8px 16px; font-size: 13px; cursor: pointer; border-bottom: 2px solid transparent;
+  color: var(--text-dim); transition: all 0.15s; background: none; border-top: none; border-left: none; border-right: none; }
+.response-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.response-tab:hover { color: var(--text); }
+.response-panel { display: none; background: var(--surface); border: 1px solid var(--border);
+  border-top: none; border-radius: 0 0 8px 8px; padding: 16px; min-height: 200px; max-height: 500px;
+  overflow-y: auto; }
+.response-panel.active { display: block; }
+.response-panel pre { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px;
+  white-space: pre-wrap; word-break: break-word; line-height: 1.6; }
+.response-success { border-left: 3px solid var(--green); padding-left: 16px; }
+.response-error { border-left: 3px solid var(--red); padding-left: 16px; }
+.response-meta { font-size: 11px; color: var(--text-dim); margin-top: 8px; }
+
+/* Tables */
+.bv-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.bv-table th { text-align: left; padding: 8px 12px; background: var(--bg); color: var(--text-dim);
+  font-weight: 600; border-bottom: 1px solid var(--border); }
+.bv-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); font-family: 'SFMono-Regular',
+  Consolas, monospace; font-size: 12px; }
+.bv-table tr:hover { background: rgba(88,166,255,0.04); }
+.bv-section { margin-bottom: 16px; }
+.bv-section h4 { font-size: 13px; color: var(--accent); margin-bottom: 6px; }
+.bv-kv { display: grid; grid-template-columns: 160px 1fr; gap: 4px 12px; font-size: 13px; }
+.bv-kv dt { color: var(--text-dim); } .bv-kv dd { font-family: 'SFMono-Regular', Consolas, monospace; }
+.status-ok { color: var(--green); } .status-err { color: var(--red); } .status-warn { color: var(--yellow); }
+
+/* Explanation */
+.explanation { background: rgba(188,140,255,0.08); border: 1px solid rgba(188,140,255,0.2);
+  border-radius: 8px; padding: 16px; margin-top: 16px; font-size: 13px; }
+.explanation h4 { color: var(--purple); margin-bottom: 8px; }
+.explanation code { background: var(--bg); padding: 2px 6px; border-radius: 3px;
+  font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; }
+
+/* Spinner */
+.spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--border);
+  border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Guide page */
+.guide { max-width: 1100px; }
+.guide h2 { font-size: 22px; margin-bottom: 6px; }
+.guide .subtitle { color: var(--text-dim); font-size: 14px; margin-bottom: 24px; }
+.guide-stats { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+.guide-stat { background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 12px 20px; text-align: center; min-width: 120px; }
+.guide-stat .num { font-size: 28px; font-weight: 700; color: var(--accent); }
+.guide-stat .label { font-size: 11px; color: var(--text-dim); text-transform: uppercase;
+  letter-spacing: 0.5px; }
+.guide-arch { background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 16px; margin-bottom: 24px; font-size: 13px; }
+.guide-arch h3 { font-size: 14px; margin-bottom: 8px; color: var(--purple); }
+.guide-arch pre { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px;
+  color: var(--text-dim); line-height: 1.5; }
+.cat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  margin-bottom: 16px; overflow: hidden; }
+.cat-card-header { padding: 14px 20px; display: flex; align-items: center; gap: 12px;
+  border-bottom: 1px solid var(--border); cursor: pointer; }
+.cat-card-header:hover { background: rgba(88,166,255,0.04); }
+.cat-card-header .cat-icon { font-size: 20px; }
+.cat-card-header .cat-title { font-size: 16px; font-weight: 600; }
+.cat-card-header .cat-count { font-size: 12px; color: var(--text-dim); margin-left: auto;
+  background: var(--bg); padding: 2px 10px; border-radius: 10px; }
+.cat-card-header .cat-desc { font-size: 12px; color: var(--text-dim); flex: 1; }
+.cat-card-body { padding: 0; }
+.cat-tool-row { display: flex; align-items: baseline; padding: 8px 20px 8px 52px; font-size: 13px;
+  border-bottom: 1px solid rgba(48,54,61,0.5); cursor: pointer; transition: background 0.1s; }
+.cat-tool-row:last-child { border-bottom: none; }
+.cat-tool-row:hover { background: rgba(88,166,255,0.06); }
+.cat-tool-row .tn { font-family: 'SFMono-Regular', Consolas, monospace; color: var(--accent);
+  min-width: 240px; }
+.cat-tool-row .td { color: var(--text-dim); font-size: 12px; }
+.cat-tool-row .tp { margin-left: auto; font-size: 11px; color: var(--text-dim); }
+
+/* Profile manager */
+.profile-mgr { max-width: 1000px; }
+.profile-mgr h2 { font-size: 22px; margin-bottom: 16px; }
+.profile-toolbar { display: flex; gap: 10px; margin-bottom: 16px; align-items: center; flex-wrap: wrap; }
+.profile-toolbar select { background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 12px; color: var(--text); font-size: 13px; }
+.profile-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.profile-table th { text-align: left; padding: 10px 12px; background: var(--surface); color: var(--text-dim);
+  font-weight: 600; border-bottom: 1px solid var(--border); position: sticky; top: 0; }
+.profile-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.profile-table tr:hover { background: rgba(88,166,255,0.04); }
+.exch-badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.exch-BYBIT { background: rgba(240,136,62,0.2); color: var(--orange); }
+.exch-BINANCE { background: rgba(210,153,34,0.2); color: var(--yellow); }
+.exch-OKX { background: rgba(63,185,80,0.2); color: var(--green); }
+
+/* Batch */
+.batch { max-width: 1100px; }
+.batch h2 { font-size: 22px; margin-bottom: 16px; }
+.batch-config { background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 16px; margin-bottom: 16px; }
+.batch-config h3 { font-size: 14px; margin-bottom: 12px; color: var(--text-dim); text-transform: uppercase;
+  letter-spacing: 0.5px; }
+.batch-config .row { display: flex; gap: 16px; margin-bottom: 12px; align-items: flex-start; }
+.batch-config .row > div { flex: 1; }
+.batch-config label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 4px; }
+.batch-config select, .batch-config input { width: 100%; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; padding: 8px 12px; color: var(--text); font-size: 13px; }
+.batch-results-grid { display: grid; gap: 12px; margin-top: 16px; }
+.batch-result-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.batch-result-header { padding: 10px 16px; display: flex; align-items: center; gap: 10px;
+  border-bottom: 1px solid var(--border); font-size: 13px; }
+.batch-result-body { padding: 12px 16px; max-height: 300px; overflow-y: auto; }
+.batch-result-body pre { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px;
+  white-space: pre-wrap; word-break: break-word; }
+.result-badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; font-weight: 600; }
+.result-badge.pass { background: rgba(63,185,80,0.2); color: var(--green); }
+.result-badge.fail { background: rgba(248,81,73,0.2); color: var(--red); }
+.result-badge.running { background: rgba(88,166,255,0.2); color: var(--accent); }
+.batch-progress { margin-top: 12px; font-size: 13px; }
+.batch-bar { width: 100%; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 6px; }
+.batch-bar-inner { height: 100%; background: var(--green); transition: width 0.3s; }
+
+/* Modal */
+.modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6);
+  z-index: 200; display: flex; align-items: center; justify-content: center; }
+.modal { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 24px; width: 480px; max-height: 80vh; overflow-y: auto; }
+.modal h3 { font-size: 18px; margin-bottom: 16px; }
+.modal .form-group { margin-bottom: 14px; }
+.modal .form-group label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 4px;
+  text-transform: uppercase; letter-spacing: 0.3px; }
+.modal .form-group input, .modal .form-group select { width: 100%; background: var(--bg);
+  border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; color: var(--text);
+  font-size: 13px; font-family: 'SFMono-Regular', Consolas, monospace; }
+.modal .form-group input:focus, .modal .form-group select:focus { border-color: var(--accent); outline: none; }
+.modal .form-group .error { color: var(--red); font-size: 11px; margin-top: 2px; display: none; }
+.modal .form-group.invalid input { border-color: var(--red); }
+.modal .form-group.invalid .error { display: block; }
+.modal .btn-row { display: flex; gap: 10px; margin-top: 20px; }
+
+/* Connection settings bar */
+.conn-bar { background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 12px 16px; margin-bottom: 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.conn-bar label { font-size: 12px; color: var(--text-dim); }
+.conn-bar input { background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 12px; color: var(--text); font-size: 13px; font-family: 'SFMono-Regular', Consolas, monospace;
+  width: 280px; }
+.conn-bar input:focus { border-color: var(--accent); outline: none; }
+
+/* JSON syntax highlighting */
+.json-key { color: var(--accent); }
+.json-string { color: var(--green); }
+.json-number { color: var(--orange); }
+.json-bool { color: var(--purple); }
+.json-null { color: var(--text-dim); }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>MT Text Client</h1>
+  <span class="badge disconnected" id="connBadge">CONNECTING</span>
+  <div class="nav-tabs">
+    <button class="nav-tab active" onclick="navigate('guide')">Guide</button>
+    <button class="nav-tab" onclick="navigate('profiles')">Profiles</button>
+    <button class="nav-tab" onclick="navigate('batch')">Batch</button>
+  </div>
+  <div class="right-group">
+    <span class="stats" id="statsSpan">0 tools</span>
+    <span class="stats" id="profileBadge"></span>
+    <button class="refresh-btn" onclick="reconnect()">↻ Reconnect</button>
+  </div>
+</div>
+<div class="container">
+  <div class="sidebar">
+    <div class="search"><input type="text" id="searchInput" placeholder="Search tools..." oninput="filterTools()"></div>
+    <div id="toolList"></div>
+  </div>
+  <div class="main" id="mainContent"></div>
+</div>
+
+<div class="modal-overlay" id="profileModal" style="display:none" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <h3 id="modalTitle">Add Profile</h3>
+    <div class="form-group" id="fg_name">
+      <label>Profile Name</label>
+      <input id="pf_name" placeholder="e.g. my_server_001">
+      <div class="error">Name is required</div>
+    </div>
+    <div class="form-group" id="fg_address">
+      <label>Address</label>
+      <input id="pf_address" placeholder="e.g. 203.0.113.50 or localhost">
+      <div class="error">Valid hostname or IP required</div>
+    </div>
+    <div class="form-group" id="fg_port">
+      <label>Port</label>
+      <input id="pf_port" type="number" placeholder="4242" value="4242">
+      <div class="error">Port must be 1-65535</div>
+    </div>
+    <div class="form-group" id="fg_token">
+      <label>Client Token</label>
+      <input id="pf_token" placeholder="Connection key">
+      <div class="error">Token is required</div>
+    </div>
+    <div class="form-group" id="fg_exchange">
+      <label>Exchange</label>
+      <select id="pf_exchange">
+        <option value="0">Binance</option>
+        <option value="1" selected>Bybit</option>
+        <option value="2">OKX</option>
+      </select>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary" id="modalSaveBtn" onclick="saveProfile()">Save</button>
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-danger btn-sm" id="modalDeleteBtn" style="display:none;margin-left:auto" onclick="deleteProfile()">Delete</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── State ────────────────────────────────────────────────
+let mcpUrl = localStorage.getItem('mt_mcp_url') || 'http://127.0.0.1:8585';
+let sessionId = null;
+let eventSource = null;
+let tools = [];
+let activeTool = null;
+let currentView = 'guide';
+let requestId = 1;
+let pendingRequests = {};
+let messagesEndpoint = null;
+let profiles = [];
+let lastUsedProfile = localStorage.getItem('mt_last_profile') || '';
+let editingProfile = null;
+
+const EXCHANGE_LABELS = { 0: 'BINANCE', 1: 'BYBIT', 2: 'OKX' };
+const EXCHANGE_CLASSES = { BINANCE: 'exch-BINANCE', BYBIT: 'exch-BYBIT', OKX: 'exch-OKX' };
+
+const CAT_META = {
+  connect:    { icon: '🔌', title: 'Connection',    desc: 'Connect/disconnect to MT-Core instances' },
+  disconnect: { icon: '⏏️', title: 'Disconnect',    desc: 'Terminate connections' },
+  status:     { icon: '📊', title: 'Status',         desc: 'Server and connection status' },
+  use:        { icon: '🔀', title: 'Switch Profile', desc: 'Set active profile context' },
+  account:    { icon: '💰', title: 'Account',        desc: 'Balance, positions, orders, executions' },
+  core:       { icon: '⚙️', title: 'Core',           desc: 'Dashboard, health, license, status' },
+  exchange:   { icon: '📈', title: 'Exchange',        desc: 'Market data, klines, tickers, pairs' },
+  algos:      { icon: '🤖', title: 'Algorithms',     desc: 'Algorithm lifecycle — CRUD, start/stop, config' },
+  orders:     { icon: '📋', title: 'Orders',          desc: 'Place, cancel, move, close orders and positions' },
+  fleet:      { icon: '🚀', title: 'Fleet',           desc: 'Multi-server bulk operations' },
+  logs:       { icon: '📝', title: 'Logs',            desc: 'Log monitoring, search, tail, health' },
+  settings:   { icon: '🔧', title: 'Settings',        desc: 'MT-Core configuration' },
+  reports:    { icon: '📊', title: 'Reports',          desc: 'Trade reports and comments' },
+  import:     { icon: '📥', title: 'Import',           desc: 'Import algorithms and templates' },
+};
+const CAT_ORDER = ['connect','disconnect','status','use','account','core','exchange',
+  'algos','orders','fleet','logs','settings','reports','import'];
+
+// ─── MCP Protocol ─────────────────────────────────────────
+function connect() {
+  if (eventSource) { eventSource.close(); eventSource = null; }
+  sessionId = null;
+  setBadge('connecting');
+
+  eventSource = new EventSource(mcpUrl + '/sse');
+
+  eventSource.addEventListener('endpoint', (e) => {
+    // e.data is full path like /messages/?session_id=xxx
+    messagesEndpoint = mcpUrl + e.data;
+    sessionId = new URL(messagesEndpoint).searchParams.get('session_id');
+    setBadge('connected');
+    initialize();
+  });
+
+  eventSource.addEventListener('message', (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.id && pendingRequests[msg.id]) {
+        pendingRequests[msg.id](msg);
+        delete pendingRequests[msg.id];
+      }
+    } catch(err) { console.error('Parse error:', err); }
+  });
+
+  eventSource.onerror = () => {
+    setBadge('disconnected');
+    setTimeout(() => { if (eventSource?.readyState === 2) connect(); }, 3000);
+  };
+}
+
+function rpc(method, params) {
+  return new Promise((resolve, reject) => {
+    if (!sessionId) return reject(new Error('Not connected'));
+    const id = requestId++;
+    const body = JSON.stringify({ jsonrpc: '2.0', id, method, params });
+    pendingRequests[id] = (msg) => {
+      if (msg.error) reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+      else resolve(msg.result);
+    };
+    fetch(messagesEndpoint, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body
+    }).catch(reject);
+    setTimeout(() => { if (pendingRequests[id]) { delete pendingRequests[id]; reject(new Error('Timeout')); } }, 30000);
+  });
+}
+
+async function callTool(name, args) {
+  return rpc('tools/call', { name, arguments: args || {} });
+}
+
+function reconnect() {
+  mcpUrl = document.getElementById('mcpUrlInput')?.value || mcpUrl;
+  localStorage.setItem('mt_mcp_url', mcpUrl);
+  connect();
+}
+
+// ─── Init ─────────────────────────────────────────────────
+async function initialize() {
+  try {
+    await rpc('initialize', {
+      protocolVersion: '2024-11-05',
+      capabilities: {},
+      clientInfo: { name: 'mt-dashboard', version: '2.0.0' }
+    });
+    // Send notification (no id, no response expected) and wait briefly
+    await fetch(messagesEndpoint, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })
+    });
+    await new Promise(r => setTimeout(r, 200));
+  } catch(e) {
+    console.warn('Init handshake failed (may be ok):', e.message);
+  }
+
+  try {
+    const result = await rpc('tools/list', {});
+    tools = result.tools || [];
+    document.getElementById('statsSpan').textContent = tools.length + ' tools';
+    renderSidebar();
+    renderGuide();
+    fetchProfiles();
+  } catch(e) {
+    console.error('Failed to list tools:', e);
+  }
+}
+
+// ─── Profiles ─────────────────────────────────────────────
+async function fetchProfiles() {
+  try {
+    const result = await callTool('mt_status', {});
+    const text = (result.content || []).map(c => c.text || '').join('');
+    const data = JSON.parse(text);
+    profiles = data.data || [];
+    if (!lastUsedProfile && profiles.length > 0) {
+      const active = profiles.find(p => p.Active === '◄');
+      lastUsedProfile = active ? active.Name : profiles[0].Name;
+      localStorage.setItem('mt_last_profile', lastUsedProfile);
+    }
+    renderProfileBadge();
+    // Update guide stats if visible
+    const pStat = document.querySelector('.guide-stat:nth-child(4) .num');
+    if (pStat) pStat.textContent = profiles.length;
+  } catch(e) { profiles = []; }
+}
+
+function renderProfileBadge() {
+  const el = document.getElementById('profileBadge');
+  if (profiles.length === 0) { el.innerHTML = '<span style="color:var(--yellow)">No profiles</span>'; return; }
+  const active = profiles.find(p => p.Active === '◄');
+  const name = active ? active.Name : (lastUsedProfile || profiles[0].Name);
+  const isConnected = active ? active.Status?.includes('CONNECTED') : false;
+  el.innerHTML = '<span style="color:' + (isConnected ? 'var(--green)' : 'var(--text-dim)') + '">' +
+    esc(name) + '</span>';
+}
+
+function buildProfileSelect(paramName) {
+  let opts = '<option value="">— select profile —</option>';
+  profiles.forEach(p => {
+    const sel = (p.Name === lastUsedProfile) ? ' selected' : '';
+    const dot = p.Status?.includes('CONNECTED') ? '🟢 ' : '⚪ ';
+    opts += '<option value="' + esc(p.Name) + '"' + sel + '>' + dot + esc(p.Name) + '</option>';
+  });
+  return '<select id="param_' + paramName + '" onchange="rememberProfile(this.value)">' + opts + '</select>';
+}
+
+function rememberProfile(val) {
+  if (val) { lastUsedProfile = val; localStorage.setItem('mt_last_profile', val); }
+}
+
+// ─── Navigation ───────────────────────────────────────────
+function navigate(view) {
+  currentView = view;
+  activeTool = null;
+  document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+  const tabs = document.querySelectorAll('.nav-tab');
+  const idx = { guide: 0, profiles: 1, batch: 2 }[view];
+  if (idx !== undefined) tabs[idx].classList.add('active');
+
+  if (view === 'guide') renderGuide();
+  else if (view === 'profiles') renderProfileManager();
+  else if (view === 'batch') renderBatch();
+
+  document.querySelectorAll('.tool-item').forEach(t => t.classList.remove('active'));
+}
+
+function selectTool(name) {
+  activeTool = tools.find(t => t.name === name);
+  if (!activeTool) return;
+  currentView = 'tool';
+  document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tool-item').forEach(t => {
+    t.classList.toggle('active', t.dataset.name === name);
+  });
+  renderToolDetail();
+}
+
+// ─── Sidebar ──────────────────────────────────────────────
+function categorize(toolName) {
+  for (const cat of CAT_ORDER) {
+    if (toolName.startsWith('mt_' + cat)) return cat;
+  }
+  return 'other';
+}
+
+function renderSidebar() {
+  const groups = {};
+  tools.forEach(t => {
+    const cat = categorize(t.name);
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push(t);
+  });
+
+  let html = '';
+  CAT_ORDER.forEach(cat => {
+    if (!groups[cat] || groups[cat].length === 0) return;
+    const meta = CAT_META[cat] || { icon: '📦', title: cat };
+    html += '<div class="category"><div class="category-label" onclick="toggleCat(this)">' +
+      '<span class="arrow">▼</span> ' + meta.icon + ' ' + esc(meta.title) +
+      ' <span style="color:var(--text-dim);font-size:10px">(' + groups[cat].length + ')</span></div></div>';
+    html += '<div class="category-tools">';
+    groups[cat].forEach(t => {
+      const shortName = t.name.replace(/^mt_/, '');
+      html += '<div class="tool-item" data-name="' + esc(t.name) + '" onclick="selectTool(\'' + esc(t.name) + '\')">' +
+        '<span class="tool-name">' + esc(shortName) + '</span></div>';
+    });
+    html += '</div>';
+  });
+  if (groups['other']?.length) {
+    html += '<div class="category"><div class="category-label"><span class="arrow">▼</span> 📦 Other</div></div>';
+    html += '<div class="category-tools">';
+    groups['other'].forEach(t => {
+      html += '<div class="tool-item" data-name="' + esc(t.name) + '" onclick="selectTool(\'' + esc(t.name) + '\')">' +
+        '<span class="tool-name">' + esc(t.name) + '</span></div>';
+    });
+    html += '</div>';
+  }
+
+  html += '<div class="tool-count">' + tools.length + ' tools</div>';
+  document.getElementById('toolList').innerHTML = html;
+}
+
+function toggleCat(el) {
+  const arrow = el.querySelector('.arrow');
+  const body = el.parentElement.nextElementSibling;
+  if (body.style.display === 'none') { body.style.display = ''; arrow.classList.remove('collapsed'); }
+  else { body.style.display = 'none'; arrow.classList.add('collapsed'); }
+}
+
+function filterTools() {
+  const q = document.getElementById('searchInput').value.toLowerCase();
+  document.querySelectorAll('.tool-item').forEach(el => {
+    const name = el.dataset.name.toLowerCase();
+    el.style.display = name.includes(q) ? '' : 'none';
+  });
+}
+
+// ─── Guide Page ───────────────────────────────────────────
+function renderGuide() {
+  const groups = {};
+  let totalParams = 0;
+  tools.forEach(t => {
+    const cat = categorize(t.name);
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push(t);
+    totalParams += Object.keys(t.inputSchema?.properties || {}).length;
+  });
+
+  let html = '<div class="guide">';
+  html += '<h2>Command Guide</h2>';
+  html += '<p class="subtitle">Complete reference for all MCP tools exposed by mt-text-client. Click any tool to open its execution page.</p>';
+
+  // Stats
+  html += '<div class="guide-stats">';
+  html += '<div class="guide-stat"><div class="num">' + tools.length + '</div><div class="label">Tools</div></div>';
+  html += '<div class="guide-stat"><div class="num">' + Object.keys(groups).length + '</div><div class="label">Categories</div></div>';
+  html += '<div class="guide-stat"><div class="num">' + totalParams + '</div><div class="label">Parameters</div></div>';
+  html += '<div class="guide-stat"><div class="num">' + profiles.length + '</div><div class="label">Profiles</div></div>';
+  html += '</div>';
+
+  // Architecture
+  html += '<div class="guide-arch"><h3>Execution Model</h3><pre>';
+  html += 'Browser  →  MCP Proxy (:8585/SSE)  →  mt-text-client (stdio)\n';
+  html += '                                        ↕ LiteNetLib UDP (AES-256)\n';
+  html += '                                    MT-Core (:4242)  →  Exchange API</pre></div>';
+
+  // Connection bar
+  html += '<div class="conn-bar"><label>MCP Endpoint:</label>';
+  html += '<input id="mcpUrlInput" value="' + esc(mcpUrl) + '" onchange="updateMcpUrl(this.value)">';
+  html += '<button class="btn btn-sm btn-secondary" onclick="reconnect()">Reconnect</button></div>';
+
+  // Category cards
+  CAT_ORDER.forEach(cat => {
+    if (!groups[cat] || !groups[cat].length) return;
+    const meta = CAT_META[cat] || { icon: '📦', title: cat, desc: '' };
+    html += '<div class="cat-card">';
+    html += '<div class="cat-card-header" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display===\'none\'?\'\':\'none\'">';
+    html += '<span class="cat-icon">' + meta.icon + '</span>';
+    html += '<span class="cat-title">' + esc(meta.title) + '</span>';
+    html += '<span class="cat-desc">' + esc(meta.desc) + '</span>';
+    html += '<span class="cat-count">' + groups[cat].length + ' tools</span>';
+    html += '</div><div class="cat-card-body">';
+    groups[cat].forEach(t => {
+      const paramCount = Object.keys(t.inputSchema?.properties || {}).length;
+      html += '<div class="cat-tool-row" onclick="selectTool(\'' + esc(t.name) + '\')">';
+      html += '<span class="tn">' + esc(t.name.replace(/^mt_/, '')) + '</span>';
+      html += '<span class="td">' + esc(t.description || '') + '</span>';
+      html += '<span class="tp">' + paramCount + ' param' + (paramCount !== 1 ? 's' : '') + '</span>';
+      html += '</div>';
+    });
+    html += '</div></div>';
+  });
+
+  html += '</div>';
+  document.getElementById('mainContent').innerHTML = html;
+}
+
+function updateMcpUrl(val) {
+  mcpUrl = val;
+  localStorage.setItem('mt_mcp_url', val);
+}
+
+// ─── Tool Detail ──────────────────────────────────────────
+function renderToolDetail() {
+  if (!activeTool) return;
+  const t = activeTool;
+  const schema = t.inputSchema || {};
+  const props = schema.properties || {};
+  const required = schema.required || [];
+  const paramNames = Object.keys(props);
+
+  let html = '<div class="tool-detail">';
+  html += '<div class="tool-header"><h2>' + esc(t.name) + '</h2>';
+  html += '<div class="desc">' + esc(t.description || 'No description') + '</div></div>';
+
+  // Parameters form
+  html += '<div class="params-form"><h3>Parameters</h3>';
+  if (paramNames.length === 0) {
+    html += '<div class="no-params">No parameters required</div>';
+  } else {
+    paramNames.forEach(name => {
+      const prop = props[name];
+      const isReq = required.includes(name);
+      const isProfileParam = name.toLowerCase().includes('profile') || name.toLowerCase() === 'name';
+
+      html += '<div class="param-row">';
+      html += '<label>' + esc(name) + (isReq ? ' <span class="req">*</span>' : '') + '</label>';
+
+      if (isProfileParam && profiles.length > 0 && (prop.type === 'string')) {
+        html += buildProfileSelect(name);
+      } else if (prop.type === 'boolean') {
+        html += '<select id="param_' + esc(name) + '">' +
+          '<option value="">— default —</option><option value="true">true</option><option value="false">false</option></select>';
+      } else if (prop.enum) {
+        html += '<select id="param_' + esc(name) + '"><option value="">— select —</option>';
+        prop.enum.forEach(v => { html += '<option value="' + esc(String(v)) + '">' + esc(String(v)) + '</option>'; });
+        html += '</select>';
+      } else {
+        const ph = prop.description || prop.type || '';
+        const def = prop.default !== undefined ? prop.default : '';
+        html += '<input id="param_' + esc(name) + '" placeholder="' + esc(ph) + '" value="' + esc(String(def)) + '">';
+      }
+      if (prop.description) {
+        html += '<span class="param-desc">' + esc(prop.description) + '</span>';
+      }
+      html += '</div>';
+    });
+  }
+  html += '<div class="btn-row">';
+  html += '<button class="btn btn-primary" id="execBtn" onclick="executeTool()">▶ Execute</button>';
+  html += '<button class="btn btn-secondary" onclick="clearForm()">Clear</button>';
+  html += '</div></div>';
+
+  // Response area
+  html += '<div class="response-area" id="responseArea" style="display:none">';
+  html += '<div class="response-tabs">';
+  html += '<button class="response-tab active" onclick="switchTab(\'beautified\')">Beautified</button>';
+  html += '<button class="response-tab" onclick="switchTab(\'raw\')">Raw JSON</button>';
+  html += '<button class="response-tab" onclick="switchTab(\'explain\')">How It Works</button>';
+  html += '</div>';
+  html += '<div class="response-panel active" id="tab_beautified"></div>';
+  html += '<div class="response-panel" id="tab_raw"></div>';
+  html += '<div class="response-panel" id="tab_explain"></div>';
+  html += '</div></div>';
+
+  document.getElementById('mainContent').innerHTML = html;
+}
+
+function collectArgs() {
+  if (!activeTool) return {};
+  const schema = activeTool.inputSchema || {};
+  const props = schema.properties || {};
+  const args = {};
+  Object.keys(props).forEach(name => {
+    const el = document.getElementById('param_' + name);
+    if (!el) return;
+    let val = el.value.trim();
+    if (val === '') return;
+    if (props[name].type === 'boolean') val = val === 'true';
+    else if (props[name].type === 'integer' || props[name].type === 'number') val = Number(val);
+    args[name] = val;
+  });
+  return args;
+}
+
+async function executeTool() {
+  if (!activeTool) return;
+  const btn = document.getElementById('execBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Running...';
+  const args = collectArgs();
+  const area = document.getElementById('responseArea');
+  area.style.display = 'block';
+  document.getElementById('tab_beautified').innerHTML = '<span class="spinner"></span> Executing...';
+  document.getElementById('tab_raw').innerHTML = '';
+  document.getElementById('tab_explain').innerHTML = '';
+
+  const t0 = performance.now();
+  try {
+    const result = await callTool(activeTool.name, args);
+    const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
+    renderResponse(result, args, elapsed);
+    if (activeTool.name === 'mt_status' || activeTool.name === 'mt_connect' || activeTool.name === 'mt_disconnect') {
+      fetchProfiles();
+    }
+  } catch(e) {
+    document.getElementById('tab_beautified').innerHTML =
+      '<pre class="response-error">Error: ' + esc(e.message) + '</pre>';
+  }
+  btn.disabled = false;
+  btn.innerHTML = '▶ Execute';
+}
+
+function renderResponse(result, args, elapsed) {
+  const isError = result.isError;
+  const rawContent = result.content || [];
+  const rawText = rawContent.map(c => c.text || '').join('\n');
+  const cls = isError ? 'response-error' : 'response-success';
+
+  // Raw tab
+  const rawPayload = {
+    request: { method: 'tools/call', params: { name: activeTool.name, arguments: args } },
+    response: result
+  };
+  document.getElementById('tab_raw').innerHTML =
+    '<pre>' + syntaxHighlight(JSON.stringify(rawPayload, null, 2)) + '</pre>' +
+    '<div class="response-meta">Elapsed: ' + elapsed + 's</div>';
+
+  // Beautified tab
+  let bHtml = '<div class="' + cls + '">';
+  let parsed = null;
+  try { parsed = JSON.parse(rawText); } catch(e) {}
+  if (parsed && typeof parsed === 'object') {
+    bHtml += renderBeautified(parsed);
+  } else {
+    bHtml += '<pre>' + esc(rawText) + '</pre>';
+  }
+  bHtml += '</div><div class="response-meta">' +
+    (isError ? '<span class="status-err">✗ Error</span>' : '<span class="status-ok">✓ Success</span>') +
+    ' — ' + elapsed + 's</div>';
+  document.getElementById('tab_beautified').innerHTML = bHtml;
+
+  // Explain tab
+  document.getElementById('tab_explain').innerHTML = renderExplanation(args, elapsed);
+}
+
+function renderBeautified(obj) {
+  if (obj.data && typeof obj.data === 'object') {
+    let html = '';
+    if (obj.message) html += '<div class="bv-section"><h4>Message</h4><pre>' + esc(obj.message) + '</pre></div>';
+    const data = obj.data;
+    if (Array.isArray(data)) html += renderArray(data);
+    else html += renderObject(data);
+    return html;
+  }
+  if (obj.message) return '<div class="bv-section"><pre>' + esc(obj.message) + '</pre></div>';
+  if (Array.isArray(obj)) return renderArray(obj);
+  return renderObject(obj);
+}
+
+function renderArray(arr) {
+  if (arr.length === 0) return '<div class="no-params">Empty result</div>';
+  if (typeof arr[0] !== 'object') return '<pre>' + esc(JSON.stringify(arr, null, 2)) + '</pre>';
+  const keys = [...new Set(arr.flatMap(o => Object.keys(o)))];
+  let html = '<table class="bv-table"><thead><tr>';
+  keys.forEach(k => { html += '<th>' + esc(k) + '</th>'; });
+  html += '</tr></thead><tbody>';
+  arr.forEach(row => {
+    html += '<tr>';
+    keys.forEach(k => {
+      let v = row[k];
+      if (typeof v === 'object' && v !== null) v = JSON.stringify(v);
+      html += '<td>' + formatValue(v) + '</td>';
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  return html;
+}
+
+function renderObject(obj) {
+  const keys = Object.keys(obj);
+  if (keys.length === 0) return '<div class="no-params">Empty object</div>';
+
+  // Check for nested objects/arrays
+  const nested = keys.filter(k => typeof obj[k] === 'object' && obj[k] !== null);
+  const flat = keys.filter(k => typeof obj[k] !== 'object' || obj[k] === null);
+
+  let html = '';
+  if (flat.length > 0) {
+    html += '<dl class="bv-kv">';
+    flat.forEach(k => {
+      html += '<dt>' + esc(k) + '</dt><dd>' + formatValue(obj[k]) + '</dd>';
+    });
+    html += '</dl>';
+  }
+  nested.forEach(k => {
+    html += '<div class="bv-section"><h4>' + esc(k) + '</h4>';
+    if (Array.isArray(obj[k])) html += renderArray(obj[k]);
+    else html += renderObject(obj[k]);
+    html += '</div>';
+  });
+  return html;
+}
+
+function formatValue(v) {
+  if (v === null || v === undefined) return '<span class="status-warn">null</span>';
+  if (v === true) return '<span class="status-ok">true</span>';
+  if (v === false) return '<span class="status-err">false</span>';
+  const s = String(v);
+  // Highlight status values
+  if (/^(connected|running|online|active|ok|success|true)$/i.test(s)) return '<span class="status-ok">' + esc(s) + '</span>';
+  if (/^(disconnected|stopped|offline|error|failed|false)$/i.test(s)) return '<span class="status-err">' + esc(s) + '</span>';
+  return esc(s);
+}
+
+function renderExplanation(args, elapsed) {
+  const t = activeTool;
+  let html = '<div class="explanation"><h4>How It Works</h4>';
+  html += '<p><code>' + esc(t.name) + '</code> — ' + esc(t.description || '') + '</p>';
+
+  const paramNames = Object.keys(t.inputSchema?.properties || {});
+  if (paramNames.length > 0) {
+    html += '<p style="margin-top:8px"><strong>Parameters:</strong></p><ul>';
+    paramNames.forEach(name => {
+      const prop = t.inputSchema.properties[name];
+      const sent = args[name] !== undefined ? ' = <code>' + esc(String(args[name])) + '</code>' : ' (not set)';
+      html += '<li><code>' + esc(name) + '</code> (' + (prop.type || '?') + ')' + sent +
+        (prop.description ? ' — ' + esc(prop.description) : '') + '</li>';
+    });
+    html += '</ul>';
+  }
+
+  html += '<p style="margin-top:8px"><strong>Execution path:</strong><br>' +
+    'Browser → SSE/POST → mcp-proxy (:8585) → mt-text-client (stdio) → LiteNetLib UDP → MT-Core (:4242)</p>';
+  html += '<p style="margin-top:4px">Round-trip: ' + elapsed + 's</p>';
+  html += '</div>';
+  return html;
+}
+
+function switchTab(name) {
+  document.querySelectorAll('.response-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.response-panel').forEach(p => p.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById('tab_' + name).classList.add('active');
+}
+
+function clearForm() {
+  if (!activeTool) return;
+  const props = activeTool.inputSchema?.properties || {};
+  Object.keys(props).forEach(name => {
+    const el = document.getElementById('param_' + name);
+    if (el) el.value = '';
+  });
+}
+
+// ─── Profile Manager ─────────────────────────────────────
+async function renderProfileManager() {
+  await fetchProfiles();
+  let html = '<div class="profile-mgr">';
+  html += '<h2>Profile Manager</h2>';
+
+  html += '<div class="profile-toolbar">';
+  html += '<button class="btn btn-primary btn-sm" onclick="openAddProfile()">+ Add Profile</button>';
+  html += '<span style="color:var(--text-dim);font-size:12px">' + profiles.length + ' profiles</span>';
+  html += '</div>';
+
+  html += '<table class="profile-table"><thead><tr>';
+  html += '<th>Name</th><th>Address</th><th>Port</th><th>Exchange</th><th>Status</th><th></th>';
+  html += '</tr></thead><tbody>';
+
+  profiles.forEach(p => {
+    const exchName = p.Exchange || 'UNKNOWN';
+    const exchClass = EXCHANGE_CLASSES[exchName] || '';
+    html += '<tr>';
+    html += '<td><strong>' + esc(p.Name) + '</strong>' + (p.Active === '◄' ? ' <span style="color:var(--accent)">(active)</span>' : '') + '</td>';
+    html += '<td style="font-family:monospace">' + esc(p.Address || '—') + '</td>';
+    html += '<td>' + (p.Port || '—') + '</td>';
+    html += '<td><span class="exch-badge ' + exchClass + '">' + exchName + '</span></td>';
+    const isConn = p.Status?.includes('CONNECTED');
+    html += '<td>' + (isConn ?
+      '<span class="status-ok">● Connected</span>' :
+      '<span class="status-err">○ Disconnected</span>') + '</td>';
+    html += '<td>';
+    if (!p.Status?.includes('CONNECTED')) {
+      html += '<button class="btn btn-sm btn-primary" onclick="connectProfile(\'' + esc(p.Name) + '\')">Connect</button> ';
+    } else {
+      html += '<button class="btn btn-sm btn-danger" onclick="disconnectProfile(\'' + esc(p.Name) + '\')">Disconnect</button> ';
+    }
+    html += '<button class="btn btn-sm btn-secondary" onclick="useProfile(\'' + esc(p.Name) + '\')">Use</button>';
+    html += '</td></tr>';
+  });
+
+  html += '</tbody></table></div>';
+  document.getElementById('mainContent').innerHTML = html;
+}
+
+async function connectProfile(name) {
+  try {
+    await callTool('mt_connect', { name });
+    await fetchProfiles();
+    renderProfileManager();
+  } catch(e) { alert('Connect failed: ' + e.message); }
+}
+
+async function disconnectProfile(name) {
+  try {
+    await callTool('mt_disconnect', { name });
+    await fetchProfiles();
+    renderProfileManager();
+  } catch(e) { alert('Disconnect failed: ' + e.message); }
+}
+
+async function useProfile(name) {
+  try {
+    await callTool('mt_use', { name });
+    lastUsedProfile = name;
+    localStorage.setItem('mt_last_profile', name);
+    await fetchProfiles();
+    renderProfileManager();
+  } catch(e) { alert('Use failed: ' + e.message); }
+}
+
+function openAddProfile() {
+  editingProfile = null;
+  document.getElementById('modalTitle').textContent = 'Add Profile';
+  document.getElementById('pf_name').value = '';
+  document.getElementById('pf_address').value = '';
+  document.getElementById('pf_port').value = '4242';
+  document.getElementById('pf_token').value = '';
+  document.getElementById('pf_exchange').value = '1';
+  document.getElementById('pf_name').disabled = false;
+  document.getElementById('modalDeleteBtn').style.display = 'none';
+  document.getElementById('profileModal').style.display = '';
+}
+
+function closeModal() {
+  document.getElementById('profileModal').style.display = 'none';
+}
+
+async function saveProfile() {
+  const name = document.getElementById('pf_name').value.trim();
+  const address = document.getElementById('pf_address').value.trim();
+  const port = parseInt(document.getElementById('pf_port').value) || 4242;
+  const token = document.getElementById('pf_token').value.trim();
+  const exchange = parseInt(document.getElementById('pf_exchange').value);
+
+  // Validate
+  let valid = true;
+  ['name','address','token'].forEach(f => {
+    const el = document.getElementById('fg_' + f);
+    const val = document.getElementById('pf_' + f).value.trim();
+    if (!val) { el.classList.add('invalid'); valid = false; } else { el.classList.remove('invalid'); }
+  });
+  const portVal = parseInt(document.getElementById('pf_port').value);
+  if (!portVal || portVal < 1 || portVal > 65535) {
+    document.getElementById('fg_port').classList.add('invalid'); valid = false;
+  } else { document.getElementById('fg_port').classList.remove('invalid'); }
+
+  if (!valid) return;
+
+  try {
+    // Use the import tool or connect with new profile
+    // mt-text-client creates profiles on first connect
+    await callTool('mt_connect', { name, address, port: port, token, exchange });
+    closeModal();
+    await fetchProfiles();
+    if (currentView === 'profiles') renderProfileManager();
+  } catch(e) { alert('Save failed: ' + e.message); }
+}
+
+// ─── Batch Execution ──────────────────────────────────────
+function renderBatch() {
+  let html = '<div class="batch">';
+  html += '<h2>Batch Execution</h2>';
+
+  html += '<div class="batch-config"><h3>Configuration</h3>';
+  html += '<div class="row"><div>';
+  html += '<label>Tool</label>';
+  html += '<select id="batchTool" onchange="updateBatchParams()">';
+  html += '<option value="">— select tool —</option>';
+  tools.forEach(t => {
+    html += '<option value="' + esc(t.name) + '">' + esc(t.name) + '</option>';
+  });
+  html += '</select></div>';
+  html += '<div><label>Target Profiles</label>';
+  html += '<select id="batchTarget">';
+  html += '<option value="all">All Connected</option>';
+  profiles.forEach(p => {
+    if (p.Status?.includes('CONNECTED')) html += '<option value="' + esc(p.Name) + '">' + esc(p.Name) + '</option>';
+  });
+  html += '</select></div></div>';
+  html += '<div id="batchParams"></div>';
+  html += '<div class="btn-row"><button class="btn btn-primary" id="batchRunBtn" onclick="runBatch()">▶ Run Batch</button></div>';
+  html += '</div>';
+
+  html += '<div class="batch-progress" id="batchProgress" style="display:none">';
+  html += '<div id="batchProgressText">0 / 0</div>';
+  html += '<div class="batch-bar"><div class="batch-bar-inner" id="batchBar" style="width:0%"></div></div>';
+  html += '</div>';
+
+  html += '<div class="batch-results-grid" id="batchResults"></div>';
+  html += '</div>';
+  document.getElementById('mainContent').innerHTML = html;
+}
+
+function updateBatchParams() {
+  const toolName = document.getElementById('batchTool').value;
+  const tool = tools.find(t => t.name === toolName);
+  const el = document.getElementById('batchParams');
+  if (!tool) { el.innerHTML = ''; return; }
+
+  const props = tool.inputSchema?.properties || {};
+  const paramNames = Object.keys(props).filter(n => !n.toLowerCase().includes('profile') && n !== 'name');
+  if (paramNames.length === 0) { el.innerHTML = '<div class="no-params" style="margin:8px 0">No additional parameters</div>'; return; }
+
+  let html = '<div style="margin-top:12px">';
+  paramNames.forEach(name => {
+    const prop = props[name];
+    html += '<div class="param-row">';
+    html += '<label>' + esc(name) + '</label>';
+    html += '<input id="batch_param_' + esc(name) + '" placeholder="' + esc(prop.description || prop.type || '') + '">';
+    html += '</div>';
+  });
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+async function runBatch() {
+  const toolName = document.getElementById('batchTool').value;
+  if (!toolName) { alert('Select a tool'); return; }
+  const tool = tools.find(t => t.name === toolName);
+  const target = document.getElementById('batchTarget').value;
+
+  let targets = [];
+  if (target === 'all') targets = profiles.filter(p => p.Connected).map(p => p.Name);
+  else targets = [target];
+
+  if (targets.length === 0) { alert('No connected profiles'); return; }
+
+  // Collect additional params
+  const props = tool.inputSchema?.properties || {};
+  const extraArgs = {};
+  Object.keys(props).forEach(name => {
+    if (name.toLowerCase().includes('profile') || name === 'name') return;
+    const el = document.getElementById('batch_param_' + name);
+    if (el && el.value.trim()) {
+      let val = el.value.trim();
+      if (props[name].type === 'boolean') val = val === 'true';
+      else if (props[name].type === 'integer' || props[name].type === 'number') val = Number(val);
+      extraArgs[name] = val;
+    }
+  });
+
+  document.getElementById('batchRunBtn').disabled = true;
+  const progressEl = document.getElementById('batchProgress');
+  progressEl.style.display = '';
+  const resultsEl = document.getElementById('batchResults');
+  resultsEl.innerHTML = '';
+
+  for (let i = 0; i < targets.length; i++) {
+    const pName = targets[i];
+    document.getElementById('batchProgressText').textContent = (i + 1) + ' / ' + targets.length + ' — ' + pName;
+    document.getElementById('batchBar').style.width = ((i + 1) / targets.length * 100) + '%';
+
+    try {
+      // Switch profile first
+      await callTool('mt_use', { name: pName });
+      const result = await callTool(toolName, extraArgs);
+      const text = (result.content || []).map(c => c.text || '').join('\n');
+
+      resultsEl.innerHTML += '<div class="batch-result-card">' +
+        '<div class="batch-result-header"><span class="result-badge pass">OK</span> <strong>' + esc(pName) + '</strong></div>' +
+        '<div class="batch-result-body"><pre>' + esc(text.substring(0, 2000)) + '</pre></div></div>';
+    } catch(e) {
+      resultsEl.innerHTML += '<div class="batch-result-card">' +
+        '<div class="batch-result-header"><span class="result-badge fail">FAIL</span> <strong>' + esc(pName) + '</strong></div>' +
+        '<div class="batch-result-body"><pre class="response-error">' + esc(e.message) + '</pre></div></div>';
+    }
+  }
+
+  document.getElementById('batchRunBtn').disabled = false;
+}
+
+// ─── Utilities ────────────────────────────────────────────
+function setBadge(state) {
+  const el = document.getElementById('connBadge');
+  if (state === 'connected') { el.className = 'badge'; el.textContent = 'CONNECTED'; }
+  else if (state === 'connecting') { el.className = 'badge connecting'; el.textContent = 'CONNECTING'; }
+  else { el.className = 'badge disconnected'; el.textContent = 'DISCONNECTED'; }
+}
+
+function esc(s) {
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function syntaxHighlight(json) {
+  return json.replace(/("(\\u[\da-fA-F]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(\.\d+)?([eE][+-]?\d+)?)/g, function(match) {
+    let cls = 'json-number';
+    if (/^"/.test(match)) {
+      if (/:$/.test(match)) { cls = 'json-key'; match = match.replace(/:$/, '') + ':'; }
+      else cls = 'json-string';
+    } else if (/true|false/.test(match)) cls = 'json-bool';
+    else if (/null/.test(match)) cls = 'json-null';
+    return '<span class="' + cls + '">' + match + '</span>';
+  });
+}
+
+// ─── Boot ─────────────────────────────────────────────────
+connect();
+</script>
+</body>
+</html>

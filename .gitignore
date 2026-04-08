@@ -1,0 +1,24 @@
+# Build output
+bin/
+obj/
+
+# IDE / editor
+.vs/
+.vscode/
+*.user
+*.suo
+
+# Debug symbols (keep in build, not in repo)
+*.pdb
+
+# Backup files
+*.bak
+*.orig
+*.tmp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Profile data (contains connection tokens)
+profiles.json
