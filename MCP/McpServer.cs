@@ -103,6 +103,28 @@ public sealed class McpServer
         // Configuration
         _registry.Register(new ProfileCommand());
         _registry.Register(new OutputCommand(_output));
+
+        // ── Phase H — feature command parity with REPL ──
+        // (These were registered in Program.cs but missing here, causing
+        //  MCP tools to fail with "Unknown command: '<verb>'" at dispatch.)
+        _registry.Register(new AutoStopsCommand(_manager));
+        _registry.Register(new BlacklistCommand(_manager));
+        _registry.Register(new TPSLCommand(_manager));
+        _registry.Register(new PerformanceCommand(_manager));
+        _registry.Register(new NotificationsCommand(_manager));
+        _registry.Register(new MarketDataCommand(_manager));
+        _registry.Register(new AlertsCommand(_manager));
+        _registry.Register(new ProfilingCommand(_manager));
+        _registry.Register(new TriggersCommand(_manager));
+        _registry.Register(new LiveMarketsCommand(_manager));
+        _registry.Register(new AutoBuyCommand(_manager));
+        _registry.Register(new GraphToolCommand(_manager));
+        _registry.Register(new SignalsCommand(_manager));
+        _registry.Register(new DustCommand(_manager));
+        _registry.Register(new DepositCommand(_manager));
+        _registry.Register(new FundingCommand(_manager));
+        _registry.Register(new BuyApiLimitCommand(_manager));
+        _registry.Register(new HelpCommand(_registry));
     }
 
     private void WireEvents()
