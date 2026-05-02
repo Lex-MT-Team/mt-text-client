@@ -1125,8 +1125,10 @@ public sealed class McpServer
             Prop("confirm", "boolean", "Must be true to actually change"),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_orders_get_position_mode",
-            "Get current position mode (HEDGE/ONE_WAY) for a symbol",
-            Prop("symbol", "string", "Symbol (e.g. BTCUSDT)", required: true),
+            "Get current position mode (HEDGE/ONE_WAY) for a symbol. " +
+            "Note: position mode is per-symbol on Binance/OKX but per-account on Bybit; " +
+            "on Bybit the symbol argument is forwarded but does not affect the result.",
+            Prop("symbol", "string", "Symbol (e.g. BTCUSDT) — used by Binance/OKX; ignored by Bybit", required: true),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_orders_panic_sell",
             "EMERGENCY: Market-close all positions for a symbol immediately (requires confirm=true)",
@@ -1319,7 +1321,9 @@ public sealed class McpServer
             "Unsubscribe from TPSL position updates.",
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_tpsl_cancel",
-            "Cancel a TPSL position by ID. Requires confirm=true.",
+            "Cancel a TPSL (Take Profit / Stop Loss) position by ID. " +
+            "Requires an active TPSL subscription (call mt_tpsl_subscribe first). " +
+            "The id can be obtained from mt_tpsl_list. Requires confirm=true.",
             Prop("id", "string", "TPSL position ID", required: true),
             Prop("confirm", "boolean", "Must be true to proceed", required: true),
             Prop("profile", "string", "Target server profile"));
@@ -1368,7 +1372,9 @@ public sealed class McpServer
             "List all locally stored report sets with summary statistics. " +
             "Shows name, server, trade count, PnL, win rate, capture time.");
         yield return Tool("mt_reports_load",
-            "Load and display a stored report set by name. Shows trade table and summary stats.",
+            "Load a previously stored report set by name and display its trade table and summary stats. " +
+            "The tool returns formatted text output; it does not return raw rows for further processing. " +
+            "Use mt_reports_stored to list available stored sets first.",
             Prop("name", "string", "Name of the stored report set", required: true));
         yield return Tool("mt_reports_delete",
             "Delete a stored report set by name.",
@@ -1690,9 +1696,14 @@ public sealed class McpServer
             Prop("profile_name", "string", "Profile name (empty for current)"),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_profile_settings_update",
-            "Update profile settings (server configuration).",
+            "Update one or more profile settings on the connected MTCore. " +
+            "updates_json is a flat JSON object mapping setting keys to string values, e.g. " +
+            "{\"BlackList.FirstInitialization\":\"1\",\"NewListedMarket.AddToBlacklistEnabled\":\"1\"}. " +
+            "Setting values are always strings on the wire; numbers and booleans must be quoted. " +
+            "Some keys (e.g. blacklist arrays) require typed-object JSON values — see mt_blacklist_* tools. " +
+            "Some changes require a Core restart to take full effect (this is reported in the tool response).",
             Prop("profile_name", "string", "Profile name to update", true),
-            Prop("updates_json", "string", "JSON object of key-value updates", true),
+            Prop("updates_json", "string", "JSON object of key-value updates (string-valued)", true),
             Prop("profile", "string", "Target server profile"));
     }
 
@@ -2966,12 +2977,16 @@ public sealed class McpServer
 
         // TPSL Join/Split
         yield return Tool("mt_tpsl_join",
-            "Join multiple TPSL positions into one (requires --confirm)",
+            "Join multiple TPSL (Take Profit / Stop Loss) positions into a single position. " +
+            "Requires an active TPSL subscription and valid tpsl_ids (see mt_tpsl_list). " +
+            "Requires confirm=true.",
             Prop("tpsl_ids", "string", "Space-separated TPSL IDs to join", required: true),
             Prop("profile", "string", "Target server profile"),
             Prop("confirm", "boolean", "Safety confirmation", required: true));
         yield return Tool("mt_tpsl_split",
-            "Split a TPSL position (requires --confirm)",
+            "Split a TPSL (Take Profit / Stop Loss) position into two halves. " +
+            "Requires an active TPSL subscription and a valid tpsl_id (see mt_tpsl_list). " +
+            "Requires confirm=true.",
             Prop("tpsl_id", "string", "TPSL ID to split", required: true),
             Prop("profile", "string", "Target server profile"),
             Prop("confirm", "boolean", "Safety confirmation", required: true));
