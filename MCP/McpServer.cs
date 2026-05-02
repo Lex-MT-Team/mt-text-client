@@ -866,7 +866,7 @@ public sealed class McpServer
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_algos_delete", "Delete an algorithm (requires confirm=true)",
             Prop("id", "string", "Algorithm ID", required: true),
-            Prop("confirm", "boolean", "Must be true to actually delete"),
+            Prop("confirm", "boolean", "Must be true to actually delete", required: true),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_algos_toggle_debug", "Toggle debug/profiling mode",
             Prop("id", "string", "Algorithm ID", required: true),
@@ -893,7 +893,7 @@ public sealed class McpServer
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_algos_delete_group", "Delete an algorithm group (requires confirm=true)",
             Prop("group_id", "string", "Group ID", required: true),
-            Prop("confirm", "boolean", "Must be true to actually delete"),
+            Prop("confirm", "boolean", "Must be true to actually delete", required: true),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_algos_copy",
             "Copy an algorithm from one server to another (requires confirm=true)",

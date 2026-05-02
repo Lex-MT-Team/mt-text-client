@@ -282,7 +282,11 @@ public sealed class ImportCommand : ICommand
         string? configPath = FindAlgoConfigs();
         if (configPath == null || !File.Exists(configPath))
         {
-            return CommandResult.Fail("algoConfigs.json not found. Place it in ~/Documents/ or the application directory.");
+            return CommandResult.Fail("algoConfigs.json not found. Searched: " +
+                "(1) <app-dir>/algoConfigs.json, " +
+                "(2) ~/Documents/algoConfigs.json, " +
+                "(3) " + System.IO.Path.GetTempPath() + "algoConfigs.json. " +
+                "Copy the file from a MoonTrader installation into one of those locations.");
         }
 
         try
