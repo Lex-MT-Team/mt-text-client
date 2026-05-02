@@ -212,16 +212,29 @@ public sealed class StatusCommand : ICommand
                     running++;
                 }
             }
+
+            // MCP-002: distinguish "connected but stale" from healthy CONNECTED.
+            // The UDP socket can stay open silently after MTCore stops talking; we mark it
+            // STALE if no message has been seen for >60s (matches ConnectionHealthRecord.IsHealthy window).
+            ConnectionHealthRecord? hRow = _manager.GetHealthRecord(c.Name);
+            TimeSpan idleRow = hRow != null ? DateTime.UtcNow - hRow.LastSeen : TimeSpan.Zero;
+            bool staleRow = c.IsConnected && hRow != null && idleRow > TimeSpan.FromSeconds(60);
+            string statusLabel = c.IsConnected
+                ? (staleRow ? $"⚠ STALE ({(int)idleRow.TotalSeconds}s idle)" : "✓ CONNECTED")
+                : "✗ DISCONNECTED";
+
             data.Add(new
             {
                 c.Name,
-                Status = c.IsConnected ? "✓ CONNECTED" : "✗ DISCONNECTED",
+                Status = statusLabel,
                 Active = c.Name.Equals(_manager.ActiveConnectionName, StringComparison.OrdinalIgnoreCase) ? "◄" : "",
                 Address = $"{c.Profile.Address}:{c.Profile.Port}",
                 Exchange = c.Profile.Exchange.ToString(),
                 Algos = c.AlgoStore.Count,
                 Running = running,
-                Uptime = c.IsConnected ? FormatUptime(c.Uptime) : "-"
+                Uptime = c.IsConnected ? FormatUptime(c.Uptime) : "-",
+                IdleSeconds = hRow != null ? (int)idleRow.TotalSeconds : -1,
+                Stale = staleRow
             });
         }
 
@@ -266,10 +279,17 @@ public sealed class StatusCommand : ICommand
             }
         }
 
+        // MCP-002: same staleness check as list view.
+        ConnectionHealthRecord? h = _manager.GetHealthRecord(conn.Name);
+        TimeSpan idle = h != null ? DateTime.UtcNow - h.LastSeen : TimeSpan.Zero;
+        bool stale = conn.IsConnected && h != null && idle > TimeSpan.FromSeconds(60);
+
         var data = new
         {
             conn.Name,
             Connected = conn.IsConnected,
+            Stale = stale,
+            IdleSeconds = h != null ? (int)idle.TotalSeconds : -1,
             Address = $"{conn.Profile.Address}:{conn.Profile.Port}",
             Exchange = conn.Profile.Exchange.ToString(),
             Algos = algoCount,
@@ -278,7 +298,9 @@ public sealed class StatusCommand : ICommand
         };
 
         string? status = conn.IsConnected
-            ? $"[{conn.Name}] Connected to {conn.Profile.Address}:{conn.Profile.Port} | {algoCount} algos ({runningCount} running)"
+            ? (stale
+                ? $"[{conn.Name}] STALE — connected to {conn.Profile.Address}:{conn.Profile.Port} but no MTCore messages for {(int)idle.TotalSeconds}s | {algoCount} algos ({runningCount} running)"
+                : $"[{conn.Name}] Connected to {conn.Profile.Address}:{conn.Profile.Port} | {algoCount} algos ({runningCount} running)")
             : $"[{conn.Name}] Disconnected";
 
         return CommandResult.Ok(status, data);
