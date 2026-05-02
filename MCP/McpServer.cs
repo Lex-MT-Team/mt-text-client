@@ -473,8 +473,8 @@ public sealed class McpServer
 
             // Blacklist (Risk Management)
             "mt_blacklist_list" => $"blacklist list{profileSuffix}",
-            "mt_blacklist_add" => $"blacklist add-{arguments["type"]?.Value<string>() ?? "symbol"} {arguments["value"]?.Value<string>() ?? ""}{profileSuffix}{confirm}",
-            "mt_blacklist_remove" => $"blacklist remove-{arguments["type"]?.Value<string>() ?? "symbol"} {arguments["value"]?.Value<string>() ?? ""}{profileSuffix}{confirm}",
+            "mt_blacklist_add" => BuildBlacklistMutationCommand("add", arguments, profileSuffix, confirm),
+            "mt_blacklist_remove" => BuildBlacklistMutationCommand("remove", arguments, profileSuffix, confirm),
 
             // TPSL (Take Profit / Stop Loss)
             "mt_tpsl_list" => $"tpsl list{profileSuffix}",
@@ -1156,15 +1156,23 @@ public sealed class McpServer
             "List current blacklist configuration: blocked markets, quote assets, and symbols.",
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_blacklist_add",
-            "Add an item to the blacklist (market, quote, or symbol). Requires confirm=true.",
+            "Add an item to the blacklist. type=market needs market_type only; " +
+            "type=quote needs market_type+quote_asset; type=symbol needs market_type+quote_asset+symbol. " +
+            "Requires confirm=true.",
             Prop("type", "string", "Filter type: market, quote, or symbol", required: true),
-            Prop("value", "string", "Value to blacklist (e.g. FUTURES, USDT, BTCUSDT)", required: true),
+            Prop("market_type", "string", "Market type: SPOT, MARGIN, FUTURES, or DELIVERY", required: true),
+            Prop("quote_asset", "string", "Quote asset (e.g. usdt, busd) — required for type=quote and type=symbol"),
+            Prop("symbol", "string", "Symbol (e.g. btcusdt) — required for type=symbol"),
             Prop("confirm", "boolean", "Must be true to proceed", required: true),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_blacklist_remove",
-            "Remove an item from the blacklist. Requires confirm=true.",
+            "Remove an item from the blacklist. type=market needs market_type only; " +
+            "type=quote needs market_type+quote_asset; type=symbol needs market_type+quote_asset+symbol. " +
+            "Requires confirm=true.",
             Prop("type", "string", "Filter type: market, quote, or symbol", required: true),
-            Prop("value", "string", "Value to remove from blacklist", required: true),
+            Prop("market_type", "string", "Market type: SPOT, MARGIN, FUTURES, or DELIVERY", required: true),
+            Prop("quote_asset", "string", "Quote asset — required for type=quote and type=symbol"),
+            Prop("symbol", "string", "Symbol — required for type=symbol"),
             Prop("confirm", "boolean", "Must be true to proceed", required: true),
             Prop("profile", "string", "Target server profile"));
 
@@ -1643,6 +1651,24 @@ public sealed class McpServer
     {
         string? count = arguments["count"]?.Value<string>();
         return count != null ? $" --count {count}" : "";
+    }
+
+    private static string BuildBlacklistMutationCommand(string action, JObject arguments, string profileSuffix, string confirm)
+    {
+        string type = arguments["type"]?.Value<string>()?.ToLowerInvariant() ?? "symbol";
+        string marketType = arguments["market_type"]?.Value<string>() ?? "";
+        string quoteAsset = arguments["quote_asset"]?.Value<string>() ?? "";
+        string symbol = arguments["symbol"]?.Value<string>() ?? "";
+
+        string args = type switch
+        {
+            "market" => marketType,
+            "quote"  => $"{marketType} {quoteAsset}".Trim(),
+            "symbol" => $"{marketType} {quoteAsset} {symbol}".Trim(),
+            _        => $"{marketType} {quoteAsset} {symbol}".Trim()
+        };
+
+        return $"blacklist {action}-{type} {args}{profileSuffix}{confirm}";
     }
 
     private static string BuildReportsCommand(JObject arguments, string profileSuffix)
