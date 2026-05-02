@@ -1,21 +1,30 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using MTShared.Types;
 using MTTextClient.Core;
+using Newtonsoft.Json.Linq;
+
 namespace MTTextClient.Commands;
 
 /// <summary>
-/// Blacklist commands — view and manage symbol/market/quote blacklist on Core.
-/// Blacklist data is managed through profile settings.
+/// Blacklist commands — view and manage symbol/market/quote blacklist.
+///
+/// Storage shape (matches MTCore profile-settings format):
+///   BlackList.MarketTypes : JSON array of { MarketType:int, TimeFilter:{} }
+///   BlackList.Quotes      : JSON array of { MarketType:int, QuoteAsset:string, TimeFilter:{} }
+///   BlackList.Symbols     : JSON array of { MarketType:int, QuoteAsset:string, Symbol:string, TimeFilter:{} }
+///
+/// MarketType ints: 0=UNKNOWN, 1=SPOT, 2=MARGIN, 3=FUTURES, 4=DELIVERY.
 ///
 /// Subcommands:
-///   blacklist list                — show current blacklist (markets, quotes, symbols)
-///   blacklist add-market <value>  — add a market type to blacklist
-///   blacklist add-quote <value>   — add a quote asset to blacklist
-///   blacklist add-symbol <value>  — add a symbol to blacklist
-///   blacklist remove-market <v>   — remove a market type from blacklist
-///   blacklist remove-quote <v>    — remove a quote asset from blacklist
-///   blacklist remove-symbol <v>   — remove a symbol from blacklist
+///   blacklist list
+///   blacklist add-market    &lt;market&gt;                            --confirm
+///   blacklist add-quote     &lt;market&gt; &lt;quote&gt;                    --confirm
+///   blacklist add-symbol    &lt;market&gt; &lt;quote&gt; &lt;symbol&gt;           --confirm
+///   blacklist remove-market &lt;market&gt;                            --confirm
+///   blacklist remove-quote  &lt;market&gt; &lt;quote&gt;                    --confirm
+///   blacklist remove-symbol &lt;market&gt; &lt;quote&gt; &lt;symbol&gt;           --confirm
 ///
 /// Supports @profile targeting.
 /// </summary>
@@ -32,7 +41,7 @@ public sealed class BlacklistCommand : ICommand
 
     public string Name => "blacklist";
     public string Description => "View and manage symbol/market/quote blacklist (risk management)";
-    public string Usage => "blacklist <list|add-market|add-quote|add-symbol|remove-market|remove-quote|remove-symbol> [value] [@profile]";
+    public string Usage => "blacklist <list|add-market|add-quote|add-symbol|remove-market|remove-quote|remove-symbol> [args] --confirm [@profile]";
 
     public BlacklistCommand(ConnectionManager manager)
     {
@@ -43,15 +52,7 @@ public sealed class BlacklistCommand : ICommand
     {
         if (args.Length == 0)
         {
-            return CommandResult.Fail(
-                "Usage: blacklist <subcommand>\n" +
-                "  list            — show current blacklist\n" +
-                "  add-market <v>  — add market type to blacklist\n" +
-                "  add-quote <v>   — add quote asset to blacklist\n" +
-                "  add-symbol <v>  — add symbol to blacklist\n" +
-                "  remove-market   — remove market from blacklist\n" +
-                "  remove-quote    — remove quote from blacklist\n" +
-                "  remove-symbol   — remove symbol from blacklist");
+            return CommandResult.Fail(UsageHelp());
         }
 
         string? targetProfile = null;
@@ -83,16 +84,29 @@ public sealed class BlacklistCommand : ICommand
 
         return subcommand switch
         {
-            "list" => HandleList(targetProfile),
-            "add-market" => HandleAdd(BLACKLIST_MARKETS_KEY, cleanArgs, targetProfile, confirmFlag),
-            "add-quote" => HandleAdd(BLACKLIST_QUOTES_KEY, cleanArgs, targetProfile, confirmFlag),
-            "add-symbol" => HandleAdd(BLACKLIST_SYMBOLS_KEY, cleanArgs, targetProfile, confirmFlag),
-            "remove-market" => HandleRemove(BLACKLIST_MARKETS_KEY, cleanArgs, targetProfile, confirmFlag),
-            "remove-quote" => HandleRemove(BLACKLIST_QUOTES_KEY, cleanArgs, targetProfile, confirmFlag),
-            "remove-symbol" => HandleRemove(BLACKLIST_SYMBOLS_KEY, cleanArgs, targetProfile, confirmFlag),
-            _ => CommandResult.Fail($"Unknown subcommand: {subcommand}. Use: list, add-market, add-quote, add-symbol, remove-market, remove-quote, remove-symbol")
+            "list"          => HandleList(targetProfile),
+            "add-market"    => HandleAddMarket(cleanArgs, targetProfile, confirmFlag),
+            "add-quote"     => HandleAddQuote(cleanArgs, targetProfile, confirmFlag),
+            "add-symbol"    => HandleAddSymbol(cleanArgs, targetProfile, confirmFlag),
+            "remove-market" => HandleRemoveMarket(cleanArgs, targetProfile, confirmFlag),
+            "remove-quote"  => HandleRemoveQuote(cleanArgs, targetProfile, confirmFlag),
+            "remove-symbol" => HandleRemoveSymbol(cleanArgs, targetProfile, confirmFlag),
+            _ => CommandResult.Fail($"Unknown subcommand: {subcommand}.\n{UsageHelp()}")
         };
     }
+
+    private static string UsageHelp() =>
+        "Usage:\n" +
+        "  blacklist list\n" +
+        "  blacklist add-market    <market>                  --confirm\n" +
+        "  blacklist add-quote     <market> <quote>          --confirm\n" +
+        "  blacklist add-symbol    <market> <quote> <symbol> --confirm\n" +
+        "  blacklist remove-market <market>                  --confirm\n" +
+        "  blacklist remove-quote  <market> <quote>          --confirm\n" +
+        "  blacklist remove-symbol <market> <quote> <symbol> --confirm\n" +
+        "  market = SPOT | MARGIN | FUTURES | DELIVERY";
+
+    // ─── helpers ────────────────────────────────────────────────────────────
 
     private CoreConnection? ResolveConnection(string? targetProfile, out CommandResult? error)
     {
@@ -113,6 +127,104 @@ public sealed class BlacklistCommand : ICommand
         return conn;
     }
 
+    private static (bool ok, MarketType mt, string? error) ParseMarket(string raw)
+    {
+        if (Enum.TryParse<MarketType>(raw, ignoreCase: true, out var mt) &&
+            Enum.IsDefined(typeof(MarketType), mt) &&
+            mt != MarketType.UNKNOWN)
+        {
+            return (true, mt, null);
+        }
+        return (false, default, $"Invalid market '{raw}'. Allowed: SPOT, MARGIN, FUTURES, DELIVERY.");
+    }
+
+    private static (bool ok, JArray arr, string? error) ParseStoredArray(string? raw, string key)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return (true, new JArray(), null);
+        }
+        try
+        {
+            var token = JToken.Parse(raw);
+            if (token is JArray arr)
+            {
+                return (true, arr, null);
+            }
+            return (false, new JArray(),
+                $"Setting '{key}' has unexpected shape (expected JSON array, got {token.Type}). " +
+                "This typically means the value was written by an older client using comma-separated text. " +
+                "Edit the value via the GUI or 'settings set' to a valid JSON array before using blacklist commands.");
+        }
+        catch (Exception ex)
+        {
+            return (false, new JArray(),
+                $"Setting '{key}' is not valid JSON ({ex.Message}). " +
+                "Expected a JSON array of typed objects.");
+        }
+    }
+
+    private static bool MarketEntryEquals(JToken entry, MarketType mt) =>
+        entry is JObject o && (int?)o["MarketType"] == (int)mt;
+
+    private static bool QuoteEntryEquals(JToken entry, MarketType mt, string quote) =>
+        entry is JObject o &&
+        (int?)o["MarketType"] == (int)mt &&
+        string.Equals((string?)o["QuoteAsset"], quote, StringComparison.OrdinalIgnoreCase);
+
+    private static bool SymbolEntryEquals(JToken entry, MarketType mt, string quote, string symbol) =>
+        entry is JObject o &&
+        (int?)o["MarketType"] == (int)mt &&
+        string.Equals((string?)o["QuoteAsset"], quote, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals((string?)o["Symbol"], symbol, StringComparison.OrdinalIgnoreCase);
+
+    private CommandResult LoadAndUpdate(
+        CoreConnection conn,
+        string key,
+        Func<JArray, (bool ok, string? error)> mutate,
+        string successMessage)
+    {
+        if (!conn.ProfileSettingsStore.HasData)
+        {
+            var (success, reqError) = conn.RequestProfileSettings();
+            if (!success)
+            {
+                return CommandResult.Fail($"[{conn.Name}] Failed to load settings: {reqError}");
+            }
+        }
+
+        string? raw = conn.ProfileSettingsStore.GetValue(key);
+        var (parseOk, arr, parseErr) = ParseStoredArray(raw, key);
+        if (!parseOk)
+        {
+            return CommandResult.Fail($"[{conn.Name}] {parseErr}");
+        }
+
+        var (mutOk, mutErr) = mutate(arr);
+        if (!mutOk)
+        {
+            return CommandResult.Fail($"[{conn.Name}] {mutErr}");
+        }
+
+        string newValue = arr.ToString(Newtonsoft.Json.Formatting.None);
+        var updated = new Dictionary<string, string> { { key, newValue } };
+
+        var (updateSuccess, coreRestartNeeded, updateError) = conn.UpdateProfileSettings(updated);
+        if (!updateSuccess)
+        {
+            return CommandResult.Fail($"[{conn.Name}] Failed to update blacklist: {updateError}");
+        }
+
+        string msg = $"[{conn.Name}] {successMessage}";
+        if (coreRestartNeeded)
+        {
+            msg += " (Core restart needed for full effect)";
+        }
+        return CommandResult.Ok(msg);
+    }
+
+    // ─── list ───────────────────────────────────────────────────────────────
+
     private CommandResult HandleList(string? targetProfile)
     {
         CoreConnection? conn = ResolveConnection(targetProfile, out CommandResult? error);
@@ -121,7 +233,6 @@ public sealed class BlacklistCommand : ICommand
             return error!;
         }
 
-        // Ensure settings are loaded
         if (!conn.ProfileSettingsStore.HasData)
         {
             var (success, reqError) = conn.RequestProfileSettings();
@@ -131,165 +242,215 @@ public sealed class BlacklistCommand : ICommand
             }
         }
 
-        string? markets = conn.ProfileSettingsStore.GetValue(BLACKLIST_MARKETS_KEY);
-        string? quotes = conn.ProfileSettingsStore.GetValue(BLACKLIST_QUOTES_KEY);
-        string? symbols = conn.ProfileSettingsStore.GetValue(BLACKLIST_SYMBOLS_KEY);
-        string? firstInit = conn.ProfileSettingsStore.GetValue(BLACKLIST_FIRST_INIT_KEY);
-        string? newListedEnabled = conn.ProfileSettingsStore.GetValue(NEW_LISTED_ENABLED_KEY);
-        string? newListedTime = conn.ProfileSettingsStore.GetValue(NEW_LISTED_TIME_KEY);
+        string? marketsRaw  = conn.ProfileSettingsStore.GetValue(BLACKLIST_MARKETS_KEY);
+        string? quotesRaw   = conn.ProfileSettingsStore.GetValue(BLACKLIST_QUOTES_KEY);
+        string? symbolsRaw  = conn.ProfileSettingsStore.GetValue(BLACKLIST_SYMBOLS_KEY);
+        string? firstInit   = conn.ProfileSettingsStore.GetValue(BLACKLIST_FIRST_INIT_KEY);
+        string? newEnabled  = conn.ProfileSettingsStore.GetValue(NEW_LISTED_ENABLED_KEY);
+        string? newTime     = conn.ProfileSettingsStore.GetValue(NEW_LISTED_TIME_KEY);
+
+        var (mOk, markets, mErr) = ParseStoredArray(marketsRaw, BLACKLIST_MARKETS_KEY);
+        var (qOk, quotes,  qErr) = ParseStoredArray(quotesRaw,  BLACKLIST_QUOTES_KEY);
+        var (sOk, symbols, sErr) = ParseStoredArray(symbolsRaw, BLACKLIST_SYMBOLS_KEY);
 
         var sb = new StringBuilder();
         sb.AppendLine($"[{conn.Name}] Blacklist Configuration:");
         sb.AppendLine();
-        sb.AppendLine($"  Market Types:   {(string.IsNullOrEmpty(markets) ? "(none)" : markets)}");
-        sb.AppendLine($"  Quote Assets:   {(string.IsNullOrEmpty(quotes) ? "(none)" : quotes)}");
-        sb.AppendLine($"  Symbols:        {(string.IsNullOrEmpty(symbols) ? "(none)" : symbols)}");
-        sb.AppendLine();
-        sb.AppendLine($"  First Init:            {firstInit ?? "N/A"}");
-        sb.AppendLine($"  New Listed → Blacklist: {newListedEnabled ?? "N/A"}");
-        sb.AppendLine($"  New Listed Duration:    {newListedTime ?? "N/A"}");
 
-        // Count items
-        int marketCount = CountItems(markets);
-        int quoteCount = CountItems(quotes);
-        int symbolCount = CountItems(symbols);
+        sb.AppendLine($"  Market Types ({(mOk ? markets.Count.ToString() : "?")}):");
+        if (!mOk) sb.AppendLine($"    ⚠ {mErr}");
+        else if (markets.Count == 0) sb.AppendLine("    (none)");
+        else foreach (var e in markets)
+            sb.AppendLine($"    • {MarketName((int?)e["MarketType"])}");
+
+        sb.AppendLine($"  Quote Assets ({(qOk ? quotes.Count.ToString() : "?")}):");
+        if (!qOk) sb.AppendLine($"    ⚠ {qErr}");
+        else if (quotes.Count == 0) sb.AppendLine("    (none)");
+        else foreach (var e in quotes)
+            sb.AppendLine($"    • {MarketName((int?)e["MarketType"])} / {(string?)e["QuoteAsset"] ?? "?"}");
+
+        sb.AppendLine($"  Symbols ({(sOk ? symbols.Count.ToString() : "?")}):");
+        if (!sOk) sb.AppendLine($"    ⚠ {sErr}");
+        else if (symbols.Count == 0) sb.AppendLine("    (none)");
+        else foreach (var e in symbols)
+            sb.AppendLine($"    • {MarketName((int?)e["MarketType"])} / {(string?)e["QuoteAsset"] ?? "?"} / {(string?)e["Symbol"] ?? "?"}");
+
         sb.AppendLine();
-        sb.AppendLine($"  Total: {marketCount} markets, {quoteCount} quotes, {symbolCount} symbols");
+        sb.AppendLine($"  First Init:             {firstInit ?? "N/A"}");
+        sb.AppendLine($"  New Listed → Blacklist: {newEnabled ?? "N/A"}");
+        sb.AppendLine($"  New Listed Duration:    {newTime ?? "N/A"}");
 
         return CommandResult.Ok(sb.ToString());
     }
 
-    private CommandResult HandleAdd(string settingsKey, List<string> cleanArgs, string? targetProfile, bool confirm)
+    private static string MarketName(int? code) => code switch
     {
-        if (cleanArgs.Count < 2)
-        {
-            return CommandResult.Fail($"Usage: blacklist {cleanArgs[0]} <value> --confirm [@profile]");
-        }
-        if (!confirm)
-        {
-            return CommandResult.Fail($"Add '{cleanArgs[1]}' to blacklist? Use --confirm to proceed.");
-        }
+        0 => "UNKNOWN",
+        1 => "SPOT",
+        2 => "MARGIN",
+        3 => "FUTURES",
+        4 => "DELIVERY",
+        null => "?",
+        _ => $"UNKNOWN({code})"
+    };
 
-        CoreConnection? conn = ResolveConnection(targetProfile, out CommandResult? error);
-        if (conn == null)
+    // ─── market ─────────────────────────────────────────────────────────────
+
+    private CommandResult HandleAddMarket(List<string> args, string? profile, bool confirm)
+    {
+        if (args.Count < 2) return CommandResult.Fail("Usage: blacklist add-market <market> --confirm");
+        var (ok, mt, err) = ParseMarket(args[1]);
+        if (!ok) return CommandResult.Fail(err!);
+        if (!confirm) return CommandResult.Fail($"Add market '{mt}' to blacklist? Use --confirm to proceed.");
+
+        CoreConnection? conn = ResolveConnection(profile, out var connErr);
+        if (conn == null) return connErr!;
+
+        return LoadAndUpdate(conn, BLACKLIST_MARKETS_KEY, arr =>
         {
-            return error!;
-        }
-
-        // Load current settings
-        if (!conn.ProfileSettingsStore.HasData)
-        {
-            var (success, reqError) = conn.RequestProfileSettings();
-            if (!success)
-            {
-                return CommandResult.Fail($"[{conn.Name}] Failed to load settings: {reqError}");
-            }
-        }
-
-        string currentValue = conn.ProfileSettingsStore.GetValue(settingsKey) ?? "";
-        string newItem = cleanArgs[1].Trim();
-
-        // Check if already present
-        string[] existing = currentValue.Split(',', StringSplitOptions.RemoveEmptyEntries);
-        for (int i = 0; i < existing.Length; i++)
-        {
-            if (existing[i].Trim().Equals(newItem, StringComparison.OrdinalIgnoreCase))
-            {
-                return CommandResult.Fail($"[{conn.Name}] '{newItem}' already in blacklist ({settingsKey}).");
-            }
-        }
-
-        // Append
-        string newValue = string.IsNullOrEmpty(currentValue) ? newItem : $"{currentValue},{newItem}";
-        var updated = new Dictionary<string, string> { { settingsKey, newValue } };
-
-        var (updateSuccess, coreRestartNeeded, updateError) = conn.UpdateProfileSettings(updated);
-        if (!updateSuccess)
-        {
-            return CommandResult.Fail($"[{conn.Name}] Failed to update blacklist: {updateError}");
-        }
-
-        string msg = $"[{conn.Name}] Added '{newItem}' to {settingsKey}.";
-        if (coreRestartNeeded)
-        {
-            msg += " (Core restart needed for full effect)";
-        }
-        return CommandResult.Ok(msg);
+            foreach (var e in arr)
+                if (MarketEntryEquals(e, mt))
+                    return (false, $"Market '{mt}' already in blacklist.");
+            arr.Add(new JObject {
+                ["MarketType"] = (int)mt,
+                ["TimeFilter"] = new JObject()
+            });
+            return (true, null);
+        }, $"Added market '{mt}' to blacklist.");
     }
 
-    private CommandResult HandleRemove(string settingsKey, List<string> cleanArgs, string? targetProfile, bool confirm)
+    private CommandResult HandleRemoveMarket(List<string> args, string? profile, bool confirm)
     {
-        if (cleanArgs.Count < 2)
-        {
-            return CommandResult.Fail($"Usage: blacklist {cleanArgs[0]} <value> --confirm [@profile]");
-        }
-        if (!confirm)
-        {
-            return CommandResult.Fail($"Remove '{cleanArgs[1]}' from blacklist? Use --confirm to proceed.");
-        }
+        if (args.Count < 2) return CommandResult.Fail("Usage: blacklist remove-market <market> --confirm");
+        var (ok, mt, err) = ParseMarket(args[1]);
+        if (!ok) return CommandResult.Fail(err!);
+        if (!confirm) return CommandResult.Fail($"Remove market '{mt}' from blacklist? Use --confirm to proceed.");
 
-        CoreConnection? conn = ResolveConnection(targetProfile, out CommandResult? error);
-        if (conn == null)
-        {
-            return error!;
-        }
+        CoreConnection? conn = ResolveConnection(profile, out var connErr);
+        if (conn == null) return connErr!;
 
-        if (!conn.ProfileSettingsStore.HasData)
+        return LoadAndUpdate(conn, BLACKLIST_MARKETS_KEY, arr =>
         {
-            var (success, reqError) = conn.RequestProfileSettings();
-            if (!success)
+            for (int i = arr.Count - 1; i >= 0; i--)
             {
-                return CommandResult.Fail($"[{conn.Name}] Failed to load settings: {reqError}");
+                if (MarketEntryEquals(arr[i], mt))
+                {
+                    arr.RemoveAt(i);
+                    return (true, null);
+                }
             }
-        }
-
-        string currentValue = conn.ProfileSettingsStore.GetValue(settingsKey) ?? "";
-        string removeItem = cleanArgs[1].Trim();
-
-        // Filter out the item
-        string[] existing = currentValue.Split(',', StringSplitOptions.RemoveEmptyEntries);
-        var remaining = new List<string>();
-        bool found = false;
-        for (int i = 0; i < existing.Length; i++)
-        {
-            if (existing[i].Trim().Equals(removeItem, StringComparison.OrdinalIgnoreCase))
-            {
-                found = true;
-            }
-            else
-            {
-                remaining.Add(existing[i].Trim());
-            }
-        }
-
-        if (!found)
-        {
-            return CommandResult.Fail($"[{conn.Name}] '{removeItem}' not found in {settingsKey}.");
-        }
-
-        string newValue = string.Join(",", remaining);
-        var updated = new Dictionary<string, string> { { settingsKey, newValue } };
-
-        var (updateSuccess, coreRestartNeeded, updateError) = conn.UpdateProfileSettings(updated);
-        if (!updateSuccess)
-        {
-            return CommandResult.Fail($"[{conn.Name}] Failed to update blacklist: {updateError}");
-        }
-
-        string msg = $"[{conn.Name}] Removed '{removeItem}' from {settingsKey}.";
-        if (coreRestartNeeded)
-        {
-            msg += " (Core restart needed for full effect)";
-        }
-        return CommandResult.Ok(msg);
+            return (false, $"Market '{mt}' not found in blacklist.");
+        }, $"Removed market '{mt}' from blacklist.");
     }
 
-    private static int CountItems(string? value)
+    // ─── quote ──────────────────────────────────────────────────────────────
+
+    private CommandResult HandleAddQuote(List<string> args, string? profile, bool confirm)
     {
-        if (string.IsNullOrEmpty(value))
+        if (args.Count < 3) return CommandResult.Fail("Usage: blacklist add-quote <market> <quote> --confirm");
+        var (ok, mt, err) = ParseMarket(args[1]);
+        if (!ok) return CommandResult.Fail(err!);
+        string quote = args[2].Trim().ToLowerInvariant();
+        if (quote.Length == 0) return CommandResult.Fail("Quote asset is empty.");
+        if (!confirm) return CommandResult.Fail($"Add quote '{mt}/{quote}' to blacklist? Use --confirm to proceed.");
+
+        CoreConnection? conn = ResolveConnection(profile, out var connErr);
+        if (conn == null) return connErr!;
+
+        return LoadAndUpdate(conn, BLACKLIST_QUOTES_KEY, arr =>
         {
-            return 0;
-        }
-        return value.Split(',', StringSplitOptions.RemoveEmptyEntries).Length;
+            foreach (var e in arr)
+                if (QuoteEntryEquals(e, mt, quote))
+                    return (false, $"Quote '{mt}/{quote}' already in blacklist.");
+            arr.Add(new JObject {
+                ["MarketType"] = (int)mt,
+                ["QuoteAsset"] = quote,
+                ["TimeFilter"] = new JObject()
+            });
+            return (true, null);
+        }, $"Added quote '{mt}/{quote}' to blacklist.");
+    }
+
+    private CommandResult HandleRemoveQuote(List<string> args, string? profile, bool confirm)
+    {
+        if (args.Count < 3) return CommandResult.Fail("Usage: blacklist remove-quote <market> <quote> --confirm");
+        var (ok, mt, err) = ParseMarket(args[1]);
+        if (!ok) return CommandResult.Fail(err!);
+        string quote = args[2].Trim().ToLowerInvariant();
+        if (quote.Length == 0) return CommandResult.Fail("Quote asset is empty.");
+        if (!confirm) return CommandResult.Fail($"Remove quote '{mt}/{quote}' from blacklist? Use --confirm to proceed.");
+
+        CoreConnection? conn = ResolveConnection(profile, out var connErr);
+        if (conn == null) return connErr!;
+
+        return LoadAndUpdate(conn, BLACKLIST_QUOTES_KEY, arr =>
+        {
+            for (int i = arr.Count - 1; i >= 0; i--)
+            {
+                if (QuoteEntryEquals(arr[i], mt, quote))
+                {
+                    arr.RemoveAt(i);
+                    return (true, null);
+                }
+            }
+            return (false, $"Quote '{mt}/{quote}' not found in blacklist.");
+        }, $"Removed quote '{mt}/{quote}' from blacklist.");
+    }
+
+    // ─── symbol ─────────────────────────────────────────────────────────────
+
+    private CommandResult HandleAddSymbol(List<string> args, string? profile, bool confirm)
+    {
+        if (args.Count < 4) return CommandResult.Fail("Usage: blacklist add-symbol <market> <quote> <symbol> --confirm");
+        var (ok, mt, err) = ParseMarket(args[1]);
+        if (!ok) return CommandResult.Fail(err!);
+        string quote = args[2].Trim().ToLowerInvariant();
+        string symbol = args[3].Trim().ToLowerInvariant();
+        if (quote.Length == 0 || symbol.Length == 0) return CommandResult.Fail("Quote and symbol must be non-empty.");
+        if (!confirm) return CommandResult.Fail($"Add symbol '{mt}/{quote}/{symbol}' to blacklist? Use --confirm to proceed.");
+
+        CoreConnection? conn = ResolveConnection(profile, out var connErr);
+        if (conn == null) return connErr!;
+
+        return LoadAndUpdate(conn, BLACKLIST_SYMBOLS_KEY, arr =>
+        {
+            foreach (var e in arr)
+                if (SymbolEntryEquals(e, mt, quote, symbol))
+                    return (false, $"Symbol '{mt}/{quote}/{symbol}' already in blacklist.");
+            arr.Add(new JObject {
+                ["MarketType"] = (int)mt,
+                ["QuoteAsset"] = quote,
+                ["Symbol"]     = symbol,
+                ["TimeFilter"] = new JObject()
+            });
+            return (true, null);
+        }, $"Added symbol '{mt}/{quote}/{symbol}' to blacklist.");
+    }
+
+    private CommandResult HandleRemoveSymbol(List<string> args, string? profile, bool confirm)
+    {
+        if (args.Count < 4) return CommandResult.Fail("Usage: blacklist remove-symbol <market> <quote> <symbol> --confirm");
+        var (ok, mt, err) = ParseMarket(args[1]);
+        if (!ok) return CommandResult.Fail(err!);
+        string quote = args[2].Trim().ToLowerInvariant();
+        string symbol = args[3].Trim().ToLowerInvariant();
+        if (quote.Length == 0 || symbol.Length == 0) return CommandResult.Fail("Quote and symbol must be non-empty.");
+        if (!confirm) return CommandResult.Fail($"Remove symbol '{mt}/{quote}/{symbol}' from blacklist? Use --confirm to proceed.");
+
+        CoreConnection? conn = ResolveConnection(profile, out var connErr);
+        if (conn == null) return connErr!;
+
+        return LoadAndUpdate(conn, BLACKLIST_SYMBOLS_KEY, arr =>
+        {
+            for (int i = arr.Count - 1; i >= 0; i--)
+            {
+                if (SymbolEntryEquals(arr[i], mt, quote, symbol))
+                {
+                    arr.RemoveAt(i);
+                    return (true, null);
+                }
+            }
+            return (false, $"Symbol '{mt}/{quote}/{symbol}' not found in blacklist.");
+        }, $"Removed symbol '{mt}/{quote}/{symbol}' from blacklist.");
     }
 }
