@@ -350,6 +350,33 @@ public sealed class McpServer
         _ => false
     };
 
+
+    /// <summary>
+    /// Build a HttpClient configured for HashiCorp Vault calls. Centralized so
+    /// the timeout (default 10 s) and X-Vault-Token header are applied
+    /// uniformly to every Vault site. Without an explicit timeout, .NET's
+    /// HttpClient defaults to 100 s — long enough that a network black-hole
+    /// or unresponsive Vault instance can wedge the MCP request thread
+    /// (which is invoked synchronously via .GetAwaiter().GetResult()).
+    /// EN-review item #7 / MCP-006.
+    /// </summary>
+    private static System.Net.Http.HttpClient BuildVaultHttpClient(string vaultToken)
+    {
+        // Allow override via VAULT_HTTP_TIMEOUT_SEC (clamped to [1, 120]).
+        int timeoutSec = 10;
+        string? env = Environment.GetEnvironmentVariable("VAULT_HTTP_TIMEOUT_SEC");
+        if (int.TryParse(env, out int parsed) && parsed >= 1 && parsed <= 120)
+        {
+            timeoutSec = parsed;
+        }
+        var http = new System.Net.Http.HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(timeoutSec)
+        };
+        http.DefaultRequestHeaders.Add("X-Vault-Token", vaultToken);   // token in header only
+        return http;
+    }
+
     /// <summary>Map an MCP tool name + arguments to a REPL command string.</summary>
     private static string? MapToolToCommand(string toolName, JObject arguments)
     {
@@ -2065,8 +2092,7 @@ public sealed class McpServer
                 System.Text.Encoding.UTF8,
                 "application/json");
 
-            using var http = new System.Net.Http.HttpClient();
-            http.DefaultRequestHeaders.Add("X-Vault-Token", vaultToken);   // token in header only
+            using var http = BuildVaultHttpClient(vaultToken);
             var resp = http.PostAsync(url, content).GetAwaiter().GetResult();
             if (!resp.IsSuccessStatusCode)
             {
@@ -2093,8 +2119,7 @@ public sealed class McpServer
             var reqMsg = new System.Net.Http.HttpRequestMessage(
                 new System.Net.Http.HttpMethod("LIST"), url);
 
-            using var http = new System.Net.Http.HttpClient();
-            http.DefaultRequestHeaders.Add("X-Vault-Token", vaultToken);   // token in header only
+            using var http = BuildVaultHttpClient(vaultToken);
             var resp = http.SendAsync(reqMsg).GetAwaiter().GetResult();
             string body = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult();
 
