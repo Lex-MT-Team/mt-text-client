@@ -284,6 +284,25 @@ public sealed class McpServer
             return MakeResult(id, new JObject { ["content"] = internalContent, ["isError"] = false });
         }
 
+        // Bulk-operation safety gate (MCP-only): refuse start_all / stop_all /
+        // fleet_disconnect unless confirm=true was explicitly supplied. Mirrors
+        // the gating already in place at the REPL layer for delete / cancel-all
+        // / close-all. The REPL TUI is unaffected — these REPL commands keep
+        // their existing (no --confirm) semantics for direct human operators.
+        if (RequiresMcpConfirm(toolName) && arguments["confirm"]?.Value<bool>() != true)
+        {
+            var bulkContent = new JArray
+            {
+                new JObject
+                {
+                    ["type"] = "text",
+                    ["text"] = $"{{\"error\":\"{toolName} is a bulk operation; pass confirm=true to execute.\"}}"
+                }
+            };
+            _metrics.RecordLatency(toolName, _latencySw.ElapsedMilliseconds);
+            return MakeResult(id, new JObject { ["content"] = bulkContent, ["isError"] = true });
+        }
+
         // Map tool name to REPL command
         string? commandLine = MapToolToCommand(toolName, arguments);
         if (commandLine == null)
@@ -314,6 +333,22 @@ public sealed class McpServer
 
         return MakeResult(id, resultObj);
     }
+
+
+    /// <summary>
+    /// MCP-only safety gate: tools listed here refuse to execute unless
+    /// the caller supplied <c>confirm=true</c>. They are bulk / fleet-wide
+    /// operations whose accidental invocation can be costly. The underlying
+    /// REPL commands are NOT modified — interactive TUI users keep their
+    /// existing semantics.
+    /// </summary>
+    private static bool RequiresMcpConfirm(string toolName) => toolName switch
+    {
+        "mt_algos_start_all"   => true,
+        "mt_algos_stop_all"    => true,
+        "mt_fleet_disconnect"  => true,
+        _ => false
+    };
 
     /// <summary>Map an MCP tool name + arguments to a REPL command string.</summary>
     private static string? MapToolToCommand(string toolName, JObject arguments)
@@ -820,7 +855,9 @@ public sealed class McpServer
         yield return Tool("mt_algos_stop", "Stop an algorithm",
             Prop("id", "string", "Algorithm ID", required: true),
             Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_algos_start_all", "Start all algorithms",
+        yield return Tool("mt_algos_start_all",
+            "Start all algorithms (requires confirm=true). Bulk operation: starts every algo on the target server.",
+            Prop("confirm", "boolean", "Must be true to actually start all", required: true),
             Prop("profile", "string", "Target server profile"));
 
         // MT-012: Algo verification — BUG-13 (Silent Init Failure) detection
@@ -836,7 +873,9 @@ public sealed class McpServer
             "(isRunning=true but symbol/market unresolved). Does NOT start the algo.",
             Prop("id",      "string", "Algorithm ID to inspect", required: true),
             Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_algos_stop_all", "Stop all algorithms",
+        yield return Tool("mt_algos_stop_all",
+            "Stop all algorithms (requires confirm=true). Bulk operation: stops every running algo on the target server.",
+            Prop("confirm", "boolean", "Must be true to actually stop all", required: true),
             Prop("profile", "string", "Target server profile"));
 
         // MT-008: Batch algo operations — start/stop/config across multiple servers
@@ -1087,7 +1126,8 @@ public sealed class McpServer
             "Grand total balance, PnL, algos, positions, per-exchange breakdown. " +
             "Use this for periodic fleet status reports.");
         yield return Tool("mt_fleet_disconnect",
-            "Disconnect from ALL servers at once.");
+            "Disconnect from ALL servers at once (requires confirm=true). Fleet-wide operation.",
+            Prop("confirm", "boolean", "Must be true to actually disconnect all", required: true));
 
         // MT-004
         yield return Tool("mt_fleet_batch_connect",
