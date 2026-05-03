@@ -73,10 +73,20 @@ public sealed class OutputManager
 
     private static void RenderTable(StringBuilder sb, IList list)
     {
+        // Find the first non-null element to derive table headers from.
+        // Lists from CommandResult.Data may legally contain null entries; in
+        // that case we fall back to scalar formatting for the whole list.
+        object? firstNonNull = null;
+        foreach (object? candidate in list)
+        {
+            if (candidate != null) { firstNonNull = candidate; break; }
+        }
+
         JObject firstObj;
         try
         {
-            firstObj = JObject.FromObject(list[0]!);
+            if (firstNonNull == null) throw new InvalidOperationException("all null");
+            firstObj = JObject.FromObject(firstNonNull);
         }
         catch
         {
@@ -114,8 +124,34 @@ public sealed class OutputManager
         List<string[]> rows = new List<string[]>();
         foreach (object? item in list)
         {
-            JObject jObj = JObject.FromObject(item!);
             string[] row = new string[colCount];
+            if (item == null)
+            {
+                // Null row — render as "<null>" placeholder in first column,
+                // empty cells in the rest. Avoids JObject.FromObject NRE
+                // (EN review #16).
+                row[0] = "<null>";
+                for (int i = 1; i < colCount; i++) row[i] = "";
+                widths[0] = Math.Max(widths[0], row[0].Length);
+                rows.Add(row);
+                continue;
+            }
+
+            JObject jObj;
+            try
+            {
+                jObj = JObject.FromObject(item);
+            }
+            catch
+            {
+                // Non-serializable row — degrade to scalar repr in first cell.
+                row[0] = item.ToString() ?? "";
+                for (int i = 1; i < colCount; i++) row[i] = "";
+                widths[0] = Math.Max(widths[0], row[0].Length);
+                rows.Add(row);
+                continue;
+            }
+
             for (int i = 0; i < colCount; i++)
             {
                 JToken? token = jObj[headers[i]];
