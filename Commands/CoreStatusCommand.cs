@@ -1,4 +1,6 @@
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using System;
 using System.Collections.Generic;
 using MTShared.Types;
@@ -427,9 +429,7 @@ public sealed class CoreStatusCommand : ICommand
         {
             return CommandResult.Fail("Core restart requires --confirm flag. This will restart the trading core.");
         }
-
-        conn.SendCoreRestart();
-        return CommandResult.Ok($"[{conn.Name}] Core restart command sent.");
+        return ExecuteRestartWithProbe(conn, "restart", () => conn.SendCoreRestart());
     }
 
     private CommandResult HandleRestartUpdate(CoreConnection conn, bool confirmed)
@@ -438,9 +438,7 @@ public sealed class CoreStatusCommand : ICommand
         {
             return CommandResult.Fail("Core restart-update requires --confirm flag. This will restart with update.");
         }
-
-        conn.SendCoreRestartWithUpdate();
-        return CommandResult.Ok($"[{conn.Name}] Core restart-with-update command sent.");
+        return ExecuteRestartWithProbe(conn, "restart-update", () => conn.SendCoreRestartWithUpdate());
     }
 
     private CommandResult HandleClearOrders(CoreConnection conn, bool confirmed)
@@ -449,9 +447,69 @@ public sealed class CoreStatusCommand : ICommand
         {
             return CommandResult.Fail("Core clear-orders requires --confirm flag. This will clear orders cache and restart.");
         }
+        return ExecuteRestartWithProbe(conn, "clear-orders", () => conn.SendCoreClearOrdersCache());
+    }
 
-        conn.SendCoreClearOrdersCache();
-        return CommandResult.Ok($"[{conn.Name}] Core clear-orders-cache and restart command sent.");
+    /// <summary>
+    /// MCP-009 mitigation: send a restart-class command and synchronously verify the Core comes
+    /// back within a reasonable window. Hooks <see cref="CoreConnection.OnCoreRestarted"/>
+    /// (fired when MTCore reconnects with a new connectionId / serverStartTime) and falls back
+    /// to LastSeen-based liveness if the event signal is missed.
+    ///
+    /// Outcomes:
+    ///   ✅ Core came back              → CommandResult.Ok
+    ///   ⚠ Core was reachable but no restart event observed → CommandResult.Ok with warning text
+    ///   ❌ Core never came back within timeout → CommandResult.Fail (this is the MCP-009 case:
+    ///        on macOS Rosetta the spawned core can crash; agents now see success:false instead
+    ///        of a misleading "command sent" success).
+    /// </summary>
+    private CommandResult ExecuteRestartWithProbe(CoreConnection conn, string label, Action sendCommand)
+    {
+        // Probe window: long enough for a real restart on a slow box but not so long it blocks
+        // the MCP caller indefinitely. 12s matches the empirical p95 cold-start of MTCore.
+        TimeSpan timeout = TimeSpan.FromSeconds(12);
+
+        TaskCompletionSource<bool> restartedTcs =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        Action<CoreConnection> handler = _ => restartedTcs.TrySetResult(true);
+
+        DateTime preSendUtc = DateTime.UtcNow;
+        conn.OnCoreRestarted += handler;
+        try
+        {
+            sendCommand();
+
+            // Wait for the OnCoreRestarted event (preferred signal).
+            bool gotEvent = restartedTcs.Task.Wait(timeout);
+            if (gotEvent)
+            {
+                return CommandResult.Ok(
+                    $"[{conn.Name}] Core {label} command sent and Core reconnected (new connectionId observed).");
+            }
+
+            // Event missed — fall back to LastSeen-based liveness check via the health record.
+            ConnectionHealthRecord? health = _manager.GetHealthRecord(conn.Name);
+            if (health is not null && conn.IsConnected &&
+                (DateTime.UtcNow - health.LastSeen) < TimeSpan.FromSeconds(15) &&
+                health.LastSeen > preSendUtc)
+            {
+                return CommandResult.Ok(
+                    $"[{conn.Name}] Core {label} command sent. Core appears reachable " +
+                    $"(LastSeen={health.LastSeen:HH:mm:ss}Z) but no restart event observed within {timeout.TotalSeconds:F0}s — " +
+                    $"verify with 'core status'.");
+            }
+
+            // Hard failure: this is the MCP-009 symptom (Mac Rosetta crash, etc.).
+            return CommandResult.Fail(
+                $"[{conn.Name}] Core {label} command sent but Core did NOT come back within {timeout.TotalSeconds:F0}s. " +
+                $"IsConnected={conn.IsConnected}, LastSeen={(health?.LastSeen.ToString("HH:mm:ss") ?? "n/a")}Z. " +
+                $"Likely the Core process crashed on restart (see MCP-009: Mac Rosetta x64 crash). " +
+                $"Inspect ~/.config/moontrader/logs/ for stack traces and try re-launching the Core manually.");
+        }
+        finally
+        {
+            conn.OnCoreRestarted -= handler;
+        }
     }
 
     private CommandResult HandleClearArchive(CoreConnection conn, bool confirmed)
