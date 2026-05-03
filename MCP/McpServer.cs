@@ -303,6 +303,24 @@ public sealed class McpServer
             return MakeResult(id, new JObject { ["content"] = bulkContent, ["isError"] = true });
         }
 
+        // EN review #8 — argument sanitization at the MCP boundary.
+        // Tool arguments are interpolated verbatim into a re-parsed REPL line
+        // (e.g. " @{profile}", "exchange search {query}"). Two classes of
+        // argument values are treated as REPL meta-syntax and would break out
+        // of the intended command:
+        //   * any string containing \r or \n  -> would inject a second
+        //     REPL line, executing an arbitrary follow-up command.
+        //   * the 'profile' argument starting with '@' or containing
+        //     whitespace -> would shadow / replace the implicit profile
+        //     suffix.
+        // The fix below rejects such values at the gateway with a clear
+        // error, before any REPL parsing or command dispatch occurs.
+        string? sanitizationError = ValidateArguments(toolName, arguments);
+        if (sanitizationError != null)
+        {
+            return MakeErrorResponse(id, -32602, sanitizationError);
+        }
+
         // Map tool name to REPL command
         string? commandLine = MapToolToCommand(toolName, arguments);
         if (commandLine == null)
@@ -349,6 +367,53 @@ public sealed class McpServer
         "mt_fleet_disconnect"  => true,
         _ => false
     };
+
+
+    /// <summary>
+    /// EN review #8: validate tool arguments at the MCP boundary before they
+    /// are interpolated into a REPL line. Returns null when arguments are
+    /// safe, otherwise returns a JSON-RPC-friendly error message.
+    ///
+    /// Rules enforced:
+    ///   * No string argument may contain '\r' or '\n' (REPL-line injection).
+    ///   * The 'profile' argument additionally:
+    ///       - must not start with '@' (would collide with the implicit
+    ///         profile suffix syntax),
+    ///       - must not contain whitespace,
+    ///       - must not contain '"' (the interactive REPL parser treats it
+    ///         as a quoted-string boundary).
+    /// </summary>
+    private static string? ValidateArguments(string toolName, Newtonsoft.Json.Linq.JObject arguments)
+    {
+        foreach (var prop in arguments.Properties())
+        {
+            if (prop.Value.Type != Newtonsoft.Json.Linq.JTokenType.String) continue;
+            string? val = prop.Value.Value<string>();
+            if (val == null) continue;
+
+            if (val.IndexOf('\n') >= 0 || val.IndexOf('\r') >= 0)
+            {
+                return $"Argument '{prop.Name}' contains a newline; rejected (would inject a second REPL command).";
+            }
+
+            if (prop.Name == "profile")
+            {
+                if (val.Length > 0 && val[0] == '@')
+                {
+                    return $"Argument 'profile' must not start with '@'.";
+                }
+                for (int i = 0; i < val.Length; i++)
+                {
+                    char c = val[i];
+                    if (c == ' ' || c == '\t' || c == '"')
+                    {
+                        return $"Argument 'profile' must not contain whitespace or quotes (got: {Newtonsoft.Json.JsonConvert.ToString(val)}).";
+                    }
+                }
+            }
+        }
+        return null;
+    }
 
 
     /// <summary>
