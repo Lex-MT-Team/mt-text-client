@@ -502,11 +502,50 @@ public sealed class V2FormatParser
         return line.Contains('{') && !HasBalancedBraces(line);
     }
 
+    /// <summary>
+    /// Returns true when the count of '{' and '}' is balanced, IGNORING any
+    /// braces that appear inside single- or double-quoted string literals
+    /// (with backslash-escapes honored).
+    ///
+    /// Fix for V2-import quote-blindness bug: a string parameter value
+    /// containing a literal '{' (e.g. <c>description="alpha {beta"</c>) used
+    /// to make this method return false, which caused the multi-line
+    /// accumulator at line ~260 to slurp the next param line into the
+    /// current value, silently corrupting the import. See
+    /// validation/v2parser-repro for the standalone reproducer.
+    /// </summary>
     private static bool HasBalancedBraces(string text)
     {
         int depth = 0;
+        bool inDoubleQuote = false;
+        bool inSingleQuote = false;
+        bool escaped = false;
         foreach (char c in text)
         {
+            if (escaped)
+            {
+                escaped = false;
+                continue;
+            }
+            if (c == '\\' && (inDoubleQuote || inSingleQuote))
+            {
+                escaped = true;
+                continue;
+            }
+            if (c == '"' && !inSingleQuote)
+            {
+                inDoubleQuote = !inDoubleQuote;
+                continue;
+            }
+            if (c == '\'' && !inDoubleQuote)
+            {
+                inSingleQuote = !inSingleQuote;
+                continue;
+            }
+            if (inDoubleQuote || inSingleQuote)
+            {
+                continue;
+            }
             if (c == '{')
             {
                 depth++;
