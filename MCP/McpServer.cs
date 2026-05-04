@@ -191,8 +191,14 @@ public sealed class McpServer
             }
             catch (Exception ex)
             {
+                // BUG-2 fix: recover the request id from the raw line so the
+                // JSON-RPC error envelope echoes the caller's id instead of
+                // null. A null id breaks request/response correlation in
+                // compliant clients.
+                JToken? recoveredId = null;
+                try { recoveredId = JObject.Parse(line)["id"]; } catch { /* truly malformed */ }
                 LogStderr($"Error processing request: {ex.Message}");
-                WriteStdout(MakeErrorResponse(null, -32700, $"Parse error: {ex.Message}"));
+                WriteStdout(MakeErrorResponse(recoveredId, -32700, $"Parse error: {ex.Message}"));
             }
         }
 
@@ -252,6 +258,59 @@ public sealed class McpServer
         }
         return MakeResult(id, new JObject { ["tools"] = tools });
     }
+
+    // Lazy cache of tool schemas keyed by tool name. Used by
+    // ValidateRequiredArguments() to translate missing-required-field calls
+    // into proper -32602 errors instead of misleading "Unknown tool" /
+    // null-deref crashes inside Build*Command helpers (see commit messages on this branch).
+    //
+    private Dictionary<string, JObject>? _toolSchemaCache;
+
+    private Dictionary<string, JObject> GetToolSchemaMap()
+    {
+        if (_toolSchemaCache != null) return _toolSchemaCache;
+        var map = new Dictionary<string, JObject>(StringComparer.Ordinal);
+        foreach (JObject tool in GetToolDefinitions())
+        {
+            string? n = tool["name"]?.Value<string>();
+            if (string.IsNullOrEmpty(n)) continue;
+            JObject? schema = tool["inputSchema"] as JObject;
+            if (schema != null) map[n] = schema;
+        }
+        _toolSchemaCache = map;
+        return map;
+    }
+
+    /// <summary>
+    /// Walks <c>inputSchema.required</c> for the named tool and returns a
+    /// human-readable error string when any required argument is missing or
+    /// empty. Returns <c>null</c> when validation passes (or the tool has no
+    /// schema entry — those are dispatched as before).
+    /// </summary>
+    private string? ValidateRequiredArguments(string toolName, JObject arguments)
+    {
+        if (!GetToolSchemaMap().TryGetValue(toolName, out JObject? schema))
+            return null; // unknown tool — let MapToolToCommand emit -32602
+        JArray? required = schema["required"] as JArray;
+        if (required == null || required.Count == 0) return null;
+
+        foreach (JToken r in required)
+        {
+            string? key = r.Value<string>();
+            if (string.IsNullOrEmpty(key)) continue;
+            JToken? v = arguments[key];
+            bool missing = v == null || v.Type == JTokenType.Null;
+            if (!missing && v!.Type == JTokenType.String)
+            {
+                string s = v.Value<string>() ?? string.Empty;
+                if (s.Length == 0) missing = true;
+            }
+            if (missing)
+                return $"Missing required argument: {key} (tool: {toolName})";
+        }
+        return null;
+    }
+
 
     private JObject HandleToolCall(JObject request, JToken? id)
     {
@@ -319,6 +378,18 @@ public sealed class McpServer
         if (sanitizationError != null)
         {
             return MakeErrorResponse(id, -32602, sanitizationError);
+        }
+
+        // BUG-1 fix: reject missing required arguments BEFORE dispatch so we
+        // emit "-32602 Missing required argument: <name>" instead of the
+        // misleading "Unknown tool: …" produced by Build*Command helpers
+        // returning null.
+        string? requiredError = ValidateRequiredArguments(toolName, arguments);
+        if (requiredError != null)
+        {
+            _metrics.RecordError(toolName);
+            _metrics.RecordLatency(toolName, _latencySw.ElapsedMilliseconds);
+            return MakeErrorResponse(id, -32602, requiredError);
         }
 
         // Map tool name to REPL command
@@ -1228,7 +1299,7 @@ public sealed class McpServer
             "Connect to a specific set of named profiles in parallel (max 10 concurrent). " +
             "Unlike mt_fleet_connect (which connects ALL configured profiles), this accepts an " +
             "explicit list — suited for targeted fleet orchestration by AI agents.",
-            Prop("profiles", "array", "Array of profile names to connect to"));
+            Prop("profiles", "array", "Array of profile names to connect to", required: true));
 
         // MT-003
         yield return Tool("mt_connection_health",
@@ -1998,12 +2069,16 @@ public sealed class McpServer
         return $"exchange klines {symbol} {interval} {limit}" + profileSuffix;
     }
 
-    private static string BuildPlaceOrderCommand(JObject arguments, string profileSuffix, string confirm)
+    private static string? BuildPlaceOrderCommand(JObject arguments, string profileSuffix, string confirm)
     {
-        var parts = new List<string> { "orders place" };
-        parts.Add(arguments["symbol"]!.Value<string>()!);
-        parts.Add(arguments["side"]!.Value<string>()!);
-        parts.Add(arguments["qty"]!.Value<string>()!);
+        // Defense in depth — BUG-1's required-args gate already rejects this
+        // path, but never NRE here even if a future code path skips the gate.
+        string? symbol = arguments["symbol"]?.Value<string>();
+        string? side   = arguments["side"]?.Value<string>();
+        string? qty    = arguments["qty"]?.Value<string>();
+        if (string.IsNullOrEmpty(symbol) || string.IsNullOrEmpty(side) || string.IsNullOrEmpty(qty))
+            return null;
+        var parts = new List<string> { "orders place", symbol, side, qty };
 
         string? price = arguments["price"]?.Value<string>();
         if (!string.IsNullOrEmpty(price))
