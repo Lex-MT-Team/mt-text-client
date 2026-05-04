@@ -346,6 +346,17 @@ public sealed class SettingsCommand : ICommand
             return CommandResult.Fail("No profile settings returned.");
         }
 
+        // BUG-3 fix: CoreConnection.GetProfileSettings returns a multi-line
+        // string that may embed `(success=False)` and an `Error: ...` line
+        // when MTCore rejected the request (e.g. "Getting profile settings
+        // for non-current profile is not supported yet."). The wrapper
+        // previously surfaced this as top-level success=true, masking the
+        // upstream failure. Detect the marker and reflect it.
+        if (result.IndexOf("(success=False)", StringComparison.Ordinal) >= 0)
+        {
+            return CommandResult.Fail(result.TrimEnd());
+        }
+
         return CommandResult.Ok(result);
     }
 
