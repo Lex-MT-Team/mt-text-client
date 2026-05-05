@@ -1197,6 +1197,7 @@ public sealed class McpServer
             Prop("reduce_only", "boolean", "Reduce-only order"),
             Prop("position_side", "string", "Position side override: BOTH (one-way / SPOT), LONG, SHORT. " +
                 "If omitted, derived from account position mode + order side."),
+            Prop("emulated", "boolean", "Place as emulated/paper order (held client-side, isEmulationOn=true). Coexists with real orders on the same connection."),
             Prop("confirm", "boolean", "Must be true to actually place"),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_orders_move",
@@ -2136,6 +2137,12 @@ public sealed class McpServer
         if (!string.IsNullOrEmpty(positionSide))
         {
             parts.Add($"--position-side {positionSide}");
+        }
+
+        bool emulated = arguments["emulated"]?.Value<bool>() ?? false;
+        if (emulated)
+        {
+            parts.Add("--emulated");
         }
 
         return string.Join(" ", parts) + profileSuffix + confirm;
