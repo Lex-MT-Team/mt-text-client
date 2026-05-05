@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Globalization;
 using MTShared;
 using MTShared.Network;
@@ -655,6 +656,13 @@ public sealed class OrdersCommand : ICommand
                 $"  Re-run with --confirm flag.");
         }
 
+        // BUG-5 fix: snapshot the pre-move active-order id set so we can
+        // detect cancel-and-replace exchanges (Bybit) where MoveOrder
+        // produces a new ClientOrderId server-side.
+        var preIds = new HashSet<string>(
+            (conn.AccountStore.GetOrders(activeOnly: true) ?? Array.Empty<OrderSnapshot>())
+                .Select(o => o.ClientOrderId ?? string.Empty));
+
         NotificationMessageData? notification = conn.MoveOrder(
             conn.Profile.Exchange, marketType, clientOrderId, newPrice);
 
@@ -663,9 +671,36 @@ public sealed class OrdersCommand : ICommand
             return CommandResult.Ok($"[{conn.Name}] Move order {clientOrderId} to {newPrice}: sent (response timed out).");
         }
 
+        // Best-effort post-move id recovery. On Binance the id is preserved
+        // (newCoid == clientOrderId); on Bybit it changes.
+        string newCoid = clientOrderId;
+        if (notification.IsOk)
+        {
+            decimal targetPrice = (decimal)newPrice;
+            for (int attempt = 0; attempt < 10; attempt++)
+            {
+                var post = conn.AccountStore.GetOrders(activeOnly: true) ?? Array.Empty<OrderSnapshot>();
+                // Same id, repriced -> Binance-style; trust it.
+                var same = post.FirstOrDefault(o => o.ClientOrderId == clientOrderId);
+                if (same is not null && same.Price == targetPrice) { newCoid = clientOrderId; break; }
+                // Brand-new id, same symbol/side/qty, repriced -> Bybit-style.
+                var replaced = post.FirstOrDefault(o =>
+                    o.ClientOrderId is not null
+                    && !preIds.Contains(o.ClientOrderId)
+                    && order is not null
+                    && string.Equals(o.Symbol, order.Symbol, StringComparison.OrdinalIgnoreCase)
+                    && o.Side == order.Side
+                    && o.Quantity == order.Quantity
+                    && o.Price == targetPrice);
+                if (replaced is not null) { newCoid = replaced.ClientOrderId!; break; }
+                System.Threading.Thread.Sleep(100);
+            }
+        }
+
+        bool replacedId = newCoid != clientOrderId;
         return notification.IsOk
-            ? CommandResult.Ok($"[{conn.Name}] Order {clientOrderId} moved to {newPrice} ✓",
-                new { Server = conn.Name, ClientOrderId = clientOrderId, NewPrice = newPrice, Action = "MOVE" })
+            ? CommandResult.Ok($"[{conn.Name}] Order {clientOrderId} moved to {newPrice} ✓" + (replacedId ? $" [new id: {newCoid}]" : ""),
+                new { Server = conn.Name, ClientOrderId = newCoid, OriginalClientOrderId = clientOrderId, NewPrice = newPrice, Replaced = replacedId, Action = "MOVE" })
             : CommandResult.Fail($"[{conn.Name}] Move order FAILED — {notification.notificationCode}: {notification}");
     }
 
