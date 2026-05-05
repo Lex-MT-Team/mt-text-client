@@ -2765,7 +2765,8 @@ public sealed class McpServer
             }
 
             // Remap groupID if core reassigned it
-            if (groupId > 0 && groupIdMap.TryGetValue(groupId, out long newGroupId))
+            // Fix #13: drop > 0 guard — TryGetValue is itself the filter; groupId=0 is a legal map key
+            if (groupIdMap.TryGetValue(groupId, out long newGroupId))
                 groupId = newGroupId;
 
             // Extract marketType from args

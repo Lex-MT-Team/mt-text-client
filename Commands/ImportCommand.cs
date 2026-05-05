@@ -245,7 +245,8 @@ public sealed class ImportCommand : ICommand
             algo.actionType = AlgorithmData.ActionType.SAVE;
 
             // FIX BUG-15: Remap groupID if we have a mapping
-            if (algo.groupID > 0 && groupIdMap.TryGetValue(algo.groupID, out long newGroupId))
+            // Fix #13: drop > 0 guard — TryGetValue is itself the filter; groupID=0 is a legal map key
+            if (groupIdMap.TryGetValue(algo.groupID, out long newGroupId))
             {
                 algo.groupID = newGroupId;
             }
