@@ -1193,7 +1193,6 @@ public sealed class McpServer
             Prop("qty", "string", "Order quantity", required: true),
             Prop("price", "string", "Limit price (omit for market order)"),
             Prop("type", "string", "Order type: MARKET or LIMIT (auto-detected from price)"),
-            Prop("tif", "string", "Time in force: GTC, IOC, FOK (default: GTC)"),
             Prop("reduce_only", "boolean", "Reduce-only order"),
             Prop("position_side", "string", "Position side override: BOTH (one-way / SPOT), LONG, SHORT. " +
                 "If omitted, derived from account position mode + order side."),
@@ -2119,12 +2118,6 @@ public sealed class McpServer
         if (!string.IsNullOrEmpty(orderType))
         {
             parts.Add($"--type {orderType}");
-        }
-
-        string? tif = arguments["tif"]?.Value<string>();
-        if (!string.IsNullOrEmpty(tif))
-        {
-            parts.Add($"--tif {tif}");
         }
 
         bool reduceOnly = arguments["reduce_only"]?.Value<bool>() ?? false;
