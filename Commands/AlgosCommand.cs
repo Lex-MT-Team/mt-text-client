@@ -194,7 +194,8 @@ public sealed class AlgosCommand : ICommand
             data.Add(new
             {
                 a.id,
-                name = string.IsNullOrEmpty(a.description) ? a.name : a.description,
+                name = ResolveDisplayName(a),
+                CoreName = a.name,
                 a.signature,
                 Running = a.isRunning ? "YES" : "no",
                 isRunning = a.isRunning,
@@ -209,6 +210,35 @@ public sealed class AlgosCommand : ICommand
         return CommandResult.Ok(
             $"[{conn.Name}] {algos.Count} algorithm(s) — {running} running, {stopped} stopped, {processing} processing.",
             data);
+    }
+
+
+    /// <summary>
+    /// Issue #15: resolve display name in priority info → description → name.
+    /// Filters out the raw mt-algo-XXXX synthetic names so operator-set
+    /// labels surface in list/info outputs. Raw on-wire name still emitted
+    /// alongside as CoreName for joins / id-based tooling.
+    /// </summary>
+    private static string ResolveDisplayName(AlgorithmData algo)
+    {
+        AlgorithmConfig? config = AlgorithmStore.ParseConfig(algo);
+        if (config?.Parameters != null)
+        {
+            foreach (AlgorithmParameter parameter in config.Parameters)
+            {
+                if (!string.Equals(parameter.Key, "info", System.StringComparison.OrdinalIgnoreCase))
+                    continue;
+                string? value = parameter.DisplayValue?.Trim();
+                if (!string.IsNullOrWhiteSpace(value)
+                    && !value.StartsWith("mt-algo-", System.StringComparison.OrdinalIgnoreCase))
+                    return value;
+            }
+        }
+        string? description = algo.description?.Trim();
+        if (!string.IsNullOrWhiteSpace(description)
+            && !description.StartsWith("mt-algo-", System.StringComparison.OrdinalIgnoreCase))
+            return description;
+        return algo.name;
     }
 
     /// <summary>List algos across ALL connected servers.</summary>
@@ -250,7 +280,8 @@ public sealed class AlgosCommand : ICommand
                 {
                     Server = conn.Name,
                     a.id,
-                    a.name,
+                    name = ResolveDisplayName(a),
+                    CoreName = a.name,
                     Running = a.isRunning ? "YES" : "no",
                     isRunning = a.isRunning,
                     Market = a.marketType.ToString(),
@@ -330,7 +361,8 @@ public sealed class AlgosCommand : ICommand
         {
             Server = conn.Name,
             algo.id,
-            algo.name,
+            name = ResolveDisplayName(algo),
+            CoreName = algo.name,
             algo.signature,
             algo.description,
             Running = algo.isRunning,
@@ -786,7 +818,8 @@ public sealed class AlgosCommand : ICommand
             data.Add(new
             {
                 a.id,
-                a.name,
+                name = ResolveDisplayName(a),
+                CoreName = a.name,
                 a.signature,
                 Running = a.isRunning ? "YES" : "no",
                 Market = a.marketType.ToString(),

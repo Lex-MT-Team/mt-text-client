@@ -431,6 +431,16 @@ public sealed class McpServer
     /// REPL commands are NOT modified — interactive TUI users keep their
     /// existing semantics.
     /// </summary>
+    /// <summary>Issue #16: optional market_type for mt_exchange_ticker24 ("FUTURES" or "SPOT").</summary>
+    private static string ResolveTicker24Market(JObject arguments)
+    {
+        string? mt = arguments["market_type"]?.Value<string>();
+        if (string.IsNullOrWhiteSpace(mt)) return "";
+        string norm = mt.Trim().ToUpperInvariant();
+        if (norm == "FUTURES" || norm == "SPOT") return $" {norm}";
+        return ""; // silently ignore garbage; sanitizer handles \r/\n already
+    }
+
     private static bool RequiresMcpConfirm(string toolName) => toolName switch
     {
         "mt_algos_start_all"   => true,
@@ -529,10 +539,19 @@ public sealed class McpServer
             "mt_use" => $"use {arguments["profile"]?.Value<string>() ?? ""}",
 
             // Account (Phase A)
-            "mt_account_balance" => $"account balance{profileSuffix}",
-            "mt_account_orders" => $"account orders{profileSuffix}",
-            "mt_account_positions" => $"account positions{profileSuffix}",
-            "mt_account_executions" => $"account executions{profileSuffix}",
+            // Issue #16: surface CLI flags (-all / count) on MCP wrappers
+            "mt_account_balance" => arguments["show_all"]?.Value<bool>() == true
+                ? $"account balance -all{profileSuffix}"
+                : $"account balance{profileSuffix}",
+            "mt_account_orders" => arguments["show_all"]?.Value<bool>() == true
+                ? $"account orders -all{profileSuffix}"
+                : $"account orders{profileSuffix}",
+            "mt_account_positions" => arguments["show_all"]?.Value<bool>() == true
+                ? $"account positions -all{profileSuffix}"
+                : $"account positions{profileSuffix}",
+            "mt_account_executions" => arguments["count"]?.Value<int?>() is int execCount && execCount > 0
+                ? $"account executions {execCount}{profileSuffix}"
+                : $"account executions{profileSuffix}",
             "mt_account_info" => $"account info{profileSuffix}",
             "mt_account_summary" => $"account summary{profileSuffix}",
 
@@ -549,7 +568,7 @@ public sealed class McpServer
             "mt_exchange_pair_detail" => $"exchange detail {arguments["symbol"]?.Value<string>() ?? ""}{profileSuffix}",
 
             // Exchange data queries (Phase K)
-            "mt_exchange_ticker24" => $"exchange ticker24 {arguments["symbol"]?.Value<string>() ?? ""}{profileSuffix}",
+            "mt_exchange_ticker24" => $"exchange ticker24 {arguments["symbol"]?.Value<string>() ?? ""}{ResolveTicker24Market(arguments)}{profileSuffix}",
             "mt_exchange_klines" => BuildKlinesCommand(arguments, profileSuffix),
             "mt_exchange_trades" => $"exchange trades {arguments["symbol"]?.Value<string>() ?? ""}{profileSuffix}",
 
@@ -951,13 +970,17 @@ public sealed class McpServer
             Prop("profile", "string", "Profile name to activate", required: true));
 
         // ── Account ──
-        yield return Tool("mt_account_balance", "Get account balances",
+        yield return Tool("mt_account_balance", "Get account balances (set show_all=true to include dust/zero balances)",
+            Prop("show_all", "boolean", "Include dust and zero balances"),
             Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_account_orders", "Get active orders",
+        yield return Tool("mt_account_orders", "Get active orders (set show_all=true to include archived/non-active)",
+            Prop("show_all", "boolean", "Include archived/non-active orders"),
             Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_account_positions", "Get open positions",
+        yield return Tool("mt_account_positions", "Get open positions (set show_all=true to include closed)",
+            Prop("show_all", "boolean", "Include closed positions"),
             Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_account_executions", "Get recent trade executions",
+        yield return Tool("mt_account_executions", "Get recent trade executions (count overrides default tail size)",
+            Prop("count", "integer", "Number of executions to return"),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_account_info", "Get account info",
             Prop("profile", "string", "Target server profile"));
@@ -988,8 +1011,9 @@ public sealed class McpServer
 
         // ── Exchange Data (Phase K) ──
         yield return Tool("mt_exchange_ticker24",
-            "Get 24h ticker price statistics for a symbol. Returns price change, high/low, volume, trade count.",
+            "Get 24h ticker price statistics for a symbol. Returns price change, high/low, volume, trade count. market_type FUTURES or SPOT (default: exchange-dependent).",
             Prop("symbol", "string", "Symbol (e.g. BTCUSDT)", required: true),
+            Prop("market_type", "string", "FUTURES or SPOT"),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_exchange_klines",
             "Get candlestick/kline data for a symbol. Returns OHLCV data.",
@@ -2765,7 +2789,8 @@ public sealed class McpServer
             }
 
             // Remap groupID if core reassigned it
-            if (groupId > 0 && groupIdMap.TryGetValue(groupId, out long newGroupId))
+            // Fix #13: drop > 0 guard — TryGetValue is itself the filter; groupId=0 is a legal map key
+            if (groupIdMap.TryGetValue(groupId, out long newGroupId))
                 groupId = newGroupId;
 
             // Extract marketType from args
