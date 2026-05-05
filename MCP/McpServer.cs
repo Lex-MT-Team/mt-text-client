@@ -1185,7 +1185,9 @@ public sealed class McpServer
         // ── Order Operations (Phase K) ──
         yield return Tool("mt_orders_place",
             "Place a new order (market or limit). Requires confirm=true. " +
-            "If price is omitted, places a MARKET order. If price is set, places a LIMIT order.",
+            "If price is omitted, places a MARKET order. If price is set, places a LIMIT order. " +
+            "On hedge-mode FUTURES accounts, position_side must match the side book (LONG for BUY, SHORT for SELL); " +
+            "for SPOT/one-way leave position_side unset or BOTH.",
             Prop("symbol", "string", "Symbol (e.g. BTCUSDT)", required: true),
             Prop("side", "string", "Order side: BUY or SELL", required: true),
             Prop("qty", "string", "Order quantity", required: true),
@@ -1193,6 +1195,8 @@ public sealed class McpServer
             Prop("type", "string", "Order type: MARKET or LIMIT (auto-detected from price)"),
             Prop("tif", "string", "Time in force: GTC, IOC, FOK (default: GTC)"),
             Prop("reduce_only", "boolean", "Reduce-only order"),
+            Prop("position_side", "string", "Position side override: BOTH (one-way / SPOT), LONG, SHORT. " +
+                "If omitted, derived from account position mode + order side."),
             Prop("confirm", "boolean", "Must be true to actually place"),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_orders_move",
@@ -2126,6 +2130,12 @@ public sealed class McpServer
         if (reduceOnly)
         {
             parts.Add("--reduce-only");
+        }
+
+        string? positionSide = arguments["position_side"]?.Value<string>();
+        if (!string.IsNullOrEmpty(positionSide))
+        {
+            parts.Add($"--position-side {positionSide}");
         }
 
         return string.Join(" ", parts) + profileSuffix + confirm;

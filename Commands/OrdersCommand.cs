@@ -474,7 +474,7 @@ public sealed class OrdersCommand : ICommand
         if (args.Length < 3)
         {
             return CommandResult.Fail(
-                "Usage: orders place <symbol> <BUY|SELL> <qty> [price] [--type LIMIT|MARKET] [--tif GTC|IOC|FOK] [--reduce-only] --confirm\n" +
+                "Usage: orders place <symbol> <BUY|SELL> <qty> [price] [--type LIMIT|MARKET] [--tif GTC|IOC|FOK] [--reduce-only] [--position-side BOTH|LONG|SHORT] --confirm\n" +
                 "  If price is omitted or 0, places a MARKET order.\n" +
                 "  Examples:\n" +
                 "    orders place BTCUSDT BUY 0.001 --confirm              (market buy)\n" +
@@ -508,6 +508,8 @@ public sealed class OrdersCommand : ICommand
         OrderType orderType = price > 0 ? OrderType.LIMIT : OrderType.MARKET;
         TimeInForce tif = TimeInForce.GTC;
         bool reduceOnly = false;
+        PositionSide positionSideOverride = PositionSide.BOTH;
+        bool hasPositionSideOverride = false;
 
         for (int i = nextArg; i < args.Length; i++)
         {
@@ -529,6 +531,14 @@ public sealed class OrdersCommand : ICommand
             {
                 reduceOnly = true;
             }
+            else if (args[i].Equals("--position-side", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                if (Enum.TryParse<PositionSide>(args[++i].ToUpperInvariant(), out PositionSide ps))
+                {
+                    positionSideOverride = ps;
+                    hasPositionSideOverride = true;
+                }
+            }
         }
 
         // Determine market type from exchange info
@@ -539,12 +549,21 @@ public sealed class OrdersCommand : ICommand
             marketType = pairInfo.MarketType;
         }
 
-        // Determine position side based on account mode (hedge vs one-way)
-        PositionSide positionSide = PositionSide.BOTH; // ONE_WAY default
-        AccountInfoSnapshot? accountInfo = conn.AccountStore.GetAccountInfo();
-        if (accountInfo != null && accountInfo.PositionMode.ToString().Contains("HEDGE", StringComparison.OrdinalIgnoreCase))
+        // Determine position side: explicit override > auto-derive (FUTURES + HEDGE only).
+        // SPOT / MARGIN orders always use BOTH on Bybit even if the account is
+        // flagged HEDGE — the hedge flag only governs derivatives.
+        PositionSide positionSide = PositionSide.BOTH;
+        if (hasPositionSideOverride)
         {
-            positionSide = side == OrderSideType.BUY ? PositionSide.LONG : PositionSide.SHORT;
+            positionSide = positionSideOverride;
+        }
+        else if (marketType == MarketType.FUTURES)
+        {
+            AccountInfoSnapshot? accountInfo = conn.AccountStore.GetAccountInfo();
+            if (accountInfo != null && accountInfo.PositionMode.ToString().Contains("HEDGE", StringComparison.OrdinalIgnoreCase))
+            {
+                positionSide = side == OrderSideType.BUY ? PositionSide.LONG : PositionSide.SHORT;
+            }
         }
 
         if (!confirmed)
