@@ -1,6 +1,6 @@
 # MTTextClient
 
-A text-first interface and [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server for [MoonTrader](https://moontrader.com) Core. Connects to one or more MTCore instances over encrypted UDP and exposes **204 MCP tools** across 30+ domains — covering algorithm lifecycle, order execution, market data streaming, fleet management, monitoring, and more.
+A text-first interface and [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server for [MoonTrader](https://moontrader.com) Core. Connects to one or more MTCore instances over encrypted UDP and exposes **206 MCP tools** across 30+ domains — covering algorithm lifecycle, order execution, market data streaming, fleet management, monitoring, and more.
 
 Built in C# / .NET 8.0. ~24,000 lines of code. Zero external service dependencies.
 
@@ -18,8 +18,8 @@ Built in C# / .NET 8.0. ~24,000 lines of code. Zero external service dependencie
          │ SSE (via mcp-proxy)                   │ Exchange APIs
          ▼                                       ▼
 ┌──────────────────────────┐            ┌──────────────────────┐
-│  AI Agents / LLMs        │            │  Crypto Exchanges    │
-│  Claude, GPT, etc.       │            │                      │
+│  MCP-compatible          │            │  Crypto Exchanges    │
+│  clients & automation    │            │                      │
 └──────────────────────────┘            └──────────────────────┘
 ```
 
@@ -39,13 +39,13 @@ dotnet build -c Release
 # Run interactive REPL
 dotnet run
 
-# Run as MCP server (for AI agent integration)
+# Run as MCP server (for MCP-compatible client integration)
 dotnet run -- --mcp
 # NOTE: On Windows, prefer pre-built binary to avoid build output polluting MCP stdio:
 #   dotnet build -c Release
 #   MTTextClient.exe --mcp
 
-# Run as MCP server with SSE proxy (recommended for AI agents)
+# Run as MCP server with SSE proxy (recommended for MCP-compatible clients)
 pip install mcp-proxy
 mcp-proxy --port 8585 -- "path/to/MTTextClient.exe" --mcp
 ```
@@ -84,21 +84,21 @@ dotnet run -- account balance
 
 Executes a single command and exits. Useful for scripting.
 
-### 3. MCP Server (for AI agents)
+### 3. MCP Server (for MCP-compatible clients)
 
 ```bash
 dotnet run -- --mcp
 # On Windows, use pre-built binary: bin\Release\net8.0\MTTextClient.exe --mcp
 ```
 
-Runs a Model Context Protocol server over stdio (JSON-RPC 2.0). This is the primary integration point for LLMs and autonomous agents.
+Runs a Model Context Protocol server over stdio (JSON-RPC 2.0). This is the primary integration point for any MCP-compatible client or automation tool.
 
 **With SSE proxy** (recommended):
 ```bash
 mcp-proxy --port 8585 --allow-origin '*' -- "path/to/MTTextClient.exe" --mcp
 ```
 
-Then point your AI agent to `http://localhost:8585/sse`.
+Then point your MCP-compatible client to `http://localhost:8585/sse`.
 
 ## Server Profiles
 
@@ -145,7 +145,7 @@ orders positions @eu_west_staging
 
 Fleet commands operate across all connected servers simultaneously.
 
-## MCP Tools — Complete Reference (204 tools)
+## MCP Tools — Complete Reference (206 tools)
 
 ### Connection & Server (4 tools)
 
@@ -645,7 +645,7 @@ MTTextClient/
 │   ├── BuyApiLimitCommand.cs     #   Buy limit queries
 │   └── HelpCommand.cs            #   Help text
 ├── MCP/                          # MCP server implementation
-│   ├── McpServer.cs              #   JSON-RPC stdio server (202 tools)
+│   ├── McpServer.cs              #   JSON-RPC stdio server (206 tools)
 │   └── EventStreaming.cs         #   SSE + UDP event bridge
 ├── Monitoring/                   # Real-time core monitoring
 │   ├── MonitorBuffer.cs          #   Ring buffer for status snapshots
@@ -675,7 +675,7 @@ python3 -m http.server 9090 -d web
 
 ### Features
 
-- Auto-discovers all 204 MCP tools from the running server
+- Auto-discovers all 206 MCP tools from the running server
 - Categorized tool guide with architecture diagram
 - Server profile management (connect, disconnect, switch active)
 - Execute any tool with form-based parameter input
@@ -683,6 +683,161 @@ python3 -m http.server 9090 -d web
 - Batch execution across multiple profiles
 - Dark theme with multiple color schemes (dark / light / solarized / nord)
 - Fully responsive, localStorage persistence
+
+## Scenarios
+
+Worked end-to-end examples. Each one assumes you have a profile defined in
+`~/.config/mt-textclient/profiles.json` and `MTTextClient` built (`dotnet build -c Release`).
+
+### Scenario A — Connect, inspect, place a limit order, cancel, disconnect
+
+```bash
+dotnet run -- --mcp <<'EOF'
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"demo","version":"1.0"}}}
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"mt_connect","arguments":{"profile":"my_core"}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"mt_account_balance","arguments":{"profile":"my_core"}}}
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"mt_orders_place","arguments":{"profile":"my_core","symbol":"BTCUSDT","side":"BUY","type":"LIMIT","quantity":"0.001","price":"30000"}}}
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"mt_orders_cancel_all","arguments":{"profile":"my_core","confirm":true}}}
+{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"mt_disconnect","arguments":{"profile":"my_core"}}}
+EOF
+```
+
+Or in REPL:
+```
+mt> connect my_core
+mt> account balance
+mt> orders place BTCUSDT BUY LIMIT 0.001 30000
+mt> orders cancel-all --confirm
+mt> disconnect my_core
+```
+
+### Scenario B — Multi-server fleet inventory
+
+```
+mt> connect us_east_prod
+mt> connect eu_west_prod
+mt> connect ap_southeast_prod
+mt> fleet inventory
+```
+
+`fleet inventory` calls `mt_algos_snapshot` across every connected profile and
+returns a unified group/algo tree suitable for state reconciliation.
+
+### Scenario C — V2 algorithm export → import round-trip
+
+```
+mt> connect source_core
+mt> algos export 1234567 > /tmp/algo.json
+mt> connect dest_core
+mt> import /tmp/algo.json @dest_core
+mt> algos list @dest_core
+```
+
+The V2 import path preserves group bindings — including ungrouped (group-id 0)
+membership.
+
+### Scenario D — Restart MTCore with synchronous probe
+
+```
+mt> connect my_core
+mt> core restart
+[my_core] Core reconnected (3.2s)
+```
+
+If MTCore fails to come back the call returns `success:false` with a
+diagnostic naming the log location, instead of fire-and-forget.
+
+### Scenario E — 24h ticker on a specific market side
+
+```
+mt> exchange ticker24 BTCUSDT FUTURES
+```
+
+Or via MCP:
+```bash
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"mt_exchange_ticker24","arguments":{"profile":"my_core","symbol":"BTCUSDT","market_type":"FUTURES"}}}
+```
+
+### Scenario F — Bulk operation with confirmation gate
+
+Destructive bulk tools (`mt_algos_start_all`, `mt_algos_stop_all`,
+`mt_algos_delete`, `mt_orders_cancel_all`, `mt_fleet_disconnect`,
+`mt_core_restart*`, `mt_core_clear_orders`) reject calls without
+`confirm:true`:
+
+```
+mt> algos stop-all                 # rejected: requires --confirm
+mt> algos stop-all --confirm        # proceeds
+```
+
+---
+
+## Testing
+
+`MTTextClient` ships with three layers of self-verification.
+
+### 1. Build smoke test
+
+```bash
+dotnet build -c Release
+# expect: Build succeeded.  0 Warning(s)  0 Error(s)
+```
+
+### 2. MCP `tools/list` enumeration
+
+Confirms the server is reachable and publishes the expected tool surface:
+
+```bash
+# Stdio
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"1.0"}}}
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | dotnet run -- --mcp 2>/dev/null | grep -o '"name":"mt_[^"]*"' | sort -u | wc -l
+# expect: 206
+```
+
+Or via the SSE bridge:
+
+```bash
+mcp-proxy --port 8585 -- "bin/Release/net8.0/MTTextClient" --mcp &
+curl -sS -N http://localhost:8585/sse &  # opens the event stream
+curl -sS -X POST http://localhost:8585/messages -H 'Content-Type: application/json'   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq '.result.tools | length'
+```
+
+### 3. Web dashboard sanity sweep
+
+Open `web/index.html` against a running SSE proxy. The dashboard auto-runs a
+read-only sweep across all 206 tools and prints pass/fail counts in the top
+bar. A clean run on a connected profile reports:
+
+* All 206 tools reachable
+* 0 schema-validation errors
+* All confirm-gated destructive tools refuse calls without `confirm:true`
+
+### 4. Single-tool invocation from the shell
+
+For quick checks without a client:
+
+```bash
+dotnet run -- status                          # connection state across all profiles
+dotnet run -- algos list @my_core             # one profile
+dotnet run -- mt_metrics_get | grep tools_total
+```
+
+### 5. Schema-required enforcement
+
+The MCP gateway enforces `inputSchema.required` server-side and rejects
+requests with a JSON-RPC `-32602` error naming the missing field:
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"mt_orders_place","arguments":{}}}' | dotnet run -- --mcp 2>/dev/null | jq '.error'
+# expect: code -32602, message includes "Missing required argument: profile"
+```
+
+The error response always echoes the original `id` so async batches can
+reconcile failures.
+
+---
 
 ## Environment Variables
 
