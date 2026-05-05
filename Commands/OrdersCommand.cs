@@ -475,6 +475,7 @@ public sealed class OrdersCommand : ICommand
         {
             return CommandResult.Fail(
                 "Usage: orders place <symbol> <BUY|SELL> <qty> [price] [--type LIMIT|MARKET] [--tif GTC|IOC|FOK] [--reduce-only] [--position-side BOTH|LONG|SHORT] --confirm\n" +
+                "Usage: orders place <symbol> <BUY|SELL> <qty> [price] [--type LIMIT|MARKET] [--tif GTC|IOC|FOK] [--reduce-only] [--emulated] --confirm\n" +
                 "  If price is omitted or 0, places a MARKET order.\n" +
                 "  Examples:\n" +
                 "    orders place BTCUSDT BUY 0.001 --confirm              (market buy)\n" +
@@ -510,6 +511,7 @@ public sealed class OrdersCommand : ICommand
         bool reduceOnly = false;
         PositionSide positionSideOverride = PositionSide.BOTH;
         bool hasPositionSideOverride = false;
+        bool emulated = false;
 
         for (int i = nextArg; i < args.Length; i++)
         {
@@ -538,6 +540,10 @@ public sealed class OrdersCommand : ICommand
                     positionSideOverride = ps;
                     hasPositionSideOverride = true;
                 }
+            }
+            else if (args[i].Equals("--emulated", StringComparison.OrdinalIgnoreCase))
+            {
+                emulated = true;
             }
         }
 
@@ -570,7 +576,7 @@ public sealed class OrdersCommand : ICommand
         {
             string? typeStr = orderType == OrderType.MARKET ? "MARKET" : $"LIMIT @ {price}";
             return CommandResult.Fail(
-                $"[{conn.Name}] ⚠ Place {side} {qty} {symbol} ({typeStr}, TIF={tif}, ReduceOnly={reduceOnly})?\n" +
+                $"[{conn.Name}] ⚠ Place {side} {qty} {symbol} ({typeStr}, TIF={tif}, ReduceOnly={reduceOnly}, Emulated={emulated})?\n" +
                 $"  Market: {marketType}, PositionSide: {positionSide}\n" +
                 $"  Re-run with --confirm flag.");
         }
@@ -589,7 +595,8 @@ public sealed class OrdersCommand : ICommand
             {
                 clientOrderType = orderType == OrderType.MARKET
                     ? ClientOrderType.MARKET
-                    : ClientOrderType.LIMIT
+                    : ClientOrderType.LIMIT,
+                isEmulationOn = emulated
             }
         };
 
@@ -601,8 +608,8 @@ public sealed class OrdersCommand : ICommand
         }
 
         return notification.IsOk
-            ? CommandResult.Ok($"[{conn.Name}] Order placed: {side} {qty} {symbol} ✓",
-                new { Server = conn.Name, Symbol = symbol, Side = side.ToString(), Qty = qty, Price = price, Type = orderType.ToString(), Action = "PLACE" })
+            ? CommandResult.Ok($"[{conn.Name}] Order placed: {side} {qty} {symbol} ✓" + (emulated ? " (emulated)" : ""),
+                new { Server = conn.Name, Symbol = symbol, Side = side.ToString(), Qty = qty, Price = price, Type = orderType.ToString(), Emulated = emulated, Action = "PLACE" })
             : CommandResult.Fail($"[{conn.Name}] Place order FAILED — {notification.notificationCode}: {notification}");
     }
 
