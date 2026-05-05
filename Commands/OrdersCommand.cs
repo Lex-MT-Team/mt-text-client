@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Globalization;
 using MTShared;
 using MTShared.Network;
@@ -600,6 +601,13 @@ public sealed class OrdersCommand : ICommand
             }
         };
 
+        // BUG-2 fix: snapshot pre-place open-order ids so we can recover the
+        // exchange-assigned ClientOrderId post-send (the wire response does not
+        // echo it directly; we diff the AccountStore instead).
+        var preIds = new HashSet<string>(
+            (conn.AccountStore.GetOrders(activeOnly: true) ?? Array.Empty<OrderSnapshot>())
+                .Select(o => o.ClientOrderId ?? string.Empty));
+
         NotificationMessageData? notification = conn.PlaceOrder(orderRequest);
 
         if (notification == null)
@@ -607,9 +615,28 @@ public sealed class OrdersCommand : ICommand
             return CommandResult.Ok($"[{conn.Name}] Place {side} {qty} {symbol}: sent (response timed out).");
         }
 
+        // Best-effort coid recovery: poll up to ~1s for the new order to appear
+        // in AccountStore. If unavailable (race / paper-only / market-fill),
+        // we still return success without a coid rather than failing.
+        string? newCoid = null;
+        if (notification.IsOk)
+        {
+            for (int attempt = 0; attempt < 10 && newCoid == null; attempt++)
+            {
+                var post = conn.AccountStore.GetOrders(activeOnly: true) ?? Array.Empty<OrderSnapshot>();
+                var match = post.FirstOrDefault(o =>
+                    o.ClientOrderId is not null
+                    && !preIds.Contains(o.ClientOrderId)
+                    && string.Equals(o.Symbol, symbol, StringComparison.OrdinalIgnoreCase)
+                    && o.Side == side);
+                if (match is not null) { newCoid = match.ClientOrderId; break; }
+                System.Threading.Thread.Sleep(100);
+            }
+        }
+
         return notification.IsOk
-            ? CommandResult.Ok($"[{conn.Name}] Order placed: {side} {qty} {symbol} ✓" + (emulated ? " (emulated)" : ""),
-                new { Server = conn.Name, Symbol = symbol, Side = side.ToString(), Qty = qty, Price = price, Type = orderType.ToString(), Emulated = emulated, Action = "PLACE" })
+            ? CommandResult.Ok($"[{conn.Name}] Order placed: {side} {qty} {symbol} ✓" + (emulated ? " (emulated)" : "") + (newCoid != null ? $" [{newCoid}]" : ""),
+                new { Server = conn.Name, Symbol = symbol, Side = side.ToString(), Qty = qty, Price = price, Type = orderType.ToString(), Emulated = emulated, ClientOrderId = newCoid, Action = "PLACE" })
             : CommandResult.Fail($"[{conn.Name}] Place order FAILED — {notification.notificationCode}: {notification}");
     }
 
