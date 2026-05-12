@@ -74,7 +74,7 @@ public sealed class ImportCommand : ICommand
         return subCmd switch
         {
             "v2" => ImportV2(subArgs, targetProfile, confirmFlag),
-            "templates" or "tpl" => ListTemplates(),
+            "templates" or "tpl" => ListTemplates(subArgs.Length > 0 ? subArgs[0] : null),
             "add-numeric" or "add-num" => AddNumericDelta(subArgs, targetProfile, confirmFlag),
             _ => CommandResult.Fail($"Unknown subcommand: {subCmd}. {Usage}")
         };
@@ -278,16 +278,28 @@ public sealed class ImportCommand : ICommand
             new { Server = conn.Name, Total = algorithms.Count, Created = successCount });
     }
 
-    private CommandResult ListTemplates()
+    private CommandResult ListTemplates(string? explicitPath = null)
     {
-        string? configPath = FindAlgoConfigs();
-        if (configPath == null || !File.Exists(configPath))
+        string? configPath;
+        if (!string.IsNullOrEmpty(explicitPath))
         {
-            return CommandResult.Fail("algoConfigs.json not found. Searched: " +
-                "(1) <app-dir>/algoConfigs.json, " +
-                "(2) ~/Documents/algoConfigs.json, " +
-                "(3) " + System.IO.Path.GetTempPath() + "algoConfigs.json. " +
-                "Copy the file from a MoonTrader installation into one of those locations.");
+            if (!File.Exists(explicitPath))
+            {
+                return CommandResult.Fail($"algoConfigs.json not found at explicit path: {explicitPath}");
+            }
+            configPath = explicitPath;
+        }
+        else
+        {
+            configPath = FindAlgoConfigs();
+            if (configPath == null || !File.Exists(configPath))
+            {
+                return CommandResult.Fail("algoConfigs.json not found. Searched: " +
+                    "(1) <app-dir>/algoConfigs.json, " +
+                    "(2) ~/Documents/algoConfigs.json, " +
+                    "(3) " + System.IO.Path.GetTempPath() + "algoConfigs.json. " +
+                    "Pass an explicit path via --path, or copy the file into one of those locations.");
+            }
         }
 
         try

@@ -756,7 +756,7 @@ public sealed class CoreConnection : IDisposable
     /// Get 24h ticker price statistics for a symbol.
     /// </summary>
     public TickerPrice24ListData? RequestTicker24(
-        MarketType marketType, string symbol, int timeoutMs = 10_000)
+        MarketType marketType, string symbol, int timeoutMs = 30_000)
     {
         if (_udpClient == null)
         {
@@ -831,7 +831,7 @@ public sealed class CoreConnection : IDisposable
     /// <summary>
     /// Get report comment labels.
     /// </summary>
-    public ReportsFieldData? RequestReportComments(int timeoutMs = 10_000)
+    public ReportsFieldData? RequestReportComments(int timeoutMs = 30_000)
     {
         if (_udpClient == null)
         {
@@ -845,7 +845,7 @@ public sealed class CoreConnection : IDisposable
     /// <summary>
     /// Get report date markers.
     /// </summary>
-    public ReportsFieldData? RequestReportDates(int timeoutMs = 10_000)
+    public ReportsFieldData? RequestReportDates(int timeoutMs = 30_000)
     {
         if (_udpClient == null)
         {
@@ -1003,7 +1003,7 @@ public sealed class CoreConnection : IDisposable
     /// <summary>
     /// Request autostop algorithm report data for specific algorithm IDs.
     /// </summary>
-    public ReportListData? RequestAutoStopsReports(List<long> algorithmIds, int timeoutMs = 15_000)
+    public ReportListData? RequestAutoStopsReports(List<long> algorithmIds, int timeoutMs = 30_000)
     {
         if (_udpClient == null)
         {
@@ -1421,6 +1421,74 @@ public sealed class CoreConnection : IDisposable
         {
             _udpClient.SendAlertsHistoryUnsubscribe(ref _alertHistorySubscriptionId, Profile.Exchange);
         }
+    }
+
+    // Stage 6.3 — CRUD on alerts via SendAlertsRequest with the right
+    // AlertRequestSaveData / DeleteData / StartData / StopData subtype.
+    // MTCore dispatches by ActionType; the populated subtype carries the
+    // alert ids / records.  Each helper blocks up to ~2 s waiting for the
+    // NotificationMessageData callback (mirroring SendAutoBuyRequest's
+    // sleep-2s pattern), then returns the server's msg string.
+
+    public string SendAlertsSave(List<AlertInfoData> alerts, bool returnSaved = true, int waitMs = 2000)
+    {
+        if (_udpClient == null) return "Not connected";
+        var req = new AlertRequestSaveData
+        {
+            alerts = alerts,
+            returnSavedAlerts = returnSaved,
+            exchangeType = Profile.Exchange,
+        };
+        string resultMsg = "Waiting...";
+        _udpClient.SendAlertsRequest(req, (NotificationMessageData result) =>
+        {
+            resultMsg = result?.msgString ?? "OK";
+        });
+        System.Threading.Thread.Sleep(waitMs);
+        return resultMsg;
+    }
+
+    public string SendAlertsDelete(List<long> alertIds, bool applyToAll = false, int waitMs = 2000)
+    {
+        if (_udpClient == null) return "Not connected";
+        var req = new AlertRequestDeleteData
+        {
+            alertIds = alertIds ?? new List<long>(),
+            applyToAll = applyToAll,
+            exchangeType = Profile.Exchange,
+        };
+        string resultMsg = "Waiting...";
+        _udpClient.SendAlertsRequest(req, (NotificationMessageData result) =>
+        {
+            resultMsg = result?.msgString ?? "OK";
+        });
+        System.Threading.Thread.Sleep(waitMs);
+        return resultMsg;
+    }
+
+    public string SendAlertsSetRunning(List<long> alertIds, bool running, bool applyToAll = false, int waitMs = 2000)
+    {
+        if (_udpClient == null) return "Not connected";
+        AlertRequestData req = running
+            ? new AlertRequestStartData
+            {
+                alertIds = alertIds ?? new List<long>(),
+                applyToAll = applyToAll,
+                exchangeType = Profile.Exchange,
+            }
+            : new AlertRequestStopData
+            {
+                alertIds = alertIds ?? new List<long>(),
+                applyToAll = applyToAll,
+                exchangeType = Profile.Exchange,
+            };
+        string resultMsg = "Waiting...";
+        _udpClient.SendAlertsRequest(req, (NotificationMessageData result) =>
+        {
+            resultMsg = result?.msgString ?? "OK";
+        });
+        System.Threading.Thread.Sleep(waitMs);
+        return resultMsg;
     }
 
     #endregion

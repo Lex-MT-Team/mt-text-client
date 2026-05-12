@@ -22,3 +22,10 @@ Thumbs.db
 
 # Profile data (contains connection tokens)
 profiles.json
+
+# Stage 0.6 — test results are generated artefacts; never commit them.
+*.trx
+TestResults/
+
+# Local worktree/agent scaffolding — never committed.
+.claude/

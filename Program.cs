@@ -14,7 +14,7 @@ namespace MTTextClient;
 /// Supports three modes:
 ///   1) Interactive REPL (default)
 ///   2) Single-command  (pass command as CLI args)
-///   3) MCP Server      (--mcp flag — stdio JSON-RPC for AI agents)
+///   3) MCP Server      (--mcp flag — stdio JSON-RPC for automation clients)
 /// </summary>
 public static class Program
 {
@@ -108,6 +108,9 @@ public static class Program
         // Risk Management & Observability
         Registry.Register(new AutoStopsCommand(Manager));
         Registry.Register(new BlacklistCommand(Manager));
+        Registry.Register(new WhitelistCommand(Manager));
+        Registry.Register(new ProfilesCommand());
+        Registry.Register(new FoldersCommand());
         Registry.Register(new TPSLCommand(Manager));
         Registry.Register(new PerformanceCommand(Manager));
         Registry.Register(new NotificationsCommand(Manager));

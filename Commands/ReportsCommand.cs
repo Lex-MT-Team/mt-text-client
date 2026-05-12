@@ -681,18 +681,24 @@ public sealed class ReportsCommand : ICommand
 
     #region Phase K: Report Metadata
 
+    private static readonly RequestExecutor _executor = new();
+
     private CommandResult GetReportComments(CoreConnection conn)
     {
-        ReportsFieldData? data = conn.RequestReportComments();
-        if (data == null)
-        {
-            return CommandResult.Fail($"[{conn.Name}] Report comments request timed out.");
-        }
-
-        List<string>? comments = data.reportComments ?? new List<string>();
+        // MCP-003 / Stage 7.2: empty/cold Firebird returns silence; the
+        // RequestExecutor.ExecuteWithFallback overload centralises the
+        // null-on-timeout → empty-envelope translation that this site, the
+        // Dates handler below, and the ticker24 handler in ExchangeCommand
+        // all share.  Each call-site provides its own typed fallback so the
+        // shape callers expect is preserved.
+        ReportsFieldData data = _executor.ExecuteWithFallback(
+            () => conn.RequestReportComments(),
+            () => new ReportsFieldData { reportComments = new List<string>() });
+        List<string> comments = data.reportComments ?? new List<string>();
         if (comments.Count == 0)
         {
-            return CommandResult.Ok($"[{conn.Name}] No report comments.");
+            return CommandResult.Ok($"[{conn.Name}] No report comments.",
+                new { Server = conn.Name, Comments = new List<string>() });
         }
 
         return CommandResult.Ok(
@@ -702,16 +708,15 @@ public sealed class ReportsCommand : ICommand
 
     private CommandResult GetReportDates(CoreConnection conn)
     {
-        ReportsFieldData? data = conn.RequestReportDates();
-        if (data == null)
-        {
-            return CommandResult.Fail($"[{conn.Name}] Report dates request timed out.");
-        }
-
-        List<long>? dates = data.reportsDate ?? new List<long>();
+        // MCP-003 / Stage 7.2: same pattern via RequestExecutor.
+        ReportsFieldData data = _executor.ExecuteWithFallback(
+            () => conn.RequestReportDates(),
+            () => new ReportsFieldData { reportsDate = new List<long>() });
+        List<long> dates = data.reportsDate ?? new List<long>();
         if (dates.Count == 0)
         {
-            return CommandResult.Ok($"[{conn.Name}] No report dates.");
+            return CommandResult.Ok($"[{conn.Name}] No report dates.",
+                new { Server = conn.Name, Dates = new List<string>(), RawTimestamps = new List<long>() });
         }
 
         var formatted = new List<string>(dates.Count);

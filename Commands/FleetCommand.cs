@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using MTTextClient.Core;
 using MTTextClient.Output;
@@ -12,7 +13,7 @@ namespace MTTextClient.Commands;
 
 /// <summary>
 /// Fleet-wide commands — operate across ALL connections simultaneously.
-/// Designed for AI agents managing 16–1000+ servers.
+/// Designed for automation clients managing 16–1000+ servers.
 ///
 /// Subcommands:
 ///   fleet connect              — connect to all profiles at once
@@ -79,7 +80,9 @@ public sealed class FleetCommand : ICommand
             "blacklist" or "bl" => HandleFleetBlacklist(),
             "perf" or "performance" => HandleFleetPerformance(),
             "reports" or "rep" => HandleFleetReports(args.Length > 1 ? args[1..] : Array.Empty<string>()),
-            _ => CommandResult.Fail($"Unknown fleet subcommand: '{subcommand}'. Use: connect, status, balances, positions, algos, health, summary, disconnect, autostops, blacklist, perf, reports")
+            // Stage 5.1 — fleet-wide margin-type campaign.
+            "set-margin-type" or "smt" => HandleFleetSetMarginType(args.Length > 1 ? args[1..] : Array.Empty<string>()),
+            _ => CommandResult.Fail($"Unknown fleet subcommand: '{subcommand}'. Use: connect, status, balances, positions, algos, health, summary, disconnect, autostops, blacklist, perf, reports, set-margin-type")
         };
     }
 
@@ -1414,6 +1417,194 @@ private CommandResult HandleBatchConfig(string[] args)
             new { Period = rangeLabel, Servers = connections.Count,
                   TotalTrades = totalTrades, TotalPnL = Math.Round(totalPnl, 2),
                   TotalFees = Math.Round(totalFees, 2), PerServer = data });
+    }
+
+    #endregion
+
+    #region Stage 5.1 — Fleet margin-type campaign with mandatory dry_run
+
+    /// <summary>
+    /// Stage 5.1 — fleet-wide margin-type campaign.  DRY-RUN is the default
+    /// safety contract: without <c>--confirm</c>, the tool returns a per-profile
+    /// preview (current margin → proposed margin, current_margin_known flag,
+    /// any preflight warnings) and DOES NOT call <c>ModifyMarginType</c>.
+    ///
+    /// <para>Touches venue-side state on confirm (CROSS ↔ ISOLATED, only on
+    /// FUTURES symbols).  Reversible only by another call.</para>
+    ///
+    /// CLI:
+    ///   fleet set-margin-type &lt;symbol&gt; &lt;CROSS|ISOLATED&gt;
+    ///       [--profiles a,b,c]   restrict to these profiles
+    ///       [--exclude a,b]      drop these profiles from the campaign
+    ///       [--market FUTURES]   override (default FUTURES)
+    ///       [--confirm]          commit; otherwise DRY RUN
+    /// </summary>
+    private CommandResult HandleFleetSetMarginType(string[] args)
+    {
+        // Parse positional + flags.
+        string? symbolRaw = null;
+        string? marginRaw = null;
+        var includeProfiles = new List<string>();
+        var excludeProfiles = new List<string>();
+        string marketRaw = "FUTURES";
+        bool confirmFlag = false;
+
+        for (int i = 0; i < args.Length; i++)
+        {
+            string a = args[i];
+            if (a.Equals("--confirm", StringComparison.OrdinalIgnoreCase) || a.Equals("-y", StringComparison.OrdinalIgnoreCase))
+            { confirmFlag = true; continue; }
+            if (a.Equals("--profiles", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            { includeProfiles.AddRange(args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries)); continue; }
+            if (a.Equals("--exclude", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            { excludeProfiles.AddRange(args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries)); continue; }
+            if (a.Equals("--market", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            { marketRaw = args[++i]; continue; }
+            if (symbolRaw == null) { symbolRaw = a; continue; }
+            if (marginRaw == null) { marginRaw = a; continue; }
+        }
+
+        if (string.IsNullOrWhiteSpace(symbolRaw) || string.IsNullOrWhiteSpace(marginRaw))
+        {
+            return CommandResult.Fail(
+                "Usage: fleet set-margin-type <symbol> <CROSS|ISOLATED>\n" +
+                "  [--profiles a,b]   restrict to these profiles\n" +
+                "  [--exclude a,b]    skip these profiles\n" +
+                "  [--market FUTURES] override (FUTURES default)\n" +
+                "  [--confirm]        commit; otherwise DRY RUN");
+        }
+        string symbol = symbolRaw.ToUpperInvariant();
+        if (!Enum.TryParse<MarginType>(marginRaw.ToUpperInvariant(), out MarginType targetMargin) ||
+            targetMargin == MarginType.UNKNOWN)
+        {
+            return CommandResult.Fail($"Invalid margin type: '{marginRaw}'. Use CROSS or ISOLATED.");
+        }
+        if (!Enum.TryParse<MarketType>(marketRaw, ignoreCase: true, out MarketType market) ||
+            !Enum.IsDefined(typeof(MarketType), market))
+            market = MarketType.FUTURES;
+
+        IReadOnlyList<CoreConnection> all = _manager.GetAll();
+        if (all.Count == 0)
+            return CommandResult.Fail("No connections. Use 'fleet connect' first.");
+
+        // Build the targeted-profile set.
+        var includeSet = new HashSet<string>(includeProfiles, StringComparer.OrdinalIgnoreCase);
+        var excludeSet = new HashSet<string>(excludeProfiles, StringComparer.OrdinalIgnoreCase);
+        var targets = all.Where(c =>
+                (includeSet.Count == 0 || includeSet.Contains(c.Name)) &&
+                !excludeSet.Contains(c.Name))
+            .ToList();
+
+        if (targets.Count == 0)
+            return CommandResult.Fail("No profiles after --profiles/--exclude filters; nothing to do.");
+
+        // Per-profile preview: current margin if observable, plus any preflight
+        // skip-reasons (disconnected, symbol not in pair cache, etc).
+        var rows = new List<MarginPlanRow>(targets.Count);
+        foreach (var conn in targets)
+        {
+            var row = new MarginPlanRow { Profile = conn.Name, Exchange = conn.Profile.Exchange.ToString() };
+
+            if (!conn.IsConnected) { row.SkipReason = "disconnected"; rows.Add(row); continue; }
+
+            TradePairSnapshot? pair = conn.ExchangeInfoStore.GetTradePair(symbol);
+            if (pair == null)
+            { row.SkipReason = "symbol_not_in_pair_cache"; rows.Add(row); continue; }
+            if (pair.MarketType != market)
+                row.Warning = $"market_mismatch: pair cache reports {pair.MarketType}, request {market}";
+
+            // Detect current margin type for this symbol via open positions, if any.
+            string? currentMargin = null;
+            try
+            {
+                var pos = conn.AccountStore.GetPositions()
+                    .FirstOrDefault(p => string.Equals(p.Symbol, symbol, StringComparison.OrdinalIgnoreCase));
+                if (pos != null) currentMargin = pos.MarginType.ToString();
+            }
+            catch { }
+            row.CurrentMargin = currentMargin;
+            row.ProposedMargin = targetMargin.ToString();
+            row.WouldChange = currentMargin == null
+                || !string.Equals(currentMargin, targetMargin.ToString(), StringComparison.OrdinalIgnoreCase);
+            rows.Add(row);
+        }
+
+        if (!confirmFlag)
+        {
+            int eligible = rows.Count(r => r.SkipReason == null);
+            int wouldChange = rows.Count(r => r.SkipReason == null && r.WouldChange);
+            return CommandResult.Ok(
+                $"FLEET set-margin-type DRY RUN — symbol={symbol} → {targetMargin} on {market}.\n" +
+                $"  {targets.Count} profile(s) considered; {eligible} eligible; {wouldChange} would change.\n" +
+                $"Add --confirm to commit.",
+                new
+                {
+                    DryRun = true,
+                    Symbol = symbol,
+                    Market = market.ToString(),
+                    TargetMargin = targetMargin.ToString(),
+                    ProfileCount = targets.Count,
+                    Eligible = eligible,
+                    WouldChange = wouldChange,
+                    Profiles = rows.Select(r => (object)new
+                    {
+                        r.Profile, r.Exchange,
+                        CurrentMargin = r.CurrentMargin,
+                        ProposedMargin = r.ProposedMargin,
+                        WouldChange = r.WouldChange,
+                        SkipReason = r.SkipReason,
+                        Warning = r.Warning,
+                    }).ToList(),
+                });
+        }
+
+        // Commit path — per-profile fan-out via ModifyMarginType.  No abort on
+        // first failure; partial_result records each row's outcome.
+        int applied = 0;
+        int failed = 0;
+        int skipped = 0;
+        var resultRows = new List<object>(rows.Count);
+        foreach (var r in rows)
+        {
+            if (r.SkipReason != null)
+            { resultRows.Add(new { r.Profile, r.Exchange, Skipped = true, r.SkipReason }); skipped++; continue; }
+            var conn = targets.First(c => c.Name == r.Profile);
+            string? notif;
+            try { notif = conn.ModifyMarginType(market, symbol, targetMargin)?.ToString() ?? "(no notification)"; }
+            catch (Exception ex) { notif = $"exception: {ex.Message}"; }
+            bool ok = notif != null && !notif.StartsWith("exception", StringComparison.OrdinalIgnoreCase);
+            resultRows.Add(new
+            {
+                r.Profile, r.Exchange,
+                Success = ok,
+                Notification = notif,
+                r.CurrentMargin, r.ProposedMargin, r.WouldChange, r.Warning,
+            });
+            if (ok) applied++; else failed++;
+        }
+
+        return CommandResult.Ok(
+            $"FLEET set-margin-type — symbol={symbol} → {targetMargin}: " +
+            $"{applied} applied, {failed} failed, {skipped} skipped (of {rows.Count}).",
+            new
+            {
+                Symbol = symbol,
+                Market = market.ToString(),
+                TargetMargin = targetMargin.ToString(),
+                Applied = applied, Failed = failed, Skipped = skipped,
+                PartialResult = resultRows,
+            });
+    }
+
+    private sealed class MarginPlanRow
+    {
+        public string Profile = "";
+        public string Exchange = "";
+        public string? CurrentMargin;
+        public string? ProposedMargin;
+        public bool WouldChange;
+        public string? SkipReason;
+        public string? Warning;
     }
 
     #endregion

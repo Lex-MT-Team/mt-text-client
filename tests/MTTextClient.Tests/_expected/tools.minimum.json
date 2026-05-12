@@ -1,0 +1,1429 @@
+{
+  "_comment": "Locked baseline as of repo @ 0604e31. PR-gate CI fails if any name disappears or any 'required' array shrinks. Generated from tools_catalog_v3.json.",
+  "tool_count_minimum": 258,
+  "tools": [
+    {
+      "name": "mt_account_balance",
+      "required": []
+    },
+    {
+      "name": "mt_account_executions",
+      "required": []
+    },
+    {
+      "name": "mt_account_info",
+      "required": []
+    },
+    {
+      "name": "mt_account_orders",
+      "required": []
+    },
+    {
+      "name": "mt_account_positions",
+      "required": []
+    },
+    {
+      "name": "mt_account_summary",
+      "required": []
+    },
+    {
+      "name": "mt_alerts_delete",
+      "required": [
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_alerts_history",
+      "required": []
+    },
+    {
+      "name": "mt_alerts_history_subscribe",
+      "required": []
+    },
+    {
+      "name": "mt_alerts_history_unsubscribe",
+      "required": []
+    },
+    {
+      "name": "mt_alerts_list",
+      "required": []
+    },
+    {
+      "name": "mt_alerts_save",
+      "required": [
+        "name",
+        "symbol",
+        "market_type",
+        "condition_type",
+        "ref_price"
+      ]
+    },
+    {
+      "name": "mt_alerts_set_running",
+      "required": [
+        "running",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_alerts_subscribe",
+      "required": []
+    },
+    {
+      "name": "mt_alerts_unsubscribe",
+      "required": []
+    },
+    {
+      "name": "mt_algos_batch_config",
+      "required": [
+        "algo",
+        "key",
+        "value"
+      ]
+    },
+    {
+      "name": "mt_algos_batch_start",
+      "required": [
+        "algo"
+      ]
+    },
+    {
+      "name": "mt_algos_batch_stop",
+      "required": [
+        "algo"
+      ]
+    },
+    {
+      "name": "mt_algos_clone_group",
+      "required": [
+        "group_id"
+      ]
+    },
+    {
+      "name": "mt_algos_config",
+      "required": [
+        "id"
+      ]
+    },
+    {
+      "name": "mt_algos_config_set",
+      "required": [
+        "id",
+        "key",
+        "value"
+      ]
+    },
+    {
+      "name": "mt_algos_copy",
+      "required": [
+        "id",
+        "destination_profile"
+      ]
+    },
+    {
+      "name": "mt_algos_bulk_edit",
+      "required": [
+        "filter_json",
+        "mutation_json",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_algos_copy_to_clipboard",
+      "required": [
+        "id"
+      ]
+    },
+    {
+      "name": "mt_algos_create",
+      "required": [
+        "profile",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_algos_delete",
+      "required": [
+        "id",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_algos_delete_group",
+      "required": [
+        "group_id",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_algos_export",
+      "required": [
+        "id"
+      ]
+    },
+    {
+      "name": "mt_algos_get",
+      "required": [
+        "id"
+      ]
+    },
+    {
+      "name": "mt_algos_group",
+      "required": [
+        "group_id"
+      ]
+    },
+    {
+      "name": "mt_algos_group_by_name",
+      "required": [
+        "name"
+      ]
+    },
+    {
+      "name": "mt_algos_groups",
+      "required": []
+    },
+    {
+      "name": "mt_algos_import_json",
+      "required": [
+        "destination_profile",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_algos_list",
+      "required": []
+    },
+    {
+      "name": "mt_algos_list_all",
+      "required": []
+    },
+    {
+      "name": "mt_algos_paste_from_clipboard",
+      "required": [
+        "destination_profile",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_algos_profiling",
+      "required": [
+        "symbol"
+      ]
+    },
+    {
+      "name": "mt_algos_rename",
+      "required": [
+        "id",
+        "name"
+      ]
+    },
+    {
+      "name": "mt_algos_save",
+      "required": [
+        "id"
+      ]
+    },
+    {
+      "name": "mt_algos_save_start",
+      "required": [
+        "id"
+      ]
+    },
+    {
+      "name": "mt_algos_search",
+      "required": [
+        "query"
+      ]
+    },
+    {
+      "name": "mt_algos_snapshot",
+      "required": []
+    },
+    {
+      "name": "mt_algos_start",
+      "required": [
+        "id"
+      ]
+    },
+    {
+      "name": "mt_algos_start_all",
+      "required": [
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_algos_start_verified",
+      "required": [
+        "id"
+      ]
+    },
+    {
+      "name": "mt_algos_stop",
+      "required": [
+        "id"
+      ]
+    },
+    {
+      "name": "mt_algos_stop_all",
+      "required": [
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_algos_toggle_debug",
+      "required": [
+        "id"
+      ]
+    },
+    {
+      "name": "mt_algos_tpsl_change",
+      "required": []
+    },
+    {
+      "name": "mt_algos_verify",
+      "required": [
+        "id"
+      ]
+    },
+    {
+      "name": "mt_autobuy_delete",
+      "required": [
+        "data"
+      ]
+    },
+    {
+      "name": "mt_autobuy_list",
+      "required": []
+    },
+    {
+      "name": "mt_autobuy_refresh_pairs",
+      "required": []
+    },
+    {
+      "name": "mt_autobuy_save",
+      "required": [
+        "data"
+      ]
+    },
+    {
+      "name": "mt_autobuy_start",
+      "required": [
+        "data"
+      ]
+    },
+    {
+      "name": "mt_autobuy_stop",
+      "required": [
+        "data"
+      ]
+    },
+    {
+      "name": "mt_autobuy_subscribe",
+      "required": []
+    },
+    {
+      "name": "mt_autobuy_unsubscribe",
+      "required": []
+    },
+    {
+      "name": "mt_autostops_add",
+      "required": [
+        "max_loss",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_autostops_baseline",
+      "required": []
+    },
+    {
+      "name": "mt_autostops_delete",
+      "required": [
+        "index",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_autostops_edit",
+      "required": [
+        "index",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_autostops_list",
+      "required": []
+    },
+    {
+      "name": "mt_autostops_reports",
+      "required": []
+    },
+    {
+      "name": "mt_autostops_start",
+      "required": [
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_autostops_stop",
+      "required": [
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_blacklist_add",
+      "required": [
+        "type",
+        "market_type",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_blacklist_list",
+      "required": []
+    },
+    {
+      "name": "mt_blacklist_remove",
+      "required": [
+        "type",
+        "market_type",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_buylimit_request",
+      "required": [
+        "amount"
+      ]
+    },
+    {
+      "name": "mt_config_import_algos",
+      "required": []
+    },
+    {
+      "name": "mt_config_restore",
+      "required": [
+        "path"
+      ]
+    },
+    {
+      "name": "mt_config_snapshot",
+      "required": []
+    },
+    {
+      "name": "mt_connect",
+      "required": [
+        "profile"
+      ]
+    },
+    {
+      "name": "mt_connection_health",
+      "required": []
+    },
+    {
+      "name": "mt_connection_tag",
+      "required": [
+        "profile",
+        "key",
+        "value"
+      ]
+    },
+    {
+      "name": "mt_connection_tags",
+      "required": []
+    },
+    {
+      "name": "mt_core_clear_archive",
+      "required": [
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_core_clear_orders",
+      "required": [
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_core_dashboard",
+      "required": []
+    },
+    {
+      "name": "mt_core_health",
+      "required": []
+    },
+    {
+      "name": "mt_core_license",
+      "required": []
+    },
+    {
+      "name": "mt_core_restart",
+      "required": [
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_core_restart_update",
+      "required": [
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_core_shutdown",
+      "required": [
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_core_status",
+      "required": []
+    },
+    {
+      "name": "mt_deposit_address",
+      "required": [
+        "coin",
+        "network"
+      ]
+    },
+    {
+      "name": "mt_deposit_info",
+      "required": [
+        "coin"
+      ]
+    },
+    {
+      "name": "mt_disconnect",
+      "required": [
+        "profile"
+      ]
+    },
+    {
+      "name": "mt_dust_convert",
+      "required": []
+    },
+    {
+      "name": "mt_dust_get",
+      "required": []
+    },
+    {
+      "name": "mt_events_poll",
+      "required": []
+    },
+    {
+      "name": "mt_events_status",
+      "required": []
+    },
+    {
+      "name": "mt_exchange_funding_rate",
+      "required": [
+        "symbol"
+      ]
+    },
+    {
+      "name": "mt_exchange_klines",
+      "required": [
+        "symbol"
+      ]
+    },
+    {
+      "name": "mt_exchange_leverage_brackets",
+      "required": [
+        "symbol"
+      ]
+    },
+    {
+      "name": "mt_exchange_pair_detail",
+      "required": [
+        "symbol"
+      ]
+    },
+    {
+      "name": "mt_exchange_pairs",
+      "required": []
+    },
+    {
+      "name": "mt_exchange_search",
+      "required": [
+        "query"
+      ]
+    },
+    {
+      "name": "mt_exchange_summary",
+      "required": []
+    },
+    {
+      "name": "mt_exchange_ticker24",
+      "required": [
+        "symbol"
+      ]
+    },
+    {
+      "name": "mt_exchange_trades",
+      "required": [
+        "symbol"
+      ]
+    },
+    {
+      "name": "mt_fleet_algos",
+      "required": []
+    },
+    {
+      "name": "mt_fleet_autostops",
+      "required": []
+    },
+    {
+      "name": "mt_fleet_balances",
+      "required": []
+    },
+    {
+      "name": "mt_fleet_batch_connect",
+      "required": [
+        "profiles"
+      ]
+    },
+    {
+      "name": "mt_fleet_blacklist",
+      "required": []
+    },
+    {
+      "name": "mt_fleet_connect",
+      "required": []
+    },
+    {
+      "name": "mt_fleet_disconnect",
+      "required": [
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_fleet_health",
+      "required": []
+    },
+    {
+      "name": "mt_fleet_perf",
+      "required": []
+    },
+    {
+      "name": "mt_fleet_positions",
+      "required": []
+    },
+    {
+      "name": "mt_fleet_reports",
+      "required": []
+    },
+    {
+      "name": "mt_fleet_set_margin_type",
+      "required": [
+        "symbol",
+        "margin_type",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_fleet_status",
+      "required": []
+    },
+    {
+      "name": "mt_fleet_summary",
+      "required": []
+    },
+    {
+      "name": "mt_folders_add",
+      "required": [
+        "name",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_folders_delete",
+      "required": [
+        "name",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_folders_edit",
+      "required": [
+        "old_name",
+        "new_name",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_folders_list",
+      "required": []
+    },
+    {
+      "name": "mt_fund_transfer",
+      "required": [
+        "from_account",
+        "asset",
+        "amount",
+        "to_account"
+      ]
+    },
+    {
+      "name": "mt_funding_request",
+      "required": []
+    },
+    {
+      "name": "mt_graphtool_delete",
+      "required": [
+        "data"
+      ]
+    },
+    {
+      "name": "mt_graphtool_list",
+      "required": []
+    },
+    {
+      "name": "mt_graphtool_save",
+      "required": [
+        "data"
+      ]
+    },
+    {
+      "name": "mt_graphtool_subscribe",
+      "required": []
+    },
+    {
+      "name": "mt_graphtool_unsubscribe",
+      "required": []
+    },
+    {
+      "name": "mt_import_add_numeric",
+      "required": [
+        "id",
+        "delta"
+      ]
+    },
+    {
+      "name": "mt_import_from_profile",
+      "required": [
+        "source_profile",
+        "destination_profile"
+      ]
+    },
+    {
+      "name": "mt_import_templates",
+      "required": []
+    },
+    {
+      "name": "mt_import_v2",
+      "required": [
+        "path"
+      ]
+    },
+    {
+      "name": "mt_livemarkets_list",
+      "required": []
+    },
+    {
+      "name": "mt_livemarkets_subscribe",
+      "required": []
+    },
+    {
+      "name": "mt_livemarkets_unsubscribe",
+      "required": []
+    },
+    {
+      "name": "mt_marketdata_depth",
+      "required": [
+        "symbol"
+      ]
+    },
+    {
+      "name": "mt_marketdata_depth_subscribe",
+      "required": [
+        "symbol"
+      ]
+    },
+    {
+      "name": "mt_marketdata_depth_unsubscribe",
+      "required": [
+        "symbol"
+      ]
+    },
+    {
+      "name": "mt_marketdata_klines",
+      "required": [
+        "symbol",
+        "interval"
+      ]
+    },
+    {
+      "name": "mt_marketdata_klines_subscribe",
+      "required": [
+        "symbol",
+        "interval"
+      ]
+    },
+    {
+      "name": "mt_marketdata_klines_unsubscribe",
+      "required": [
+        "symbol",
+        "interval"
+      ]
+    },
+    {
+      "name": "mt_marketdata_markprice",
+      "required": [
+        "symbol"
+      ]
+    },
+    {
+      "name": "mt_marketdata_markprice_subscribe",
+      "required": [
+        "symbol"
+      ]
+    },
+    {
+      "name": "mt_marketdata_markprice_unsubscribe",
+      "required": [
+        "symbol"
+      ]
+    },
+    {
+      "name": "mt_marketdata_status",
+      "required": []
+    },
+    {
+      "name": "mt_marketdata_ticker",
+      "required": []
+    },
+    {
+      "name": "mt_marketdata_ticker_subscribe",
+      "required": []
+    },
+    {
+      "name": "mt_marketdata_ticker_unsubscribe",
+      "required": []
+    },
+    {
+      "name": "mt_marketdata_trades",
+      "required": [
+        "symbol"
+      ]
+    },
+    {
+      "name": "mt_marketdata_trades_subscribe",
+      "required": [
+        "symbol"
+      ]
+    },
+    {
+      "name": "mt_marketdata_trades_unsubscribe",
+      "required": [
+        "symbol"
+      ]
+    },
+    {
+      "name": "mt_metrics_get",
+      "required": []
+    },
+    {
+      "name": "mt_monitor_health",
+      "required": []
+    },
+    {
+      "name": "mt_monitor_performance",
+      "required": []
+    },
+    {
+      "name": "mt_monitor_start",
+      "required": []
+    },
+    {
+      "name": "mt_monitor_stats",
+      "required": []
+    },
+    {
+      "name": "mt_monitor_status",
+      "required": []
+    },
+    {
+      "name": "mt_monitor_stop",
+      "required": []
+    },
+    {
+      "name": "mt_notifications_clear",
+      "required": []
+    },
+    {
+      "name": "mt_notifications_config_capabilities",
+      "required": []
+    },
+    {
+      "name": "mt_notifications_config_descriptors",
+      "required": []
+    },
+    {
+      "name": "mt_notifications_config_groups",
+      "required": []
+    },
+    {
+      "name": "mt_notifications_config_targets",
+      "required": []
+    },
+    {
+      "name": "mt_notifications_list",
+      "required": []
+    },
+    {
+      "name": "mt_notifications_subscribe",
+      "required": []
+    },
+    {
+      "name": "mt_notifications_unsubscribe",
+      "required": []
+    },
+    {
+      "name": "mt_orders_cancel",
+      "required": [
+        "client_order_id"
+      ]
+    },
+    {
+      "name": "mt_orders_cancel_all",
+      "required": []
+    },
+    {
+      "name": "mt_orders_change_margin",
+      "required": [
+        "symbol",
+        "position_side",
+        "amount"
+      ]
+    },
+    {
+      "name": "mt_orders_close",
+      "required": [
+        "symbol"
+      ]
+    },
+    {
+      "name": "mt_orders_close_all",
+      "required": []
+    },
+    {
+      "name": "mt_orders_close_by_tpsl",
+      "required": [
+        "symbol",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_orders_get_multiasset",
+      "required": []
+    },
+    {
+      "name": "mt_orders_get_position_mode",
+      "required": [
+        "symbol"
+      ]
+    },
+    {
+      "name": "mt_orders_join",
+      "required": [
+        "client_order_id"
+      ]
+    },
+    {
+      "name": "mt_orders_list",
+      "required": []
+    },
+    {
+      "name": "mt_orders_move",
+      "required": [
+        "client_order_id",
+        "new_price"
+      ]
+    },
+    {
+      "name": "mt_orders_move_batch",
+      "required": [
+        "orders_json"
+      ]
+    },
+    {
+      "name": "mt_orders_panic_sell",
+      "required": [
+        "symbol"
+      ]
+    },
+    {
+      "name": "mt_orders_place",
+      "required": [
+        "symbol",
+        "side",
+        "qty"
+      ]
+    },
+    {
+      "name": "mt_orders_positions",
+      "required": []
+    },
+    {
+      "name": "mt_orders_reset_tpsl",
+      "required": [
+        "symbol",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_orders_set_leverage",
+      "required": [
+        "symbol",
+        "leverage"
+      ]
+    },
+    {
+      "name": "mt_orders_set_leverage_buysell",
+      "required": [
+        "asset",
+        "buy_leverage",
+        "sell_leverage",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_orders_set_margin_type",
+      "required": [
+        "symbol",
+        "margin_type"
+      ]
+    },
+    {
+      "name": "mt_orders_set_multiasset",
+      "required": [
+        "enabled",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_orders_set_position_mode",
+      "required": [
+        "symbol",
+        "mode"
+      ]
+    },
+    {
+      "name": "mt_orders_split",
+      "required": [
+        "client_order_id"
+      ]
+    },
+    {
+      "name": "mt_orders_transfer",
+      "required": [
+        "asset",
+        "amount",
+        "from",
+        "to"
+      ]
+    },
+    {
+      "name": "mt_perf_list",
+      "required": []
+    },
+    {
+      "name": "mt_perf_request",
+      "required": []
+    },
+    {
+      "name": "mt_perf_subscribe",
+      "required": []
+    },
+    {
+      "name": "mt_perf_unsubscribe",
+      "required": []
+    },
+    {
+      "name": "mt_profile_settings_delete",
+      "required": [
+        "keys",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_profile_settings_get",
+      "required": []
+    },
+    {
+      "name": "mt_profile_settings_list",
+      "required": []
+    },
+    {
+      "name": "mt_profile_settings_update",
+      "required": [
+        "profile_name",
+        "updates_json"
+      ]
+    },
+    {
+      "name": "mt_profiles_add",
+      "required": [
+        "name",
+        "address",
+        "port",
+        "token",
+        "exchange",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_profiles_delete",
+      "required": [
+        "name",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_profiles_edit",
+      "required": [
+        "name",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_profiles_import_csv",
+      "required": [
+        "path",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_profiles_list",
+      "required": []
+    },
+    {
+      "name": "mt_profiles_move",
+      "required": [
+        "name",
+        "folder",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_profiling_subscribe",
+      "required": [
+        "symbol",
+        "algo_id"
+      ]
+    },
+    {
+      "name": "mt_profiling_unsubscribe",
+      "required": [
+        "symbol",
+        "algo_id"
+      ]
+    },
+    {
+      "name": "mt_rate_status",
+      "required": []
+    },
+    {
+      "name": "mt_reports_comments",
+      "required": []
+    },
+    {
+      "name": "mt_reports_dates",
+      "required": []
+    },
+    {
+      "name": "mt_reports_delete",
+      "required": [
+        "name"
+      ]
+    },
+    {
+      "name": "mt_reports_export",
+      "required": []
+    },
+    {
+      "name": "mt_reports_fleet_export",
+      "required": []
+    },
+    {
+      "name": "mt_reports_cancel",
+      "required": [
+        "request_id"
+      ]
+    },
+    {
+      "name": "mt_reports_csv_inline",
+      "required": []
+    },
+    {
+      "name": "mt_reports_load",
+      "required": [
+        "name"
+      ]
+    },
+    {
+      "name": "mt_reports_query",
+      "required": []
+    },
+    {
+      "name": "mt_reports_status",
+      "required": [
+        "request_id"
+      ]
+    },
+    {
+      "name": "mt_reports_store",
+      "required": [
+        "name"
+      ]
+    },
+    {
+      "name": "mt_reports_stored",
+      "required": []
+    },
+    {
+      "name": "mt_reports_trades",
+      "required": []
+    },
+    {
+      "name": "mt_settings_diff",
+      "required": [
+        "profile_a",
+        "profile_b"
+      ]
+    },
+    {
+      "name": "mt_settings_diff_snapshots",
+      "required": [
+        "snapshot_a",
+        "snapshot_b"
+      ]
+    },
+    {
+      "name": "mt_settings_get",
+      "required": []
+    },
+    {
+      "name": "mt_settings_groups",
+      "required": []
+    },
+    {
+      "name": "mt_settings_search",
+      "required": [
+        "query"
+      ]
+    },
+    {
+      "name": "mt_settings_set",
+      "required": [
+        "key",
+        "value"
+      ]
+    },
+    {
+      "name": "mt_signals_send",
+      "required": [
+        "symbol",
+        "side",
+        "price"
+      ]
+    },
+    {
+      "name": "mt_status",
+      "required": []
+    },
+    {
+      "name": "mt_tpsl_cancel",
+      "required": [
+        "id",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_tpsl_join",
+      "required": [
+        "tpsl_ids",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_tpsl_list",
+      "required": []
+    },
+    {
+      "name": "mt_tpsl_split",
+      "required": [
+        "tpsl_id",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_tpsl_subscribe",
+      "required": []
+    },
+    {
+      "name": "mt_tpsl_unsubscribe",
+      "required": []
+    },
+    {
+      "name": "mt_triggers_delete",
+      "required": [
+        "data"
+      ]
+    },
+    {
+      "name": "mt_triggers_list",
+      "required": []
+    },
+    {
+      "name": "mt_triggers_save",
+      "required": [
+        "data"
+      ]
+    },
+    {
+      "name": "mt_triggers_start",
+      "required": [
+        "data"
+      ]
+    },
+    {
+      "name": "mt_triggers_start_all",
+      "required": []
+    },
+    {
+      "name": "mt_triggers_stop",
+      "required": [
+        "data"
+      ]
+    },
+    {
+      "name": "mt_triggers_stop_all",
+      "required": []
+    },
+    {
+      "name": "mt_triggers_subscribe",
+      "required": []
+    },
+    {
+      "name": "mt_triggers_unsubscribe",
+      "required": []
+    },
+    {
+      "name": "mt_use",
+      "required": [
+        "profile"
+      ]
+    },
+    {
+      "name": "mt_vault_delete_profile",
+      "required": [
+        "name",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_vault_get_profile",
+      "required": [
+        "name"
+      ]
+    },
+    {
+      "name": "mt_vault_list_profiles",
+      "required": []
+    },
+    {
+      "name": "mt_vault_store_profile",
+      "required": [
+        "name",
+        "api_key",
+        "api_secret"
+      ]
+    },
+    {
+      "name": "mt_watchdog_status",
+      "required": []
+    },
+    {
+      "name": "mt_watchdog_token_update",
+      "required": [
+        "token",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_whitelist_add",
+      "required": [
+        "type",
+        "market",
+        "quote",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_whitelist_bulk_add",
+      "required": [
+        "type",
+        "market",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_whitelist_bulk_remove",
+      "required": [
+        "type",
+        "market",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_whitelist_list",
+      "required": []
+    },
+    {
+      "name": "mt_whitelist_remove",
+      "required": [
+        "type",
+        "market",
+        "quote",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_tpsl_cancel_many",
+      "required": [
+        "tpsl_ids",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_tpsl_split_many",
+      "required": [
+        "tpsl_ids",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_tpsl_panic",
+      "required": [
+        "tpsl_id",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_tpsl_panic_many",
+      "required": [
+        "tpsl_ids",
+        "confirm"
+      ]
+    },
+    {
+      "name": "mt_orders_update_tpsl",
+      "required": [
+        "symbol",
+        "side",
+        "confirm"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,208 @@
+name: Testing Environment (Smoke + BenchAll + LiveTrade)
+
+# Per UnifiedDevelopmentPlan §5.3 / OV-4, Stage 0.7:
+# This workflow exercises the categories that hit a REAL MTCore process —
+# Smoke (bench_01 only), BenchAll (all 4 bench profiles), and optionally
+# LiveTrade. It is NOT triggered by PRs. Triggers:
+#
+#   * workflow_dispatch — operator-initiated. Choose whether to enable
+#     BenchAll (default on) and LiveTrade (default off).
+#   * schedule — nightly at 03:30 UTC. Smoke + BenchAll. LiveTrade stays
+#     off in the scheduled run (no operator to authorise real-trade).
+#
+# The self-hosted runner must have:
+#   1. ~/mt-bench/scripts/start_all_cores.sh available and previously run.
+#   2. At least bench_01 (UDP:4242) bound to a live MTCore process. The
+#      preflight step below checks each bench port and reports which are
+#      up before the test job starts.
+#   3. The disposable test profile (Tour_CORP_001) is the bench_01 target.
+#
+# MTC_TESTING_ENV=1 is set unconditionally; LiveTrade requires the
+# operator-only enable_live_trades input AND is suppressed in scheduled
+# runs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_benchall:
+        description: 'Run BenchAll (all 4 bench profiles, not just bench_01)'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      enable_live_trades:
+        description: 'Set MTC_LIVE_TRADES=1 (real orders on the disposable test account). DO NOT enable on a non-disposable profile.'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+  schedule:
+    # 03:30 UTC nightly — quiet hours for the bench cores' upstream
+    # exchanges, and gives the operator a daily green/red signal.
+    - cron: '30 3 * * *'
+
+permissions:
+  contents: read
+  pull-requests: write  # commit-comment for the summary
+
+jobs:
+  smoke-benchall:
+    # Self-hosted: only the bench host has the four MTCore processes wired
+    # up and the disposable profile credentials in ~/.config/mt-textclient/profiles.json.
+    runs-on: [self-hosted, mt-bench]
+
+    timeout-minutes: 30
+
+    env:
+      MTC_TESTING_ENV: '1'
+      # LiveTrade only fires on manual dispatch with explicit consent.
+      # The scheduled run leaves MTC_LIVE_TRADES unset, guaranteeing
+      # no scheduled real-trade execution.
+      MTC_LIVE_TRADES: ${{ github.event_name == 'workflow_dispatch' && inputs.enable_live_trades == 'true' && '1' || '' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Setup Python 3 (for the macOS PE patch script)
+        if: runner.os == 'macOS'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Preflight — check bench port bindings
+        id: preflight
+        run: |
+          # One bench per line — easier to read than parallel arrays.
+          benches="bench_01 4242 BYBIT
+          bench_02 4243 BINANCE
+          bench_03 4244 HYPERLIQUID
+          bench_04 4245 OKX"
+          up=0
+          while read -r label port exchange; do
+            [ -z "$label" ] && continue
+            if lsof -nP -iUDP:$port 2>/dev/null | grep -q MTCore; then
+              echo "  $label ($port, $exchange): UP"
+              up=$((up+1))
+            else
+              echo "  $label ($port, $exchange): DOWN"
+            fi
+          done <<< "$benches"
+          echo "up=$up" >> "$GITHUB_OUTPUT"
+          if [ "$up" -lt 1 ]; then
+            echo "::error::No MTCore observed on any bench port. Run ~/mt-bench/scripts/start_all_cores.sh first."
+            exit 1
+          fi
+          echo "::notice::$up/4 bench MTCores reachable."
+
+      - name: Restore
+        run: dotnet restore MTTextClient.sln
+
+      - name: Build (Release)
+        # On macOS the post-build PatchMTSharedArm64 target re-applies the
+        # PE Machine-field flip (Stage 0.6); on Linux the condition is false.
+        run: dotnet build MTTextClient.sln -c Release --no-restore
+
+      - name: Run Smoke
+        # Bench_01 must be up for Smoke to pass; preflight already verified
+        # at least one bench is reachable, and Smoke is gated on bench_01
+        # specifically inside the fixture.
+        run: >
+          dotnet test MTTextClient.sln
+          -c Release --no-build
+          --filter "Category=Smoke"
+          --logger "trx;LogFileName=smoke.trx"
+          --results-directory ./TestResults
+
+      - name: Run BenchAll
+        # Manual dispatch can disable via the run_benchall input; scheduled
+        # runs always include BenchAll. Per-bench skip-on-unavailable in
+        # the fixture means down benches don't block the suite.
+        if: github.event_name == 'schedule' || inputs.run_benchall == 'true'
+        run: >
+          dotnet test MTTextClient.sln
+          -c Release --no-build
+          --filter "Category=BenchAll"
+          --logger "trx;LogFileName=benchall.trx"
+          --results-directory ./TestResults
+
+      - name: Run LiveTrade (gated)
+        # Only when the operator explicitly opted in on workflow_dispatch.
+        # Scheduled runs never reach here because MTC_LIVE_TRADES stays empty.
+        if: env.MTC_LIVE_TRADES == '1'
+        run: >
+          dotnet test MTTextClient.sln
+          -c Release --no-build
+          --filter "Category=LiveTrade"
+          --logger "trx;LogFileName=livetrade.trx"
+          --results-directory ./TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: testing-environment-results-${{ github.run_id }}
+          path: ./TestResults/**/*.trx
+          if-no-files-found: ignore
+
+      - name: Summarise pass/fail to GITHUB_STEP_SUMMARY
+        if: always()
+        run: |
+          summary="./TestResults"
+          {
+            echo "## Testing environment run"
+            echo ""
+            echo "| Trigger | $(echo $GITHUB_EVENT_NAME) |"
+            echo "|---|---|"
+            echo "| Benches up at preflight | ${{ steps.preflight.outputs.up }}/4 |"
+            echo "| BenchAll requested | ${{ github.event_name == 'schedule' || inputs.run_benchall == 'true' }} |"
+            echo "| LiveTrade enabled | ${{ env.MTC_LIVE_TRADES == '1' }} |"
+            echo ""
+            for trx in $summary/*.trx; do
+              [ -f "$trx" ] || continue
+              # Count outcomes by simple grep; jq-free for portability.
+              passed=$(grep -c 'outcome="Passed"' "$trx" || true)
+              failed=$(grep -c 'outcome="Failed"' "$trx" || true)
+              skipped=$(grep -c 'outcome="NotExecuted"' "$trx" || true)
+              echo "### $(basename "$trx" .trx)"
+              echo "passed=$passed failed=$failed skipped=$skipped"
+              echo ""
+            done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment on commit (workflow_dispatch only)
+        # Scheduled runs don't have an associated PR; commit-comment is the
+        # right surface for both push and dispatch. The summary mirrors
+        # the step-summary block above so a casual reviewer can see the
+        # numbers in the commit thread without opening the run.
+        if: always() && github.event_name == 'workflow_dispatch'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const dir = './TestResults';
+            let body = `### Testing-environment run \`${context.runId}\`\n`;
+            body += `Trigger: workflow_dispatch · BenchAll: ${{ inputs.run_benchall }} · LiveTrade: ${{ inputs.enable_live_trades }}\n\n`;
+            if (fs.existsSync(dir)) {
+              for (const f of fs.readdirSync(dir).filter(f => f.endsWith('.trx'))) {
+                const text = fs.readFileSync(path.join(dir, f), 'utf8');
+                const passed = (text.match(/outcome="Passed"/g) || []).length;
+                const failed = (text.match(/outcome="Failed"/g) || []).length;
+                const skipped = (text.match(/outcome="NotExecuted"/g) || []).length;
+                body += `* **${f.replace('.trx','')}**: passed=${passed} failed=${failed} skipped=${skipped}\n`;
+              }
+            }
+            await github.rest.repos.createCommitComment({
+              ...context.repo,
+              commit_sha: context.sha,
+              body,
+            });

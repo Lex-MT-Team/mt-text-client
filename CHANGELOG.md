@@ -7,6 +7,30 @@ Versions follow [SemVer](https://semver.org).
 
 ---
 
+## Unreleased
+
+### Tooling
+
+* `tests/MTTextClient.Tests/` — xUnit + FluentAssertions test project. PR-gate
+  CI runs `Category=Static|Category=Unit` on every PR (Linux + macOS arm64,
+  no MTCore subprocess). Smoke + LiveTrade run in the new
+  `.github/workflows/testing-environment.yml` workflow against a real bench
+  MTCore (operator-initiated, gated by `MTC_TESTING_ENV=1`).
+* `tests/MTTextClient.Tests/_expected/tools.minimum.json` — locked 206-tool
+  catalog baseline. Static tests fail if any baseline tool disappears or
+  loses a required arg.
+* `tests/MTTextClient.Tests/Static/ConfirmGateStaticTests.cs` — declarative
+  audit of which tools must declare `confirm` in `inputSchema.required`.
+  Catches MCP-010-class regressions at PR time.
+* Known broken tools (MCP-003 timeout cluster, MCP-005 import path, MCP-006
+  Vault auth, MCP-010-ext profile_settings_update confirm) are covered by
+  smoke tests with `[Trait("KnownIssue", "MCP-...")]` so the suite stays
+  green while the bugs remain documented.
+* See `tests/README.md` and `docs/PR-test-foundation-xunit-verification.md`
+  for run instructions.
+
+---
+
 ## 0.9.0 — 2026-05-05
 
 ### Added

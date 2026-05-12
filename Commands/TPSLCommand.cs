@@ -79,7 +79,13 @@ public sealed class TPSLCommand : ICommand
             "unsubscribe" => HandleUnsubscribe(targetProfile),
             "join" => HandleJoin(cleanArgs, targetProfile, confirmFlag),
             "split" => HandleSplit(cleanArgs, targetProfile, confirmFlag),
-            _ => CommandResult.Fail($"Unknown subcommand: {subcommand}. Use: list, cancel, subscribe, unsubscribe")
+            // Stage 1.1 — TPSL bulk operations (loop wrappers around the existing single-item wire methods).
+            "cancel-many" => HandleCancelMany(cleanArgs, targetProfile, confirmFlag),
+            "split-many"  => HandleSplitMany(cleanArgs, targetProfile, confirmFlag),
+            // Stage 1.2 — panic operations (immediate MARKET close via TPSL mechanism).
+            "panic"       => HandlePanic(cleanArgs, targetProfile, confirmFlag),
+            "panic-many"  => HandlePanicMany(cleanArgs, targetProfile, confirmFlag),
+            _ => CommandResult.Fail($"Unknown subcommand: {subcommand}. Use: list, cancel, subscribe, unsubscribe, join, split, cancel-many, split-many, panic, panic-many")
         };
     }
 
@@ -280,6 +286,195 @@ public sealed class TPSLCommand : ICommand
         return result.IsOk
             ? CommandResult.Ok($"[{conn.Name}] TPSL split: {result.notificationCode}")
             : CommandResult.Fail($"[{conn.Name}] TPSL split failed: {result.notificationCode} — {result.jsonData}");
+    }
+
+    // ── Stage 1.1: TPSL bulk operations ─────────────────────────────────────
+    //
+    // The MTShared wire protocol exposes only single-item Cancel / Split
+    // requests. These "many" tools are loop wrappers that emit one wire call
+    // per ID and aggregate the results. A single bad ID does not abort the
+    // remaining ones — every ID is attempted and reported individually.
+
+    private CommandResult HandleCancelMany(List<string> args, string? targetProfile, bool confirmed)
+    {
+        if (!confirmed)
+        {
+            return CommandResult.Fail("tpsl cancel-many requires --confirm. Provide TPSL IDs to cancel.");
+        }
+        if (args.Count < 2)
+        {
+            return CommandResult.Fail("Usage: tpsl cancel-many <id1> <id2> [...] --confirm");
+        }
+        CoreConnection? conn = ResolveConnection(targetProfile, out CommandResult? error);
+        if (conn == null) return error!;
+
+        var rows = new List<object>();
+        int ok = 0, fail = 0;
+        for (int i = 1; i < args.Count; i++)
+        {
+            if (!long.TryParse(args[i], out long id))
+            {
+                rows.Add(new { id = args[i], success = false, message = "invalid id" });
+                fail++;
+                continue;
+            }
+            NotificationMessageData? result = conn.CancelTPSL(id);
+            bool success = result != null && result.IsOk;
+            if (success) ok++; else fail++;
+            rows.Add(new
+            {
+                id,
+                success,
+                notificationCode = result?.notificationCode.ToString() ?? "TIMEOUT",
+                message = result?.msgString ?? "no response"
+            });
+        }
+        return CommandResult.Ok(
+            $"[{conn.Name}] TPSL cancel-many: {ok} succeeded, {fail} failed (of {args.Count - 1}).",
+            new { Server = conn.Name, Ok = ok, Failed = fail, Results = rows });
+    }
+
+    private CommandResult HandleSplitMany(List<string> args, string? targetProfile, bool confirmed)
+    {
+        if (!confirmed)
+        {
+            return CommandResult.Fail("tpsl split-many requires --confirm. Provide TPSL IDs to split.");
+        }
+        if (args.Count < 2)
+        {
+            return CommandResult.Fail("Usage: tpsl split-many <id1> <id2> [...] --confirm");
+        }
+        CoreConnection? conn = ResolveConnection(targetProfile, out CommandResult? error);
+        if (conn == null) return error!;
+
+        var rows = new List<object>();
+        int ok = 0, fail = 0;
+        for (int i = 1; i < args.Count; i++)
+        {
+            if (!long.TryParse(args[i], out long id))
+            {
+                rows.Add(new { id = args[i], success = false, message = "invalid id" });
+                fail++;
+                continue;
+            }
+            NotificationMessageData? result = conn.SplitTPSL(new TPSLInfoData { id = id });
+            bool success = result != null && result.IsOk;
+            if (success) ok++; else fail++;
+            rows.Add(new
+            {
+                id,
+                success,
+                notificationCode = result?.notificationCode.ToString() ?? "TIMEOUT",
+                message = result?.msgString ?? "no response"
+            });
+        }
+        return CommandResult.Ok(
+            $"[{conn.Name}] TPSL split-many: {ok} succeeded, {fail} failed (of {args.Count - 1}).",
+            new { Server = conn.Name, Ok = ok, Failed = fail, Results = rows });
+    }
+
+    // ── Stage 1.2: TPSL panic close ─────────────────────────────────────────
+    //
+    // "Panic" close = immediate MARKET-order exit of the position underlying
+    // the named TPSL. Implementation: look up the TPSL in the store (must be
+    // subscribed first), extract its symbol/market/side, build PositionData,
+    // and call ClosePositionByTPSL with OrderType.MARKET.
+
+    private CommandResult HandlePanic(List<string> args, string? targetProfile, bool confirmed)
+    {
+        if (!confirmed)
+        {
+            return CommandResult.Fail("tpsl panic requires --confirm. This will MARKET-close the position via TPSL.");
+        }
+        if (args.Count < 2)
+        {
+            return CommandResult.Fail("Usage: tpsl panic <tpsl_id> --confirm");
+        }
+        if (!long.TryParse(args[1], out long tpslId))
+        {
+            return CommandResult.Fail($"Invalid TPSL ID: {args[1]}");
+        }
+        CoreConnection? conn = ResolveConnection(targetProfile, out CommandResult? error);
+        if (conn == null) return error!;
+
+        var panicResult = PanicSingle(conn, tpslId);
+        return panicResult.Success
+            ? CommandResult.Ok(
+                $"[{conn.Name}] TPSL panic {tpslId}: {panicResult.NotificationCode}",
+                new { Server = conn.Name, Id = tpslId, panicResult.NotificationCode, panicResult.Message })
+            : CommandResult.Fail(
+                $"[{conn.Name}] TPSL panic {tpslId} failed: {panicResult.NotificationCode} — {panicResult.Message}");
+    }
+
+    private CommandResult HandlePanicMany(List<string> args, string? targetProfile, bool confirmed)
+    {
+        if (!confirmed)
+        {
+            return CommandResult.Fail("tpsl panic-many requires --confirm. Provide TPSL IDs to MARKET-close.");
+        }
+        if (args.Count < 2)
+        {
+            return CommandResult.Fail("Usage: tpsl panic-many <id1> <id2> [...] --confirm");
+        }
+        CoreConnection? conn = ResolveConnection(targetProfile, out CommandResult? error);
+        if (conn == null) return error!;
+
+        var rows = new List<object>();
+        int ok = 0, fail = 0;
+        for (int i = 1; i < args.Count; i++)
+        {
+            if (!long.TryParse(args[i], out long id))
+            {
+                rows.Add(new { id = args[i], success = false, message = "invalid id" });
+                fail++;
+                continue;
+            }
+            var r = PanicSingle(conn, id);
+            if (r.Success) ok++; else fail++;
+            rows.Add(new { id, success = r.Success, r.NotificationCode, r.Message });
+        }
+        return CommandResult.Ok(
+            $"[{conn.Name}] TPSL panic-many: {ok} succeeded, {fail} failed (of {args.Count - 1}).",
+            new { Server = conn.Name, Ok = ok, Failed = fail, Results = rows });
+    }
+
+    /// <summary>
+    /// Single-ID panic helper used by HandlePanic and HandlePanicMany.
+    /// Looks up the TPSL snapshot for the position metadata; without an
+    /// active TPSL subscription (`tpsl subscribe`) the store is empty and
+    /// the lookup fails with a "subscribe first" diagnostic.
+    /// </summary>
+    private static (bool Success, string NotificationCode, string Message) PanicSingle(CoreConnection conn, long tpslId)
+    {
+        TPSLPositionSnapshot? snap = conn.TPSLStore?.GetById(tpslId);
+        if (snap == null)
+        {
+            return (false, "NOT_FOUND",
+                "TPSL not found in store. Run 'tpsl subscribe' first, then 'tpsl list' to confirm IDs.");
+        }
+        // TPSLPositionSnapshot.Side is OrderSideType (BUY / SELL); PositionData
+        // wants PositionSide (LONG / SHORT / BOTH). Map: BUY-side TPSL belongs
+        // to a LONG position; SELL-side to SHORT. BOTH covers the one-way /
+        // SPOT case where no separate hedge side is tracked.
+        PositionSide mapped = snap.Side switch
+        {
+            OrderSideType.BUY  => PositionSide.LONG,
+            OrderSideType.SELL => PositionSide.SHORT,
+            _                  => PositionSide.BOTH,
+        };
+        var posData = new PositionData
+        {
+            symbol = snap.Symbol,
+            marketType = snap.MarketType,
+            positionSide = mapped,
+        };
+        NotificationMessageData? result = conn.ClosePositionByTPSL(
+            conn.Profile.Exchange, posData, OrderType.MARKET);
+        if (result == null)
+        {
+            return (false, "TIMEOUT", "no response from close-position-by-tpsl");
+        }
+        return (result.IsOk, result.notificationCode.ToString(), result.msgString ?? "");
     }
 
 }

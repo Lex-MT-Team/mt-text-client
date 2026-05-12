@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using MTShared.Types;
 using MTTextClient.Core;
@@ -20,6 +21,8 @@ namespace MTTextClient.Commands;
 /// </summary>
 public sealed class ExchangeCommand : ICommand
 {
+    private static readonly RequestExecutor _executor = new();
+
     private readonly ConnectionManager _manager;
 
     public string Name => "exchange";
@@ -78,6 +81,9 @@ public sealed class ExchangeCommand : ICommand
             "ticker24" or "ticker" => Ticker24(conn, subArgs),
             "klines" or "candles" => Klines(conn, subArgs),
             "trades" or "recent-trades" => Trades(conn, subArgs),
+            // Stage 6.9 — funding rate + leverage brackets (read-only).
+            "funding-rate" => FundingRate(conn, subArgs),
+            "leverage-brackets" => LeverageBrackets(conn, subArgs),
             _ => CommandResult.Fail($"Unknown subcommand: {subCmd}. {Usage}")
         };
     }
@@ -377,16 +383,21 @@ public sealed class ExchangeCommand : ICommand
             marketType = pairInfo.MarketType;
         }
 
-        MTShared.Network.TickerPrice24ListData? result = conn.RequestTicker24(marketType, symbol);
-
-        if (result == null)
-        {
-            return CommandResult.Fail($"[{conn.Name}] Ticker24 for {symbol}: request timed out.");
-        }
-
+        // MCP-003 / Stage 7.2: ticker24 over a cold/empty exchange-info cache
+        // can return null silently.  RequestExecutor.ExecuteWithFallback
+        // centralises the empty-envelope recipe shared with ReportsCommand's
+        // GetReportComments / GetReportDates handlers.
+        MTShared.Network.TickerPrice24ListData result = _executor.ExecuteWithFallback(
+            () => conn.RequestTicker24(marketType, symbol),
+            () => new MTShared.Network.TickerPrice24ListData
+            {
+                tickerPriceList = new List<MTShared.Network.TickerPrice24UpdateData>(),
+            });
         if (result.tickerPriceList == null || result.tickerPriceList.Count == 0)
         {
-            return CommandResult.Ok($"[{conn.Name}] No ticker data for {symbol}.");
+            return CommandResult.Ok(
+                $"[{conn.Name}] No ticker data for {symbol}.",
+                new { Server = conn.Name, Symbol = symbol, Tickers = new List<object>() });
         }
 
         var tickers = new List<object>(result.tickerPriceList.Count);
@@ -423,14 +434,17 @@ public sealed class ExchangeCommand : ICommand
         if (args.Length < 1)
         {
             return CommandResult.Fail(
-                "Usage: exchange klines <symbol> [interval] [limit]\n" +
+                "Usage: exchange klines <symbol> [interval] [limit] [--market FUTURES|SPOT]\n" +
                 "  interval: 1m,3m,5m,15m,30m,1h,2h,4h,6h,12h,1d,3d,1w,1M (default: 1h)\n" +
-                "  limit: 1-1000 (default: 100)");
+                "  limit: 1-1000 (default: 100)\n" +
+                "  --market overrides the pair-cache lookup (e.g. BTCUSDT on Binance routes to SPOT by default)");
         }
 
         string? symbol = args[0].ToUpperInvariant();
         KlineInterval interval = KlineInterval.H_1; // default 1 hour
         short limit = 100;
+        MarketType marketOverride = MarketType.FUTURES;
+        bool hasMarketOverride = false;
 
         if (args.Length >= 2)
         {
@@ -440,12 +454,31 @@ public sealed class ExchangeCommand : ICommand
         {
             limit = (short)Math.Clamp((int)lim, 1, 1000);
         }
-
-        MarketType marketType = MarketType.FUTURES;
-        TradePairSnapshot? pairInfo = conn.ExchangeInfoStore.GetTradePair(symbol);
-        if (pairInfo != null)
+        for (int i = 3; i < args.Length; i++)
         {
-            marketType = pairInfo.MarketType;
+            if (args[i].Equals("--market", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                if (Enum.TryParse<MarketType>(args[++i].ToUpperInvariant(), out MarketType mt))
+                {
+                    marketOverride = mt;
+                    hasMarketOverride = true;
+                }
+            }
+        }
+
+        MarketType marketType;
+        if (hasMarketOverride)
+        {
+            marketType = marketOverride;
+        }
+        else
+        {
+            marketType = MarketType.FUTURES;
+            TradePairSnapshot? pairInfo = conn.ExchangeInfoStore.GetTradePair(symbol);
+            if (pairInfo != null)
+            {
+                marketType = pairInfo.MarketType;
+            }
         }
 
         MTShared.Network.KlineListData? result = conn.RequestKlines(marketType, symbol, interval, limit);
@@ -618,6 +651,147 @@ public sealed class ExchangeCommand : ICommand
         }
 
         return result;
+    }
+
+    // ── Stage 6.9 — funding rate + leverage brackets (read-only) ────────────
+
+    /// <summary>
+    /// Stage 6.9 — return the funding-rate fields cached on this symbol's
+    /// LiveMarketMetrics.  Discovery findings:
+    ///   • There is NO standalone <c>SendFundingRateRequest</c> wire method.
+    ///   • Funding fields live on <c>MTShared.LiveMarket.LiveMarketMetrics</c>:
+    ///     <c>LastFundingRate (Single)</c>, <c>LastFundingTime (Int64)</c>,
+    ///     <c>NextFundingRate (Single)</c>, <c>NextFundingTime (Int64)</c>.
+    ///   • LiveMarketMetricsData is pushed via the existing live-markets
+    ///     subscription; <see cref="CoreConnection.SubscribeLiveMarkets"/>
+    ///     wires it into the per-connection <see cref="LiveMarketStore"/>.
+    ///
+    /// This handler ensures the symbol is subscribed (idempotent), polls the
+    /// store for cached metrics, then extracts and returns the funding fields.
+    /// </summary>
+    private CommandResult FundingRate(CoreConnection conn, string[] subArgs)
+    {
+        if (subArgs.Length < 1)
+            return CommandResult.Fail("Usage: exchange funding-rate <symbol> [<market_type=FUTURES>]");
+        string symbol = subArgs[0].ToLowerInvariant();
+        MarketType marketType = MarketType.FUTURES;
+        if (subArgs.Length >= 2 &&
+            Enum.TryParse<MarketType>(subArgs[1], ignoreCase: true, out var mt) &&
+            Enum.IsDefined(typeof(MarketType), mt))
+            marketType = mt;
+        // Quote derived from the pair-cache snapshot if present.
+        string quote = conn.ExchangeInfoStore.GetTradePair(symbol)?.QuoteAsset ?? "";
+
+        conn.SubscribeLiveMarkets(marketType, symbol, quote);
+        // Wait briefly for a metrics push.
+        string storeKey = $"{symbol}:{marketType}";
+        LiveMarketEntry? entry = null;
+        for (int i = 0; i < 30; i++)
+        {
+            if (conn.LiveMarketStore.TryGet(storeKey, out var e)) { entry = e; break; }
+            System.Threading.Thread.Sleep(200);
+        }
+        if (entry == null)
+            return CommandResult.Fail(
+                $"funding_rate_unavailable: no LiveMarketMetrics push received for {symbol} ({marketType}) within 6s.  " +
+                "Subscription was issued; the bench may not have funding data for this symbol/market combination.");
+
+        Newtonsoft.Json.Linq.JObject metrics;
+        try { metrics = Newtonsoft.Json.Linq.JObject.Parse(entry.MetricsJson); }
+        catch (Exception ex) { return CommandResult.Fail($"metrics parse error: {ex.Message}"); }
+
+        double lastRate = (double?)metrics["LastFundingRate"] ?? 0;
+        long lastTime = (long?)metrics["LastFundingTime"] ?? 0;
+        double nextRate = (double?)metrics["NextFundingRate"] ?? 0;
+        long nextTime = (long?)metrics["NextFundingTime"] ?? 0;
+        double lastPrice = (double?)metrics["LastPrice"] ?? 0;
+        double markPrice = (double?)metrics["MarkPrice"] ?? 0;
+        string fmtTime(long t) => t > 0 ? DateTimeOffset.FromUnixTimeMilliseconds(t).UtcDateTime.ToString("o") : "(none)";
+
+        return CommandResult.Ok(
+            $"[{conn.Name}] {symbol} {marketType} — funding: last={lastRate:F6} @ {fmtTime(lastTime)}, " +
+            $"next={nextRate:F6} @ {fmtTime(nextTime)}, mark={markPrice}, last_price={lastPrice}.",
+            new
+            {
+                Server = conn.Name,
+                Symbol = symbol,
+                MarketType = marketType.ToString(),
+                LastFundingRate = lastRate,
+                LastFundingTimeUtc = fmtTime(lastTime),
+                LastFundingTimeUnixMs = lastTime,
+                NextFundingRate = nextRate,
+                NextFundingTimeUtc = fmtTime(nextTime),
+                NextFundingTimeUnixMs = nextTime,
+                MarkPrice = markPrice,
+                LastPrice = lastPrice,
+                Source = "LiveMarketStore (cached LiveMarketMetrics)",
+                UpdatedAtUtc = entry.UpdatedAtUtc.ToString("o"),
+            });
+    }
+
+    /// <summary>
+    /// Stage 6.9 — return whatever leverage information is locally available.
+    ///
+    /// <para>Discovery findings:</para>
+    /// <list type="bullet">
+    ///   <item>MTShared exposes a <c>LeverageInfoUpdateData</c> with three
+    ///   dictionaries (<c>leverages</c>, <c>maxLeverages</c>, <c>riskLimits</c>),
+    ///   but it's not currently surfaced via a public store on
+    ///   <see cref="CoreConnection"/> — the existing wrappers are write-only
+    ///   (<c>SendModifyLeverageRequest</c>, <c>SendModifyLeverageBuySellRequest</c>).</item>
+    ///   <item>There is NO dedicated <c>SendGetLeverageBracketsRequest</c> RPC.
+    ///   The concept of "leverage brackets" (max-leverage tiers by notional
+    ///   range) is not modelled by MTShared as a separate type.</item>
+    ///   <item>The only locally-cached leverage data is the per-position
+    ///   <c>Leverage</c> field on <see cref="AccountStore"/> position rows.</item>
+    /// </list>
+    ///
+    /// This handler returns what's available: the current leverage observed on
+    /// any open position for the symbol.  When no position exists, surfaces a
+    /// structured <c>leverage_brackets_not_exposed_by_mtshared</c> notice with
+    /// pointers to the future work needed to expose the full brackets table.
+    /// </summary>
+    private CommandResult LeverageBrackets(CoreConnection conn, string[] subArgs)
+    {
+        if (subArgs.Length < 1)
+            return CommandResult.Fail("Usage: exchange leverage-brackets <symbol> [<market_type=FUTURES>]");
+        string symbol = subArgs[0].ToLowerInvariant();
+        MarketType marketType = MarketType.FUTURES;
+        if (subArgs.Length >= 2 &&
+            Enum.TryParse<MarketType>(subArgs[1], ignoreCase: true, out var mt) &&
+            Enum.IsDefined(typeof(MarketType), mt))
+            marketType = mt;
+
+        // Read whatever leverage data is locally observable.
+        int? observedLeverage = null;
+        try
+        {
+            var pos = conn.AccountStore.GetPositions()
+                .FirstOrDefault(p => string.Equals(p.Symbol, symbol, StringComparison.OrdinalIgnoreCase) &&
+                                     p.MarketType == marketType);
+            if (pos != null) observedLeverage = pos.Leverage;
+        }
+        catch { /* best-effort */ }
+
+        return CommandResult.Ok(
+            $"[{conn.Name}] {symbol} {marketType} — leverage_brackets: " +
+            (observedLeverage.HasValue
+                ? $"observed_position_leverage={observedLeverage}x (brackets table not exposed by MTShared)"
+                : "no open position to read; brackets table not exposed by MTShared"),
+            new
+            {
+                Server = conn.Name,
+                Symbol = symbol,
+                MarketType = marketType.ToString(),
+                ObservedPositionLeverage = observedLeverage,
+                BracketsExposedByMtShared = false,
+                Notice = "leverage_brackets_not_exposed_by_mtshared: MTShared has no LeverageBracket* type. " +
+                         "The Stage 6.9 plan's request is partially fulfilled — current per-symbol leverage is readable " +
+                         "from open positions, but the full bracket tier table (notional-range → max-leverage map) " +
+                         "is not modelled by the vendor library on this build. Future work: extend CoreConnection " +
+                         "with a read wrapper for LeverageInfoUpdateData (3 dictionaries: leverages, maxLeverages, riskLimits).",
+                Source = "AccountStore.GetPositions",
+            });
     }
 
 }

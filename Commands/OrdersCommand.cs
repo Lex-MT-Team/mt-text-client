@@ -97,6 +97,8 @@ public sealed class OrdersCommand : ICommand
             "fund-transfer" => TransferAccountFunds(subArgs, targetProfile, confirmFlag),
             "close-by-tpsl" => ClosePositionByTPSL(subArgs, targetProfile, confirmFlag),
             "reset-tpsl" => ResetPositionTPSL(subArgs, targetProfile, confirmFlag),
+            // Stage 2.1 — active-order TP/SL/TS update (wires SendOrderTPSLUpdateRequest).
+            "update-tpsl" => UpdateOrderTpsl(subArgs, targetProfile, confirmFlag),
             _ => CommandResult.Fail($"Unknown subcommand: {subCmd}. {Usage}")
         };
     }
@@ -476,7 +478,7 @@ public sealed class OrdersCommand : ICommand
         {
             return CommandResult.Fail(
                 "Usage: orders place <symbol> <BUY|SELL> <qty> [price] [--type LIMIT|MARKET] [--tif GTC|IOC|FOK] [--reduce-only] [--position-side BOTH|LONG|SHORT] --confirm\n" +
-                "Usage: orders place <symbol> <BUY|SELL> <qty> [price] [--type LIMIT|MARKET] [--tif GTC|IOC|FOK] [--reduce-only] [--emulated] --confirm\n" +
+                "Usage: orders place <symbol> <BUY|SELL> <qty> [price] [--type LIMIT|MARKET] [--tif GTC|IOC|FOK] [--reduce-only] [--emulated] [--iceberg] --confirm\n" +
                 "  If price is omitted or 0, places a MARKET order.\n" +
                 "  Examples:\n" +
                 "    orders place BTCUSDT BUY 0.001 --confirm              (market buy)\n" +
@@ -513,6 +515,10 @@ public sealed class OrdersCommand : ICommand
         PositionSide positionSideOverride = PositionSide.BOTH;
         bool hasPositionSideOverride = false;
         bool emulated = false;
+        bool iceberg = false;
+        MarketType marketOverride = MarketType.FUTURES;
+        bool hasMarketOverride = false;
+        string? clientOrderIdOverride = null;
 
         for (int i = nextArg; i < args.Length; i++)
         {
@@ -546,14 +552,40 @@ public sealed class OrdersCommand : ICommand
             {
                 emulated = true;
             }
+            else if (args[i].Equals("--iceberg", StringComparison.OrdinalIgnoreCase))
+            {
+                iceberg = true;
+            }
+            else if (args[i].Equals("--market", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                if (Enum.TryParse<MarketType>(args[++i].ToUpperInvariant(), out MarketType mt))
+                {
+                    marketOverride = mt;
+                    hasMarketOverride = true;
+                }
+            }
+            else if (args[i].Equals("--client-order-id", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                clientOrderIdOverride = args[++i];
+            }
         }
 
-        // Determine market type from exchange info
-        MarketType marketType = MarketType.FUTURES;
-        TradePairSnapshot? pairInfo = conn.ExchangeInfoStore.GetTradePair(symbol);
-        if (pairInfo != null)
+        // Determine market type.  Explicit --market wins outright; otherwise fall back
+        // to the cached pair-info, with FUTURES as the default when the symbol isn't
+        // in the exchange-info store yet.
+        MarketType marketType;
+        if (hasMarketOverride)
         {
-            marketType = pairInfo.MarketType;
+            marketType = marketOverride;
+        }
+        else
+        {
+            marketType = MarketType.FUTURES;
+            TradePairSnapshot? pairInfo = conn.ExchangeInfoStore.GetTradePair(symbol);
+            if (pairInfo != null)
+            {
+                marketType = pairInfo.MarketType;
+            }
         }
 
         // Determine position side: explicit override > auto-derive (FUTURES + HEDGE only).
@@ -597,9 +629,17 @@ public sealed class OrdersCommand : ICommand
                 clientOrderType = orderType == OrderType.MARKET
                     ? ClientOrderType.MARKET
                     : ClientOrderType.LIMIT,
-                isEmulationOn = emulated
+                isEmulationOn = emulated,
+                isIceberg = iceberg,
             }
         };
+        if (!string.IsNullOrEmpty(clientOrderIdOverride))
+        {
+            // MTShared OrderRequestData carries clientOrderId; the venue may still
+            // overwrite it with its broker-prefix (Binance/OKX), but for the cases
+            // where the venue passes it through (Bybit), our id survives end to end.
+            orderRequest.clientOrderId = clientOrderIdOverride;
+        }
 
         // BUG-2 fix: snapshot pre-place open-order ids so we can recover the
         // exchange-assigned ClientOrderId post-send (the wire response does not
@@ -1338,6 +1378,11 @@ public sealed class OrdersCommand : ICommand
         string symbol = args[0];
         MarketType marketType = MarketType.FUTURES;
         PositionSide posSide = PositionSide.BOTH;
+        // Stage 1.3: order_type defaults to MARKET (back-compat with the
+        // pre-Stage-1 behaviour). The MCP wrapper exposes the new
+        // semantic via the order_type schema field; pre-Stage-1 callers
+        // that pass no override still get MARKET.
+        OrderType orderType = OrderType.MARKET;
 
         for (int i = 1; i < args.Length; i++)
         {
@@ -1349,6 +1394,14 @@ public sealed class OrdersCommand : ICommand
             {
                 Enum.TryParse(args[++i], true, out posSide);
             }
+            else if (args[i] == "--order-type" && i + 1 < args.Length)
+            {
+                // Semantic-first per CD-6: v423's controller has the
+                // "close-to-report single/list" name pair swapped; we use
+                // the order_type value semantically (MARKET = immediate
+                // close, LIMIT = post-only-style close at last price).
+                Enum.TryParse(args[++i], true, out orderType);
+            }
         }
 
         PositionData posData = new PositionData();
@@ -1357,15 +1410,15 @@ public sealed class OrdersCommand : ICommand
         posData.positionSide = posSide;
 
         NotificationMessageData? result = conn.ClosePositionByTPSL(
-            conn.Profile.Exchange, posData, OrderType.MARKET);
+            conn.Profile.Exchange, posData, orderType);
         if (result == null)
         {
             return CommandResult.Fail("No response from close-by-tpsl.");
         }
 
         return result.IsOk
-            ? CommandResult.Ok($"[{conn.Name}] Close-by-TPSL: {result.notificationCode}")
-            : CommandResult.Fail($"[{conn.Name}] Close-by-TPSL failed: {result.notificationCode} — {result.jsonData}");
+            ? CommandResult.Ok($"[{conn.Name}] Close-by-TPSL ({orderType}): {result.notificationCode}")
+            : CommandResult.Fail($"[{conn.Name}] Close-by-TPSL ({orderType}) failed: {result.notificationCode} — {result.jsonData}");
     }
 
     private CommandResult ResetPositionTPSL(string[] args, string? targetProfile, bool confirmed)
@@ -1422,4 +1475,157 @@ public sealed class OrdersCommand : ICommand
             : CommandResult.Fail($"[{conn.Name}] Reset TPSL failed: {result.notificationCode} — {result.jsonData}");
     }
 
+    /// <summary>
+    /// Stage 2.1 — update Take-Profit / Stop-Loss (and optional trailing spread) on
+    /// an active order or open position.  Wires
+    /// <see cref="CoreConnection.UpdateOrderTPSL"/> →
+    /// <c>SendOrderTPSLUpdateRequest</c> on the MTShared wire.
+    ///
+    /// CLI form:
+    ///   orders update-tpsl &lt;symbol&gt; &lt;BUY|SELL&gt;
+    ///         [--market FUTURES|SPOT|MARGIN|DELIVERY]
+    ///         [--position-side BOTH|LONG|SHORT]
+    ///         [--tp &lt;percent&gt;] [--sl &lt;percent&gt;] [--trailing-spread &lt;percent&gt;]
+    ///         [--client-order-id &lt;id&gt;] --confirm
+    /// </summary>
+    private CommandResult UpdateOrderTpsl(string[] args, string? targetProfile, bool confirmed)
+    {
+        if (!confirmed)
+        {
+            return CommandResult.Fail(
+                "orders update-tpsl requires --confirm. This mutates open position TP/SL state.");
+        }
+        if (args.Length < 2)
+        {
+            return CommandResult.Fail(
+                "Usage: orders update-tpsl <symbol> <BUY|SELL> " +
+                "[--market FUTURES|SPOT|MARGIN|DELIVERY] " +
+                "[--position-side BOTH|LONG|SHORT] " +
+                "[--tp <percent>] [--sl <percent>] [--trailing-spread <percent>] " +
+                "[--client-order-id <id>] --confirm");
+        }
+
+        CoreConnection? conn = ResolveConnection(targetProfile, out CommandResult? error);
+        if (conn == null) return error!;
+
+        string symbol = args[0].ToUpperInvariant();
+        if (!Enum.TryParse<OrderSideType>(args[1].ToUpperInvariant(), out OrderSideType side))
+        {
+            return CommandResult.Fail($"Invalid side: {args[1]}. Use BUY or SELL.");
+        }
+
+        MarketType marketType = MarketType.FUTURES;
+        PositionSide positionSide = side == OrderSideType.BUY ? PositionSide.LONG : PositionSide.SHORT;
+        bool hasPositionSideOverride = false;
+        decimal tpPercent = 0m, slPercent = 0m, trailSpread = 0m;
+        bool hasTrail = false;
+        string? clientOrderId = null;
+
+        for (int i = 2; i < args.Length; i++)
+        {
+            if (args[i].Equals("--market", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                Enum.TryParse(args[++i].ToUpperInvariant(), out marketType);
+            }
+            else if (args[i].Equals("--position-side", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                if (Enum.TryParse<PositionSide>(args[++i].ToUpperInvariant(), out PositionSide ps))
+                {
+                    positionSide = ps;
+                    hasPositionSideOverride = true;
+                }
+            }
+            else if (args[i].Equals("--tp", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                decimal.TryParse(args[++i], System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out tpPercent);
+            }
+            else if (args[i].Equals("--sl", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                decimal.TryParse(args[++i], System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out slPercent);
+            }
+            else if (args[i].Equals("--trailing-spread", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                if (decimal.TryParse(args[++i], System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out trailSpread))
+                    hasTrail = true;
+            }
+            else if (args[i].Equals("--client-order-id", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                clientOrderId = args[++i];
+            }
+        }
+
+        if (tpPercent <= 0m && slPercent <= 0m)
+        {
+            return CommandResult.Fail(
+                "orders update-tpsl: at least one of --tp / --sl must be > 0 (otherwise there's nothing to update).");
+        }
+
+        // The MTShared wire expects an OrderRequestData carrying the new TP/SL
+        // settings.  TakeProfitSettings / StopLossSettings.isOn = true arms the
+        // leg; isOn = false leaves it disabled.  Field types in MTShared are
+        // `float` for percentage / trailingSpread.
+        var tp = new TakeProfitSettings
+        {
+            isOn = tpPercent > 0m,
+            percentage = (float)tpPercent,
+        };
+        var sl = new StopLossSettings
+        {
+            isOn = slPercent > 0m,
+            percentage = (float)slPercent,
+            tralingIsOn = hasTrail && slPercent > 0m,
+            trailingSpread = (float)trailSpread,
+        };
+
+        var orderRequest = new OrderRequestData
+        {
+            exchangeType = conn.Profile.Exchange,
+            marketType = marketType,
+            symbol = symbol,
+            orderSideType = side,
+            positionSide = positionSide,
+            takeProfitSettings = tp,
+            stopLossSettings = sl,
+            orderSettings = new OrderSettings(),
+        };
+        if (!string.IsNullOrEmpty(clientOrderId))
+        {
+            orderRequest.clientOrderId = clientOrderId;
+        }
+
+        NotificationMessageData? notification = conn.UpdateOrderTPSL(orderRequest);
+        if (notification == null)
+        {
+            return CommandResult.Ok(
+                $"[{conn.Name}] update-tpsl {symbol} {side} (TP={tpPercent}%, SL={slPercent}%): sent (response timed out).");
+        }
+
+        string summary =
+            $"TP={(tp.isOn ? tpPercent + "%" : "off")} " +
+            $"SL={(sl.isOn ? slPercent + "%" : "off")}" +
+            (sl.tralingIsOn ? $" trail={trailSpread}%" : "") +
+            (hasPositionSideOverride ? $" positionSide={positionSide}" : "");
+
+        return notification.IsOk
+            ? CommandResult.Ok(
+                $"[{conn.Name}] update-tpsl {symbol} {side} ✓ {summary} — {notification.notificationCode}",
+                new
+                {
+                    Server = conn.Name,
+                    Symbol = symbol,
+                    Side = side.ToString(),
+                    Market = marketType.ToString(),
+                    PositionSide = positionSide.ToString(),
+                    TakeProfitPercent = tp.isOn ? tpPercent : 0m,
+                    StopLossPercent = sl.isOn ? slPercent : 0m,
+                    TrailingSpread = sl.tralingIsOn ? trailSpread : 0m,
+                    NotificationCode = notification.notificationCode.ToString(),
+                    Action = "UPDATE_TPSL",
+                })
+            : CommandResult.Fail(
+                $"[{conn.Name}] update-tpsl failed: {notification.notificationCode} — {notification.msgString}");
+    }
 }
