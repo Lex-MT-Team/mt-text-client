@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>MTTextClient.Tests</RootNamespace>
+    <!-- Smoke + Integration tests still drive the built MCP binary as a stdio
+         subprocess (see McpFixture). Static tests added in Stage 0.3 also call
+         the registry + dispatcher in-process via the ProjectReference below;
+         that's how DispatcherSnapshotTests / ReadmeParityTests assert
+         byte-equivalence against the committed snapshot and README. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="xunit" Version="2.6.5" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.6" />
+    <PackageReference Include="Xunit.SkippableFact" Version="1.4.13" />
+    <PackageReference Include="FluentAssertions" Version="6.12.0" />
+    <PackageReference Include="coverlet.collector" Version="6.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\MTTextClient.csproj" />
+    <ProjectReference Include="..\..\tools\RegistryReadmeGenerator\RegistryReadmeGenerator.csproj" />
+    <ProjectReference Include="..\..\tools\DispatcherSnapshotGenerator\DispatcherSnapshotGenerator.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="_expected\**\*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

@@ -99,6 +99,15 @@ public sealed class ConnectionManager : IDisposable
     public event Action<CoreConnection, string>? OnConnectionError;
     public event Action<CoreConnection, int>? OnAlgorithmsLoaded;
 
+    /// <summary>
+    /// Stage 0.4 — centralised per-profile lifecycle state. Fed by the
+    /// existing OnConnectionEstablished / OnConnectionLost events; consumers
+    /// (mt_status, mt_connection_health, tests) can subscribe here instead
+    /// of querying CoreConnection.IsConnected directly. Existing event
+    /// surface remains for backward compatibility.
+    /// </summary>
+    public ConnectionStateObservable State { get; } = new ConnectionStateObservable();
+
     // Events — Phase A data streams
     public event Action<CoreConnection>? OnCoreStatusReceived;
     public event Action<CoreConnection, int>? OnTradePairsLoaded;
@@ -129,13 +138,26 @@ public sealed class ConnectionManager : IDisposable
 
         var conn = new CoreConnection(profile);
 
+        // Stage 0.4: announce the initial pre-handshake state so subscribers
+        // that join the observable later still see the connection.
+        State.Publish(profile.Name, ConnectionStateObservable.ConnectionState.Connecting);
+
         // Wire connection lifecycle events
         conn.OnConnected += c =>
         {
+            State.Publish(c.Name, ConnectionStateObservable.ConnectionState.Connected);
             OnConnectionEstablished?.Invoke(c);
         };
         conn.OnDisconnected += c =>
         {
+            // Distinguish a clean disconnect from one that triggers a
+            // reconnect attempt. Persistent profiles auto-reconnect (see
+            // ScheduleReconnectAsync below), so we mark them Reconnecting;
+            // ephemeral profiles go straight to Disconnected.
+            var nextState = _persistentProfiles.ContainsKey(c.Name)
+                ? ConnectionStateObservable.ConnectionState.Reconnecting
+                : ConnectionStateObservable.ConnectionState.Disconnected;
+            State.Publish(c.Name, nextState);
             OnConnectionLost?.Invoke(c);
             // If active connection was lost, try to pick another
             if (_activeConnectionName.Equals(c.Name, StringComparison.OrdinalIgnoreCase))

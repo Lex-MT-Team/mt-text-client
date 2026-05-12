@@ -1,0 +1,77 @@
+name: CI (PR-gate)
+
+# Per UnifiedDevelopmentPlan §5 / OV-4: PR-gate runs Static + Unit ONLY.
+# No MTCore subprocess, no live exchange. Smoke + LiveTrade + BenchAll are
+# routed to .github/workflows/testing-environment.yml (manual / scheduled,
+# separate self-hosted runner — see comment below).
+#
+# Runner matrix (Stage 0.6 — Apple Silicon build hygiene):
+#   * ubuntu-latest  — x64 Linux. MTShared.dll runs unmodified (vendor
+#                       AMD64 Machine field matches the host arch).
+#                       Apple-Silicon PE patch target is no-op
+#                       (Condition="$([MSBuild]::IsOSPlatform('OSX'))" is false).
+#   * macos-latest   — Apple Silicon (M-series) arm64. The MSBuild
+#                       post-build target PatchMTSharedArm64 (in
+#                       MTTextClient.csproj) re-applies the ARM64 PE patch
+#                       via scripts/patch_mtshared_arm64.py. The repo
+#                       ships lib/MTShared.dll already patched, so the
+#                       script is an idempotent safety net.
+#
+# Testing-environment workflow (Smoke, BenchAll, LiveTrade) needs a real
+# MTCore process and lives in testing-environment.yml. Stage 0.7 will
+# stand up a self-hosted macOS arm64 runner for that workflow; for now,
+# it runs locally via `dotnet test --filter "Category=Smoke"`.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Setup Python 3 (for PE patch script on macOS)
+        if: matrix.os == 'macos-latest'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Restore
+        run: dotnet restore MTTextClient.sln
+
+      - name: Build (Release)
+        # On macOS the post-build PatchMTSharedArm64 target re-runs the
+        # PE Machine-field flip; on Linux the Condition is false and the
+        # target is a no-op.
+        run: dotnet build MTTextClient.sln -c Release --no-restore
+
+      - name: Run Static + Unit tests
+        run: >
+          dotnet test MTTextClient.sln
+          -c Release --no-build
+          --filter "Category=Static|Category=Unit"
+          --logger "trx;LogFileName=test-results.trx"
+          --results-directory ./TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.os }}
+          path: ./TestResults/**/*.trx
+          if-no-files-found: ignore

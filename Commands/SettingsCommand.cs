@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using MTTextClient.Core;
 namespace MTTextClient.Commands;
 
@@ -70,6 +71,9 @@ public sealed class SettingsCommand : ICommand
             "groups" => ShowGrouped(targetProfile),
             "profile-get" => GetProfileSettings(subArgs, targetProfile),
             "profile-update" => UpdateProfileSettings(subArgs, targetProfile, confirmFlag),
+            // Stage 6.7 — list keys of a named profile + delete one or more keys.
+            "profile-list" => ListProfileSettings(subArgs, targetProfile),
+            "profile-delete" => DeleteProfileSettings(subArgs, targetProfile, confirmFlag),
             _ => CommandResult.Fail($"Unknown subcommand: {subCmd}. {Usage}")
         };
     }
@@ -363,34 +367,190 @@ public sealed class SettingsCommand : ICommand
     private CommandResult UpdateProfileSettings(string[] subArgs, string? targetProfile, bool confirmed)
     {
         CoreConnection? conn = ResolveConnection(targetProfile, out CommandResult? error);
-        if (conn == null)
-        {
-            return error!;
-        }
+        if (conn == null) return error!;
+        if (!confirmed) return CommandResult.Fail("Profile settings update requires --confirm flag.");
 
-        if (!confirmed)
-        {
-            return CommandResult.Fail("Profile settings update requires --confirm flag.");
-        }
-
+        // Stage 6.7 fix (real MCP-010-ext root cause): the mt_profile_settings_update
+        // dispatcher sends `settings profile-update <profile_name> <updates_json>`.
+        // The previous implementation mis-parsed subArgs[0] as a setting KEY and
+        // subArgs[1] as a setting VALUE — completely ignoring the JSON updates
+        // payload.  Nothing actually invoked the typed update path before
+        // Stage 6.7's Smoke test, so the bug was latent.  Correct parse:
+        //   subArgs[0] = profile_name (ignored — see below)
+        //   subArgs[1] = updates JSON object {"key":"value", ...}
+        //
+        // MTCore-side: rejects updates whose profileName is not the current
+        // profile ("Can't update profile X because it is not current profile.").
+        // The explicit-profileName overload passes the supplied name verbatim,
+        // so passing the connection alias fails whenever the bench-side current
+        // profile name differs from the client-side connection name. The
+        // implicit-profileName overload reads the actual current profile name
+        // from the local profile-settings store instead.
         if (subArgs.Length < 2)
+            return CommandResult.Fail("Usage: settings profile-update <profile_name> <updates_json> --confirm");
+
+        // The dispatcher base64-encodes updates_json so the REPL tokenizer
+        // doesn't strip the JSON's double-quotes.  Tolerate raw JSON too
+        // (when called directly from REPL).
+        string raw = subArgs[1];
+        string updatesJson = TryDecodeBase64Utf8(raw) ?? raw;
+        Dictionary<string, string> updated;
+        try
         {
-            return CommandResult.Fail("Usage: settings profile-update <key> <value> --confirm");
+            var token = Newtonsoft.Json.Linq.JObject.Parse(updatesJson);
+            updated = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var prop in token.Properties())
+                updated[prop.Name] = prop.Value?.ToString() ?? "";
         }
-
-        string key = subArgs[0];
-        string value = string.Join(" ", subArgs, 1, subArgs.Length - 1);
-        Dictionary<string, string> updated = new Dictionary<string, string> { { key, value } };
-        HashSet<string> deleted = new HashSet<string>();
-
-        string profileName = conn.Name;
-        string? result = conn.UpdateProfileSettings(profileName, updated, deleted);
-        if (string.IsNullOrEmpty(result))
+        catch (Exception ex)
         {
-            return CommandResult.Fail("No response from profile settings update.");
+            return CommandResult.Fail($"updates_json parse error: {ex.Message}");
         }
+        if (updated.Count == 0)
+            return CommandResult.Fail("updates_json is empty — nothing to apply.");
 
-        return CommandResult.Ok(result);
+        var (uok, _, uerr) = conn.UpdateProfileSettings(updated, new HashSet<string>());
+        if (!uok)
+            return CommandResult.Fail($"Profile settings update failed: {uerr}");
+        return CommandResult.Ok(
+            $"[{conn.Name}] profile-update: applied {updated.Count} key(s).",
+            new
+            {
+                Server = conn.Name,
+                ProfileName = conn.ProfileSettingsStore.ProfileName,
+                AppliedKeys = updated.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase).ToList(),
+                Count = updated.Count,
+            });
     }
 
+    // ── Stage 6.7 — profile_settings list + delete ───────────────────────────
+
+    /// <summary>
+    /// Stage 6.7 — list the keys of the connected profile's settings.
+    /// Read-only.  MTShared has no list-named-profiles RPC (verified via
+    /// reflection: the only profile-settings wire methods are
+    /// SendGetCurrentProfileSettingsRequest / SendGetProfileSettingsRequest /
+    /// SendUpdateProfileSettingsRequest), so this enumerates the keys of the
+    /// CURRENT profile via the existing ProfileSettingsStore.  Optional
+    /// substring filter via <c>--grep &lt;needle&gt;</c>.
+    /// </summary>
+    private CommandResult ListProfileSettings(string[] subArgs, string? targetProfile)
+    {
+        CoreConnection? conn = ResolveConnection(targetProfile, out CommandResult? error);
+        if (conn == null) return error!;
+
+        // Ensure settings store is warm.
+        if (!conn.ProfileSettingsStore.HasData)
+        {
+            var (ok, reqErr) = conn.RequestProfileSettings();
+            if (!ok) return CommandResult.Fail($"[{conn.Name}] Failed to load profile settings: {reqErr}");
+        }
+
+        string? grep = null;
+        for (int i = 0; i < subArgs.Length; i++)
+        {
+            if (subArgs[i].Equals("--grep", StringComparison.OrdinalIgnoreCase) && i + 1 < subArgs.Length)
+            { grep = subArgs[i + 1]; i++; }
+        }
+
+        IReadOnlyList<KeyValuePair<string, string>> all = conn.ProfileSettingsStore.GetAll();
+        var keys = (grep != null
+                ? all.Where(kv => kv.Key.IndexOf(grep, StringComparison.OrdinalIgnoreCase) >= 0)
+                : all)
+            .Select(kv => kv.Key)
+            .OrderBy(k => k, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return CommandResult.Ok(
+            $"[{conn.Name}] {keys.Count} profile-setting key(s){(grep != null ? $" (grep=\"{grep}\")" : "")}.",
+            new
+            {
+                Server = conn.Name,
+                ProfileName = conn.ProfileSettingsStore.ProfileName,
+                KeyCount = keys.Count,
+                Grep = grep,
+                Keys = keys,
+                LastUpdate = conn.ProfileSettingsStore.LastUpdate.ToString("o"),
+            });
+    }
+
+    /// <summary>
+    /// Stage 6.7 — accept either base64-encoded JSON (from the MCP dispatcher,
+    /// which encodes to dodge the REPL tokenizer's double-quote stripping) OR
+    /// raw JSON (from direct REPL calls).  Returns null if the input is not
+    /// valid base64 of a JSON object — caller treats input as raw.
+    /// </summary>
+    private static string? TryDecodeBase64Utf8(string s)
+    {
+        if (string.IsNullOrWhiteSpace(s) || s.TrimStart().StartsWith("{")) return null;
+        try
+        {
+            byte[] bytes = Convert.FromBase64String(s.Trim());
+            string str = System.Text.Encoding.UTF8.GetString(bytes);
+            if (str.TrimStart().StartsWith("{")) return str;
+            return null;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// Stage 6.7 — delete one or more profile-settings keys via the existing
+    /// <c>SendUpdateProfileSettingsRequest</c> wire method's <c>deleted</c>
+    /// HashSet parameter.  Confirm-gated.  Accepts comma-separated keys.
+    /// </summary>
+    private CommandResult DeleteProfileSettings(string[] subArgs, string? targetProfile, bool confirmed)
+    {
+        CoreConnection? conn = ResolveConnection(targetProfile, out CommandResult? error);
+        if (conn == null) return error!;
+        if (!confirmed)
+            return CommandResult.Fail("settings profile-delete requires --confirm.");
+        if (subArgs.Length < 1)
+            return CommandResult.Fail("Usage: settings profile-delete <key[,key,...]> --confirm");
+
+        // Allow a single CSV arg OR multiple positional args.
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string a in subArgs)
+        {
+            foreach (string part in a.Split(',', StringSplitOptions.RemoveEmptyEntries))
+            {
+                string t = part.Trim();
+                if (t.Length > 0) keys.Add(t);
+            }
+        }
+        if (keys.Count == 0) return CommandResult.Fail("No keys supplied for delete.");
+
+        // Warm the store so we can classify per-key.
+        if (!conn.ProfileSettingsStore.HasData)
+        {
+            var (ok, reqErr) = conn.RequestProfileSettings();
+            if (!ok) return CommandResult.Fail($"[{conn.Name}] Failed to load profile settings: {reqErr}");
+        }
+        var present = conn.ProfileSettingsStore.GetAll()
+            .Select(kv => kv.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var actuallyPresent = keys.Where(k => present.Contains(k)).ToHashSet();
+        var notFound = keys.Where(k => !present.Contains(k)).ToList();
+
+        if (actuallyPresent.Count == 0)
+            return CommandResult.Fail(
+                $"not_found: none of [{string.Join(",", keys)}] are in {conn.Name}'s profile settings.");
+
+        // Stage 6.7 discovery — must use the implicit-profileName overload so
+        // MTCore sees the actual current profile name (not conn.Name).  See the
+        // matching fix in UpdateProfileSettings above.
+        var (uok, _, uerr) = conn.UpdateProfileSettings(
+            new Dictionary<string, string>(), actuallyPresent);
+        if (!uok)
+            return CommandResult.Fail($"Profile settings delete failed: {uerr}");
+
+        return CommandResult.Ok(
+            $"[{conn.Name}] profile-delete: removed {actuallyPresent.Count} key(s)" +
+            (notFound.Count > 0 ? $"; not_found: {string.Join(",", notFound)}" : "") +
+            ".",
+            new
+            {
+                Server = conn.Name,
+                Deleted = actuallyPresent.OrderBy(k => k, StringComparer.OrdinalIgnoreCase).ToList(),
+                NotFound = notFound.OrderBy(k => k, StringComparer.OrdinalIgnoreCase).ToList(),
+            });
+    }
 }

@@ -18,7 +18,7 @@ namespace MTTextClient.MCP;
 /// MCP (Model Context Protocol) server for MTTextClient.
 /// Communicates over stdio using JSON-RPC 2.0 messages.
 ///
-/// Maps every REPL command to an MCP tool, providing AI agents
+/// Maps every REPL command to an MCP tool, providing automation clients
 /// with full access to all MT-Core operations.
 ///
 /// Protocol:
@@ -109,6 +109,9 @@ public sealed class McpServer
         //  MCP tools to fail with "Unknown command: '<verb>'" at dispatch.)
         _registry.Register(new AutoStopsCommand(_manager));
         _registry.Register(new BlacklistCommand(_manager));
+        _registry.Register(new WhitelistCommand(_manager));
+        _registry.Register(new ProfilesCommand());
+        _registry.Register(new FoldersCommand());
         _registry.Register(new TPSLCommand(_manager));
         _registry.Register(new PerformanceCommand(_manager));
         _registry.Register(new NotificationsCommand(_manager));
@@ -252,7 +255,7 @@ public sealed class McpServer
     private JObject HandleToolsList(JToken? id)
     {
         var tools = new JArray();
-        foreach (JObject tool in GetToolDefinitions())
+        foreach (JObject tool in ToolRegistry.AllTools())
         {
             tools.Add(tool);
         }
@@ -270,7 +273,7 @@ public sealed class McpServer
     {
         if (_toolSchemaCache != null) return _toolSchemaCache;
         var map = new Dictionary<string, JObject>(StringComparer.Ordinal);
-        foreach (JObject tool in GetToolDefinitions())
+        foreach (JObject tool in ToolRegistry.AllTools())
         {
             string? n = tool["name"]?.Value<string>();
             if (string.IsNullOrEmpty(n)) continue;
@@ -334,6 +337,29 @@ public sealed class McpServer
             return MakeResult(id, new JObject { ["content"] = evtContent, ["isError"] = false });
         }
 
+        // Stage 0.4: registry-driven ConfirmGate. Subsumes the prior
+        // hard-coded RequiresMcpConfirm() list (start_all / stop_all /
+        // fleet_disconnect) — those three tools' schemas declare confirm in
+        // inputSchema.required just like every other destructive tool, so
+        // the gate catches them by virtue of registry lookup. We surface
+        // rejections as -32602 (same shape ValidateRequiredArguments uses
+        // for missing-required-field errors) so every confirm-required
+        // tool returns a uniform JSON-RPC error envelope to callers.
+        //
+        // Stage 6.6: ConfirmGate runs BEFORE HandleInternalTool so destructive
+        // internal tools (mt_core_shutdown, mt_vault_delete_profile, …) surface
+        // the same -32602 envelope as REPL-dispatched tools.  Before this
+        // reorder those tools relied on their own inline `confirm` checks and
+        // returned an inner-body { "error": ... } envelope, which violated the
+        // uniform-shape contract the gate's comment promises.
+        string? confirmReject = ConfirmGate.RejectIfMissing(toolName, arguments);
+        if (confirmReject != null)
+        {
+            _metrics.RecordError(toolName);
+            _metrics.RecordLatency(toolName, _latencySw.ElapsedMilliseconds);
+            return MakeErrorResponse(id, -32602, confirmReject);
+        }
+
         // MT-006/MT-009/MT-010: Internal tools with multi-step logic
         JObject? internalResponse = HandleInternalTool(toolName, arguments);
         if (internalResponse != null)
@@ -341,25 +367,6 @@ public sealed class McpServer
             _metrics.RecordLatency(toolName, _latencySw.ElapsedMilliseconds); // MT-022
             var internalContent = new JArray { new JObject { ["type"] = "text", ["text"] = internalResponse.ToString(Newtonsoft.Json.Formatting.None) } };
             return MakeResult(id, new JObject { ["content"] = internalContent, ["isError"] = false });
-        }
-
-        // Bulk-operation safety gate (MCP-only): refuse start_all / stop_all /
-        // fleet_disconnect unless confirm=true was explicitly supplied. Mirrors
-        // the gating already in place at the REPL layer for delete / cancel-all
-        // / close-all. The REPL TUI is unaffected — these REPL commands keep
-        // their existing (no --confirm) semantics for direct human operators.
-        if (RequiresMcpConfirm(toolName) && arguments["confirm"]?.Value<bool>() != true)
-        {
-            var bulkContent = new JArray
-            {
-                new JObject
-                {
-                    ["type"] = "text",
-                    ["text"] = $"{{\"error\":\"{toolName} is a bulk operation; pass confirm=true to execute.\"}}"
-                }
-            };
-            _metrics.RecordLatency(toolName, _latencySw.ElapsedMilliseconds);
-            return MakeResult(id, new JObject { ["content"] = bulkContent, ["isError"] = true });
         }
 
         // EN review #8 — argument sanitization at the MCP boundary.
@@ -441,14 +448,11 @@ public sealed class McpServer
         return ""; // silently ignore garbage; sanitizer handles \r/\n already
     }
 
-    private static bool RequiresMcpConfirm(string toolName) => toolName switch
-    {
-        "mt_algos_start_all"   => true,
-        "mt_algos_stop_all"    => true,
-        "mt_fleet_disconnect"  => true,
-        _ => false
-    };
-
+    // RequiresMcpConfirm() removed in Stage 0.4 — replaced by registry-driven
+    // ConfirmGate.IsConfirmRequired() (Core/ConfirmGate.cs). The three tools
+    // it gated (mt_algos_start_all, mt_algos_stop_all, mt_fleet_disconnect)
+    // already declare confirm in inputSchema.required, so the registry-driven
+    // gate catches them uniformly with every other destructive tool.
 
     /// <summary>
     /// EN review #8: validate tool arguments at the MCP boundary before they
@@ -524,7 +528,14 @@ public sealed class McpServer
     }
 
     /// <summary>Map an MCP tool name + arguments to a REPL command string.</summary>
-    private static string? MapToolToCommand(string toolName, JObject arguments)
+    /// <summary>
+    /// Stage 0.3: exposed so the DispatcherSnapshotGenerator and the Static
+    /// DispatcherSnapshotTests can probe the CLI string each registry tool
+    /// dispatches to with a deterministic argument set. Stays a static method
+    /// — no McpServer instance is required to translate a tool/args pair to
+    /// the CLI command string. Build*Command helpers it calls stay private.
+    /// </summary>
+    public static string? MapToolToCommand(string toolName, JObject arguments)
     {
         string? profile = arguments["profile"]?.Value<string>();
         string? profileSuffix = profile != null ? $" @{profile}" : "";
@@ -571,6 +582,9 @@ public sealed class McpServer
             "mt_exchange_ticker24" => $"exchange ticker24 {arguments["symbol"]?.Value<string>() ?? ""}{ResolveTicker24Market(arguments)}{profileSuffix}",
             "mt_exchange_klines" => BuildKlinesCommand(arguments, profileSuffix),
             "mt_exchange_trades" => $"exchange trades {arguments["symbol"]?.Value<string>() ?? ""}{profileSuffix}",
+            // Stage 6.9 — funding rate + leverage brackets (read-only).
+            "mt_exchange_funding_rate" => BuildExchangeFundingRateCommand(arguments, profileSuffix),
+            "mt_exchange_leverage_brackets" => BuildExchangeLeverageBracketsCommand(arguments, profileSuffix),
 
             // Algorithms (Phase B)
             "mt_algos_list" => $"algos list{profileSuffix}",
@@ -603,6 +617,12 @@ public sealed class McpServer
             "mt_algos_delete_group" => $"algos delete-group {arguments["group_id"]?.Value<string>() ?? ""}{profileSuffix}{confirm}",
             "mt_algos_copy" => BuildCopyCommand(arguments, confirm),
             "mt_algos_export" => $"algos export {arguments["id"]?.Value<string>() ?? ""}{profileSuffix}",
+            // Stage 4.1 — clipboard / paste / import-json.
+            "mt_algos_copy_to_clipboard" => $"algos copy-to-clipboard {arguments["id"]?.Value<string>() ?? ""}{profileSuffix}",
+            "mt_algos_paste_from_clipboard" => BuildPasteFromClipboardCommand(arguments, confirm),
+            "mt_algos_import_json" => BuildImportJsonCommand(arguments, confirm),
+            "mt_algos_bulk_edit" => BuildBulkEditCommand(arguments, profileSuffix, confirm),
+            "mt_algos_create" => BuildAlgosCreateCommand(arguments, profileSuffix, confirm),
 
             // Settings (Phase B)
             "mt_settings_get" => arguments.ContainsKey("key")
@@ -614,7 +634,9 @@ public sealed class McpServer
 
             // Import (Phase C)
             "mt_import_v2" => $"import v2 {arguments["path"]?.Value<string>() ?? ""}{profileSuffix}{confirm}",
-            "mt_import_templates" => "import templates",
+            "mt_import_templates" => arguments["path"]?.Value<string>() is { Length: > 0 } templPath
+                ? $"import templates {templPath}"
+                : "import templates",
             "mt_import_add_numeric" =>
                 $"import add-numeric {arguments["id"]?.Value<string>() ?? ""} {arguments["delta"]?.Value<string>() ?? ""}{profileSuffix}{confirm}",
 
@@ -687,11 +709,23 @@ public sealed class McpServer
             "mt_autostops_list" => $"autostops list{profileSuffix}",
             "mt_autostops_baseline" => $"autostops baseline{profileSuffix}",
             "mt_autostops_reports" => $"autostops reports {arguments["ids"]?.Value<string>() ?? ""}{profileSuffix}",
+            // Stage 3.1 — balance-filter CRUD
+            "mt_autostops_add" => BuildAutoStopAddCommand(arguments, profileSuffix, confirm),
+            "mt_autostops_edit" => BuildAutoStopEditCommand(arguments, profileSuffix, confirm),
+            "mt_autostops_start" => BuildAutoStopToggleCommand("start", arguments, profileSuffix, confirm),
+            "mt_autostops_stop" => BuildAutoStopToggleCommand("stop", arguments, profileSuffix, confirm),
+            "mt_autostops_delete" => BuildAutoStopDeleteCommand(arguments, profileSuffix, confirm),
 
             // Blacklist (Risk Management)
             "mt_blacklist_list" => $"blacklist list{profileSuffix}",
             "mt_blacklist_add" => BuildBlacklistMutationCommand("add", arguments, profileSuffix, confirm),
             "mt_blacklist_remove" => BuildBlacklistMutationCommand("remove", arguments, profileSuffix, confirm),
+            // Stage 5.2 — profile-level whitelist CRUD.
+            "mt_whitelist_list" => $"whitelist list{profileSuffix}",
+            "mt_whitelist_add" => BuildWhitelistMutationCommand("add", arguments, profileSuffix, confirm, bulk: false),
+            "mt_whitelist_remove" => BuildWhitelistMutationCommand("remove", arguments, profileSuffix, confirm, bulk: false),
+            "mt_whitelist_bulk_add" => BuildWhitelistMutationCommand("bulk-add", arguments, profileSuffix, confirm, bulk: true),
+            "mt_whitelist_bulk_remove" => BuildWhitelistMutationCommand("bulk-remove", arguments, profileSuffix, confirm, bulk: true),
 
             // TPSL (Take Profit / Stop Loss)
             "mt_tpsl_list" => $"tpsl list{profileSuffix}",
@@ -716,6 +750,7 @@ public sealed class McpServer
             // Fleet P4 Extensions
             "mt_fleet_autostops" => "fleet autostops",
             "mt_fleet_blacklist" => "fleet blacklist",
+            "mt_fleet_set_margin_type" => BuildFleetSetMarginTypeCommand(arguments, confirm),
             "mt_fleet_perf" => "fleet perf",
             "mt_fleet_reports" => $"fleet reports {arguments["period"]?.Value<string>() ?? ""}",
 
@@ -805,17 +840,45 @@ public sealed class McpServer
             "mt_orders_split" => $"orders split {arguments["client_order_id"]?.Value<string>() ?? ""} {arguments["count"]?.Value<string>() ?? "2"} {arguments["percentage"]?.Value<string>() ?? "50"} {arguments["market"]?.Value<string>() ?? ""}{profileSuffix}",
             "mt_fund_transfer" => $"orders fund-transfer {arguments["from_account"]?.Value<string>() ?? ""} {arguments["asset"]?.Value<string>() ?? ""} {arguments["amount"]?.Value<string>() ?? ""} {arguments["to_account"]?.Value<string>() ?? ""}{profileSuffix}{confirm}",
             "mt_profile_settings_get" => $"settings profile-get {arguments["profile_name"]?.Value<string>() ?? ""}{profileSuffix}",
-            "mt_profile_settings_update" => $"settings profile-update {arguments["profile_name"]?.Value<string>() ?? ""} {arguments["updates_json"]?.Value<string>() ?? ""}{profileSuffix}",
+            "mt_profile_settings_update" => BuildProfileSettingsUpdateCommand(arguments, profileSuffix, confirm),
+            // Stage 6.7 — list keys + bulk delete.
+            "mt_profile_settings_list" => BuildProfileSettingsListCommand(arguments, profileSuffix),
+            "mt_profile_settings_delete" => BuildProfileSettingsDeleteCommand(arguments, profileSuffix, confirm),
+            // Stage 5.3 — local profiles.json CRUD.
+            "mt_profiles_list" => "profiles list",
+            "mt_profiles_add" => BuildProfilesAddCommand(arguments, confirm),
+            "mt_profiles_edit" => BuildProfilesEditCommand(arguments, confirm),
+            "mt_profiles_delete" => $"profiles delete {SanitiseToken(arguments["name"]?.Value<string>())}{confirm}",
+            "mt_profiles_move" => $"profiles move {SanitiseToken(arguments["name"]?.Value<string>())} {SanitiseToken(arguments["folder"]?.Value<string>())}{confirm}",
+            "mt_profiles_import_csv" => $"profiles import-csv {SanitisePath(arguments["path"]?.Value<string>())}{confirm}",
+            // Stage 5.3 — local folders.json CRUD.
+            "mt_folders_list" => "folders list",
+            "mt_folders_add" => $"folders add {SanitiseToken(arguments["name"]?.Value<string>())}{confirm}",
+            "mt_folders_edit" => $"folders edit {SanitiseToken(arguments["old_name"]?.Value<string>())} {SanitiseToken(arguments["new_name"]?.Value<string>())}{confirm}",
+            "mt_folders_delete" => $"folders delete {SanitiseToken(arguments["name"]?.Value<string>())}{confirm}",
             "mt_core_restart" => $"core restart{profileSuffix}{confirm}",
             "mt_core_restart_update" => $"core restart-update{profileSuffix}{confirm}",
             "mt_core_clear_orders" => $"core clear-orders{profileSuffix}{confirm}",
             "mt_core_clear_archive" => $"core clear-archive{profileSuffix}{confirm}",
 
-            "mt_orders_close_by_tpsl" => $"orders close-by-tpsl {arguments["symbol"]?.Value<string>() ?? ""} {arguments["market"]?.Value<string>() ?? ""} {arguments["side"]?.Value<string>() ?? ""}{profileSuffix}{confirm}",
+            // Stage 1.3: order_type is appended as `--order-type <type>` when provided.
+            // The handler defaults to MARKET when the flag is absent — back-compat with
+            // pre-Stage-1 callers that didn't pass order_type.
+            "mt_orders_close_by_tpsl" => $"orders close-by-tpsl {arguments["symbol"]?.Value<string>() ?? ""} {arguments["market"]?.Value<string>() ?? ""} {arguments["side"]?.Value<string>() ?? ""}{BuildOrderTypeArg(arguments)}{profileSuffix}{confirm}",
             "mt_orders_reset_tpsl" => $"orders reset-tpsl {arguments["symbol"]?.Value<string>() ?? ""} {arguments["market"]?.Value<string>() ?? ""} {arguments["side"]?.Value<string>() ?? ""}{profileSuffix}{confirm}",
+            // Stage 2.1 — Active Order TP/SL/TS Update
+            "mt_orders_update_tpsl" => BuildUpdateOrderTpslCommand(arguments, profileSuffix, confirm),
 
-            "mt_tpsl_join" => $"tpsl join {arguments["tpsl_ids"]?.Value<string>() ?? ""}{profileSuffix}{confirm}",
+            "mt_tpsl_join" => $"tpsl join {BuildTpslJoinIds(arguments)}{profileSuffix}{confirm}",
             "mt_tpsl_split" => $"tpsl split {arguments["tpsl_id"]?.Value<string>() ?? ""}{profileSuffix}{confirm}",
+            // Stage 1.1 — TPSL bulk operations. The "many" tools accept tpsl_ids as an
+            // array; BuildTpslJoinIds happens to do exactly the right thing here too
+            // (JArray → space-joined, with legacy string-form fallback).
+            "mt_tpsl_cancel_many" => $"tpsl cancel-many {BuildTpslJoinIds(arguments)}{profileSuffix}{confirm}",
+            "mt_tpsl_split_many"  => $"tpsl split-many {BuildTpslJoinIds(arguments)}{profileSuffix}{confirm}",
+            // Stage 1.2 — TPSL panic close (single + bulk).
+            "mt_tpsl_panic"       => $"tpsl panic {arguments["tpsl_id"]?.Value<string>() ?? ""}{profileSuffix}{confirm}",
+            "mt_tpsl_panic_many"  => $"tpsl panic-many {BuildTpslJoinIds(arguments)}{profileSuffix}{confirm}",
 
             "mt_funding_request" => $"funding request{profileSuffix}",
 
@@ -954,912 +1017,6 @@ public sealed class McpServer
     }
 
     /// <summary>Generate the complete list of MCP tool definitions.</summary>
-    private static IEnumerable<JObject> GetToolDefinitions()
-    {
-        // ── MT-005: Event streaming tools ──
-        foreach (var t in GetEventToolDefinitions()) yield return t;
-        foreach (var t in GetInternalToolDefinitions()) yield return t;
-
-        // ── Connection ──
-        yield return Tool("mt_connect", "Connect to an MT-Core server using a saved profile",
-            Prop("profile", "string", "Profile name (e.g. bnc_001)", required: true));
-        yield return Tool("mt_disconnect", "Disconnect from a server",
-            Prop("profile", "string", "Profile name to disconnect", required: true));
-        yield return Tool("mt_status", "Show all connection statuses");
-        yield return Tool("mt_use", "Switch active connection",
-            Prop("profile", "string", "Profile name to activate", required: true));
-
-        // ── Account ──
-        yield return Tool("mt_account_balance", "Get account balances (set show_all=true to include dust/zero balances)",
-            Prop("show_all", "boolean", "Include dust and zero balances"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_account_orders", "Get active orders (set show_all=true to include archived/non-active)",
-            Prop("show_all", "boolean", "Include archived/non-active orders"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_account_positions", "Get open positions (set show_all=true to include closed)",
-            Prop("show_all", "boolean", "Include closed positions"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_account_executions", "Get recent trade executions (count overrides default tail size)",
-            Prop("count", "integer", "Number of executions to return"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_account_info", "Get account info",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_account_summary", "Get account summary",
-            Prop("profile", "string", "Target server profile"));
-
-        // ── Core Status ──
-        yield return Tool("mt_core_status", "Get core server status (CPU, memory, latency)",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_core_license", "Get license info",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_core_health", "Get server health assessment",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_core_dashboard", "Get multi-server dashboard",
-            Prop("profile", "string", "Target server profile"));
-
-        // ── Exchange ──
-        yield return Tool("mt_exchange_summary", "Get exchange info summary",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_exchange_pairs", "List trade pairs",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_exchange_search", "Search trade pairs",
-            Prop("query", "string", "Search query", required: true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_exchange_pair_detail", "Get detailed info for a specific trade pair",
-            Prop("symbol", "string", "Symbol name (e.g. BTCUSDT)", required: true),
-            Prop("profile", "string", "Target server profile"));
-
-        // ── Exchange Data (Phase K) ──
-        yield return Tool("mt_exchange_ticker24",
-            "Get 24h ticker price statistics for a symbol. Returns price change, high/low, volume, trade count. market_type FUTURES or SPOT (default: exchange-dependent).",
-            Prop("symbol", "string", "Symbol (e.g. BTCUSDT)", required: true),
-            Prop("market_type", "string", "FUTURES or SPOT"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_exchange_klines",
-            "Get candlestick/kline data for a symbol. Returns OHLCV data.",
-            Prop("symbol", "string", "Symbol (e.g. BTCUSDT)", required: true),
-            Prop("interval", "string", "Candle interval: 1s,1m,3m,5m,15m,30m,1h,2h,4h,6h,12h,1d,3d,1w,1M (default: 1h)"),
-            Prop("limit", "string", "Number of candles to return, 1-1000 (default: 100)"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_exchange_trades",
-            "Get recent trades for a symbol from the exchange.",
-            Prop("symbol", "string", "Symbol (e.g. BTCUSDT)", required: true),
-            Prop("profile", "string", "Target server profile"));
-
-        // ── Algorithms ──
-        yield return Tool("mt_algos_list", "List algorithms on active connection",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_algos_list_all", "List algorithms across ALL connections");
-        yield return Tool("mt_algos_search", "Search algorithms by name/signature/symbol",
-            Prop("query", "string", "Search query", required: true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_algos_get", "Get algorithm details",
-            Prop("id", "string", "Algorithm ID", required: true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_algos_start", "Start an algorithm",
-            Prop("id", "string", "Algorithm ID", required: true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_algos_stop", "Stop an algorithm",
-            Prop("id", "string", "Algorithm ID", required: true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_algos_start_all",
-            "Start all algorithms (requires confirm=true). Bulk operation: starts every algo on the target server.",
-            Prop("confirm", "boolean", "Must be true to actually start all", required: true),
-            Prop("profile", "string", "Target server profile"));
-
-        // MT-012: Algo verification — BUG-13 (Silent Init Failure) detection
-        yield return Tool("mt_algos_start_verified",
-            "Start an algorithm and verify it initialized successfully (MT-012 / BUG-13 mitigation). " +
-            "Waits wait_secs seconds then checks isRunning, symbol, and marketType. " +
-            "Returns status: VERIFIED | BUG13_SUSPECTED | RUNNING_UNCONFIRMED | NOT_RUNNING.",
-            Prop("id",         "string", "Algorithm ID to start",                  required: true),
-            Prop("wait_secs",  "string", "Seconds to wait for init (1-30, default 4)"),
-            Prop("profile",    "string", "Target server profile"));
-        yield return Tool("mt_algos_verify",
-            "Verify current state of a running algorithm — checks for BUG-13 pattern " +
-            "(isRunning=true but symbol/market unresolved). Does NOT start the algo.",
-            Prop("id",      "string", "Algorithm ID to inspect", required: true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_algos_stop_all",
-            "Stop all algorithms (requires confirm=true). Bulk operation: stops every running algo on the target server.",
-            Prop("confirm", "boolean", "Must be true to actually stop all", required: true),
-            Prop("profile", "string", "Target server profile"));
-
-        // MT-008: Batch algo operations — start/stop/config across multiple servers
-        yield return Tool("mt_algos_batch_start",
-            "Start an algorithm (matched by name/signature/symbol pattern) across multiple servers in parallel. " +
-            "Searches each server for algos matching the pattern and starts all matches. " +
-            "Use mt_algos_batch_stop to reverse. SAFETY: requires either explicit profiles or all_servers=true.",
-            Prop("algo",        "string",  "Algo name or pattern to match (name/signature/symbol substring)", required: true),
-            Prop("profiles",    "array",   "List of profile names to target (string or array)"),
-            Prop("all_servers", "boolean", "Must be true to target ALL connected servers when profiles is omitted"));
-        yield return Tool("mt_algos_batch_stop",
-            "Stop an algorithm (matched by name/signature/symbol pattern) across multiple servers in parallel.",
-            Prop("algo",     "string", "Algo name or pattern to match", required: true),
-            Prop("profiles", "array",  "List of profile names (optional — omit for ALL connected servers)"));
-        yield return Tool("mt_algos_batch_config",
-            "Set a config parameter on matching algorithms across multiple servers. " +
-            "Changes are LOCAL — call algos save <id> @<profile> to persist to each Core.",
-            Prop("algo",     "string", "Algo name or pattern to match", required: true),
-            Prop("key",      "string", "Config parameter key",                  required: true),
-            Prop("value",    "string", "New value for the config parameter",     required: true),
-            Prop("profiles", "array",  "List of profile names (optional — omit for ALL connected servers)"));
-        yield return Tool("mt_algos_save", "Save algorithm config changes",
-            Prop("id", "string", "Algorithm ID", required: true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_algos_save_start", "Save and start an algorithm",
-            Prop("id", "string", "Algorithm ID", required: true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_algos_delete", "Delete an algorithm (requires confirm=true)",
-            Prop("id", "string", "Algorithm ID", required: true),
-            Prop("confirm", "boolean", "Must be true to actually delete", required: true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_algos_toggle_debug", "Toggle debug/profiling mode",
-            Prop("id", "string", "Algorithm ID", required: true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_algos_rename", "Rename an algorithm",
-            Prop("id", "string", "Algorithm ID", required: true),
-            Prop("name", "string", "New name", required: true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_algos_config", "View algorithm configuration parameters",
-            Prop("id", "string", "Algorithm ID", required: true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_algos_config_set", "Set an algorithm config parameter",
-            Prop("id", "string", "Algorithm ID", required: true),
-            Prop("key", "string", "Parameter key", required: true),
-            Prop("value", "string", "New value", required: true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_algos_groups", "List algorithm groups",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_algos_group", "List algorithms in a group",
-            Prop("group_id", "string", "Group ID", required: true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_algos_clone_group", "Clone an algorithm group",
-            Prop("group_id", "string", "Group ID", required: true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_algos_delete_group", "Delete an algorithm group (requires confirm=true)",
-            Prop("group_id", "string", "Group ID", required: true),
-            Prop("confirm", "boolean", "Must be true to actually delete", required: true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_algos_copy",
-            "Copy an algorithm from one server to another (requires confirm=true)",
-            Prop("id", "string", "Algorithm ID to copy", required: true),
-            Prop("source_profile", "string", "Source server profile (default: active connection)"),
-            Prop("destination_profile", "string", "Destination server profile", required: true),
-            Prop("confirm", "boolean", "Must be true to actually copy"));
-        yield return Tool("mt_algos_export",
-            "Export an algorithm as portable JSON for cross-server transfer",
-            Prop("id", "string", "Algorithm ID", required: true),
-            Prop("profile", "string", "Target server profile"));
-
-        // ── Settings ──
-        yield return Tool("mt_settings_get", "Get profile settings (all or specific key)",
-            Prop("key", "string", "Specific setting key (optional)"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_settings_search", "Search settings by keyword",
-            Prop("query", "string", "Search query", required: true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_settings_set", "Set a profile setting (requires confirm=true)",
-            Prop("key", "string", "Setting key", required: true),
-            Prop("value", "string", "New value", required: true),
-            Prop("confirm", "boolean", "Must be true to actually change"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_settings_groups", "List settings grouped by prefix",
-            Prop("profile", "string", "Target server profile"));
-
-        // ── Import ──
-        yield return Tool("mt_import_templates", "List available algorithm templates");
-        yield return Tool("mt_import_v2", "Import algorithms from V2 text format file",
-            Prop("path", "string", "Path to V2 format file", required: true),
-            Prop("confirm", "boolean", "Must be true to actually create on server"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_import_add_numeric",
-            "Add numeric delta to all numeric params of an algorithm",
-            Prop("id", "string", "Algorithm ID", required: true),
-            Prop("delta", "string", "Numeric delta (e.g. 1.0 or -0.5)", required: true),
-            Prop("confirm", "boolean", "Must be true to actually modify and save"),
-            Prop("profile", "string", "Target server profile"));
-
-        // ── Orders ──
-        yield return Tool("mt_orders_list", "List active orders",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_orders_positions", "List open positions with PnL",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_orders_cancel", "Cancel a specific order (requires confirm=true)",
-            Prop("client_order_id", "string", "Client order ID", required: true),
-            Prop("confirm", "boolean", "Must be true to actually cancel"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_orders_cancel_all", "Cancel all orders (requires confirm=true)",
-            Prop("symbol", "string", "Specific symbol (optional, all if omitted)"),
-            Prop("confirm", "boolean", "Must be true to actually cancel"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_orders_close", "Close a position (requires confirm=true)",
-            Prop("symbol", "string", "Position symbol", required: true),
-            Prop("percentage", "string", "Percentage to close (0-100, default 100)"),
-            Prop("confirm", "boolean", "Must be true to actually close"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_orders_close_all", "Close all positions (requires confirm=true)",
-            Prop("confirm", "boolean", "Must be true to actually close all"),
-            Prop("profile", "string", "Target server profile"));
-
-        // ── Order Operations (Phase K) ──
-        yield return Tool("mt_orders_place",
-            "Place a new order (market or limit). Requires confirm=true. " +
-            "If price is omitted, places a MARKET order. If price is set, places a LIMIT order. " +
-            "On hedge-mode FUTURES accounts, position_side must match the side book (LONG for BUY, SHORT for SELL); " +
-            "for SPOT/one-way leave position_side unset or BOTH.",
-            Prop("symbol", "string", "Symbol (e.g. BTCUSDT)", required: true),
-            Prop("side", "string", "Order side: BUY or SELL", required: true),
-            Prop("qty", "string", "Order quantity", required: true),
-            Prop("price", "string", "Limit price (omit for market order)"),
-            Prop("type", "string", "Order type: MARKET or LIMIT (auto-detected from price)"),
-            Prop("reduce_only", "boolean", "Reduce-only order"),
-            Prop("position_side", "string", "Position side override: BOTH (one-way / SPOT), LONG, SHORT. " +
-                "If omitted, derived from account position mode + order side."),
-            Prop("emulated", "boolean", "Place as emulated/paper order (held client-side, isEmulationOn=true). Coexists with real orders on the same connection."),
-            Prop("confirm", "boolean", "Must be true to actually place"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_orders_move",
-            "Move/modify price of an existing order (requires confirm=true)",
-            Prop("client_order_id", "string", "Client order ID of the order to move", required: true),
-            Prop("new_price", "string", "New price for the order", required: true),
-            Prop("confirm", "boolean", "Must be true to actually move"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_orders_set_leverage",
-            "Set leverage for a symbol (requires confirm=true)",
-            Prop("symbol", "string", "Symbol (e.g. BTCUSDT)", required: true),
-            Prop("leverage", "string", "Leverage value (1-125)", required: true),
-            Prop("confirm", "boolean", "Must be true to actually change"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_orders_set_margin_type",
-            "Set margin type CROSS or ISOLATED for a symbol (requires confirm=true)",
-            Prop("symbol", "string", "Symbol (e.g. BTCUSDT)", required: true),
-            Prop("margin_type", "string", "Margin type: CROSS or ISOLATED", required: true),
-            Prop("confirm", "boolean", "Must be true to actually change"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_orders_set_position_mode",
-            "Set position mode HEDGE or ONE_WAY for a symbol (requires confirm=true)",
-            Prop("symbol", "string", "Symbol (e.g. BTCUSDT)", required: true),
-            Prop("mode", "string", "Position mode: HEDGE or ONE_WAY", required: true),
-            Prop("confirm", "boolean", "Must be true to actually change"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_orders_get_position_mode",
-            "Get current position mode (HEDGE/ONE_WAY) for a symbol. " +
-            "Note: position mode is per-symbol on Binance/OKX but per-account on Bybit; " +
-            "on Bybit the symbol argument is forwarded but does not affect the result.",
-            Prop("symbol", "string", "Symbol (e.g. BTCUSDT) — used by Binance/OKX; ignored by Bybit", required: true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_orders_panic_sell",
-            "EMERGENCY: Market-close all positions for a symbol immediately (requires confirm=true)",
-            Prop("symbol", "string", "Symbol to panic sell", required: true),
-            Prop("confirm", "boolean", "Must be true to execute panic sell"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_orders_change_margin",
-            "Add or reduce isolated margin on a position (requires confirm=true)",
-            Prop("symbol", "string", "Symbol (e.g. BTCUSDT)", required: true),
-            Prop("position_side", "string", "Position side: LONG, SHORT, or BOTH", required: true),
-            Prop("amount", "string", "Margin amount to add/reduce", required: true),
-            Prop("action", "string", "Action: add or reduce (default: add)"),
-            Prop("confirm", "boolean", "Must be true to actually change"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_orders_transfer",
-            "Transfer funds between SPOT and FUTURES accounts (requires confirm=true)",
-            Prop("asset", "string", "Asset to transfer (e.g. USDT)", required: true),
-            Prop("amount", "string", "Amount to transfer", required: true),
-            Prop("from", "string", "Source: SPOT or FUTURES", required: true),
-            Prop("to", "string", "Destination: SPOT or FUTURES", required: true),
-            Prop("confirm", "boolean", "Must be true to actually transfer"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_orders_set_leverage_buysell",
-            "Set different buy and sell leverage for an asset (Bybit split leverage). Requires confirm=true.",
-            Prop("asset", "string", "Asset/symbol (e.g. BTCUSDT)", required: true),
-            Prop("buy_leverage", "string", "Buy leverage (e.g. 10)", required: true),
-            Prop("sell_leverage", "string", "Sell leverage (e.g. 5)", required: true),
-            Prop("market", "string", "Market type: FUTURES, SPOT (default: FUTURES)"),
-            Prop("confirm", "boolean", "Must be true to proceed", required: true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_orders_get_multiasset",
-            "Query multi-asset margin mode status (enabled/disabled).",
-            Prop("market", "string", "Market type: FUTURES (default)"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_orders_set_multiasset",
-            "Enable or disable multi-asset margin mode. Requires confirm=true.",
-            Prop("enabled", "string", "true or false", required: true),
-            Prop("market", "string", "Market type: FUTURES (default)"),
-            Prop("confirm", "boolean", "Must be true to proceed", required: true),
-            Prop("profile", "string", "Target server profile"));
-
-        // ── Reports ──
-        yield return Tool("mt_reports_trades",
-            "Get trade reports: closed positions with P&L, fees, entry/exit prices. " +
-            "This is the HISTORICAL trading data — completed trades, not live fills. " +
-            "Use period shortcuts (today/24h/7d/30d/90d) or custom date range.",
-            Prop("period", "string", "Time period: today, 24h, 7d, 30d, or 90d (default: 24h)"),
-            Prop("from", "string", "Custom start date (YYYY-MM-DD), overrides period"),
-            Prop("to", "string", "Custom end date (YYYY-MM-DD)"),
-            Prop("symbol", "string", "Filter by symbol (e.g. BTCUSDT)"),
-            Prop("algo", "string", "Filter by algorithm name"),
-            Prop("sig", "string", "Filter by algorithm signature"),
-            Prop("metrics", "boolean", "Include market context snapshots per trade (depth, deltas, funding, mark price at trigger/fill time)"),
-            Prop("exclude_emulated", "boolean", "Exclude emulated/paper trades"),
-            Prop("closed_by", "string", "Filter by close reason: TP,SL,TS,LIQ,PANIC,AUTO,MARKET,LIMIT,FUNDING,LICENSE (comma-separated)"),
-            Prop("market", "string", "Filter by market type: FUTURES,SPOT (comma-separated)"),
-            Prop("side", "string", "Filter by order side: BUY,SELL"),
-            Prop("mode", "string", "Filter by trade mode: REAL or EMULATED"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_reports_comments",
-            "Get report comment labels used in trade reports",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_reports_dates",
-            "Get available report date markers",
-            Prop("profile", "string", "Target server profile"));
-
-        // ── Fleet ──
-        yield return Tool("mt_fleet_connect",
-            "Connect to ALL configured server profiles at once (or filter by exchange/name). " +
-            "Returns connection status for each. Use this instead of multiple mt_connect calls.",
-            Prop("filter", "string", "Optional filter: exchange name (e.g. 'BINANCE') or profile name pattern (e.g. 'bnc')"));
-        yield return Tool("mt_fleet_status",
-            "Get connection status overview for ALL servers in one call. " +
-            "Shows online/offline, uptime, algo counts per server.");
-        yield return Tool("mt_fleet_balances",
-            "Get balances across ALL connected servers in one call. " +
-            "Shows per-server USDT totals, asset counts, top holdings, and grand total.");
-        yield return Tool("mt_fleet_positions",
-            "Get ALL open positions across ALL connected servers. " +
-            "Shows symbol, side, entry, PnL per position with server attribution.");
-        yield return Tool("mt_fleet_algos",
-            "Get algorithm summary across ALL connected servers. " +
-            "Shows total/running counts per server, grouped by algo type.");
-        yield return Tool("mt_fleet_health",
-            "Health check ALL connected servers. " +
-            "Shows CPU, RAM, latency, UDS status, license per server with issue flags.");
-        yield return Tool("mt_fleet_summary",
-            "Comprehensive fleet overview in ONE call — the mega-dashboard. " +
-            "Grand total balance, PnL, algos, positions, per-exchange breakdown. " +
-            "Use this for periodic fleet status reports.");
-        yield return Tool("mt_fleet_disconnect",
-            "Disconnect from ALL servers at once (requires confirm=true). Fleet-wide operation.",
-            Prop("confirm", "boolean", "Must be true to actually disconnect all", required: true));
-
-        // MT-004
-        yield return Tool("mt_fleet_batch_connect",
-            "Connect to a specific set of named profiles in parallel (max 10 concurrent). " +
-            "Unlike mt_fleet_connect (which connects ALL configured profiles), this accepts an " +
-            "explicit list — suited for targeted fleet orchestration by AI agents.",
-            Prop("profiles", "array", "Array of profile names to connect to", required: true));
-
-        // MT-003
-        yield return Tool("mt_connection_health",
-            "Connection pool health report — per-profile latency, error count, reconnect history, " +
-            "and backoff state. Use this to diagnose unstable connections and route around degraded servers.");
-
-
-        // MT-007: Server tagging — fleet orchestration labels per connection
-        yield return Tool("mt_connection_tag",
-            "Set a fleet orchestration tag (key/value) on a named connection. " +
-            "Tags are in-memory labels like role=coordinator, strategy=scalper, group=us-east. " +
-            "Use mt_connection_tags to read them back.",
-            Prop("profile", "string", "Connection profile name", required: true),
-            Prop("key",     "string", "Tag key (e.g. role, strategy, group, region)", required: true),
-            Prop("value",   "string", "Tag value (e.g. coordinator, scalper, us-east, prod)", required: true));
-        yield return Tool("mt_connection_tags",
-            "List fleet orchestration tags for a connection or all connections. " +
-            "Returns a map of key→value labels set via mt_connection_tag.",
-            Prop("profile", "string", "Connection profile name (optional — omit for all connections)"));
-        // ── Monitor (Phase G) — real-time core monitoring via UDP ──
-        yield return Tool("mt_monitor_start",
-            "Start real-time core monitoring. Collects CPU, memory, threads, latency snapshots " +
-            "via UDP CoreStatusSubscription. Works with remote cores — no filesystem access needed.",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_monitor_stop",
-            "Stop core monitoring and release the snapshot buffer.",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_monitor_status",
-            "Get monitor status: running state, snapshots collected, buffer capacity, latest metrics.",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_monitor_health",
-            "Health assessment with trend analysis. Checks CPU, memory, threads, exchange latency, " +
-            "UDS data streams, and detects memory/thread growth trends. Returns HEALTHY/WARNING/CRITICAL.",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_monitor_performance",
-            "Get time-series performance snapshots. Each snapshot includes CPU, memory, threads, " +
-            "latency, UDS status. Start monitor first for history.",
-            Prop("count", "string", "Number of snapshots to return (default: 10, max: 100)"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_monitor_stats",
-            "Aggregate statistics over the monitoring window: min/max/avg for CPU, memory, threads, " +
-            "latency. Shows trends and sample count.",
-            Prop("profile", "string", "Target server profile"));
-
-        // ── AutoStops (Risk Management) ──
-        yield return Tool("mt_autostops_list",
-            "List auto-stop algorithm configurations and status. Shows balance/report filters and thresholds.",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_autostops_baseline",
-            "Request auto-stop baseline recalculation on Core (fire-and-forget).",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_autostops_reports",
-            "Get report data for auto-stop algorithms. Optionally filter by algorithm IDs.",
-            Prop("ids", "string", "Comma-separated algorithm IDs (optional — omit for all)"),
-            Prop("profile", "string", "Target server profile"));
-
-        // ── Blacklist (Risk Management) ──
-        yield return Tool("mt_blacklist_list",
-            "List current blacklist configuration: blocked markets, quote assets, and symbols.",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_blacklist_add",
-            "Add an item to the blacklist. type=market needs market_type only; " +
-            "type=quote needs market_type+quote_asset; type=symbol needs market_type+quote_asset+symbol. " +
-            "Requires confirm=true.",
-            Prop("type", "string", "Filter type: market, quote, or symbol", required: true),
-            Prop("market_type", "string", "Market type: SPOT, MARGIN, FUTURES, or DELIVERY", required: true),
-            Prop("quote_asset", "string", "Quote asset (e.g. usdt, busd) — required for type=quote and type=symbol"),
-            Prop("symbol", "string", "Symbol (e.g. btcusdt) — required for type=symbol"),
-            Prop("confirm", "boolean", "Must be true to proceed", required: true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_blacklist_remove",
-            "Remove an item from the blacklist. type=market needs market_type only; " +
-            "type=quote needs market_type+quote_asset; type=symbol needs market_type+quote_asset+symbol. " +
-            "Requires confirm=true.",
-            Prop("type", "string", "Filter type: market, quote, or symbol", required: true),
-            Prop("market_type", "string", "Market type: SPOT, MARGIN, FUTURES, or DELIVERY", required: true),
-            Prop("quote_asset", "string", "Quote asset — required for type=quote and type=symbol"),
-            Prop("symbol", "string", "Symbol — required for type=symbol"),
-            Prop("confirm", "boolean", "Must be true to proceed", required: true),
-            Prop("profile", "string", "Target server profile"));
-
-        // ── TPSL (Take Profit / Stop Loss) ──
-        yield return Tool("mt_tpsl_list",
-            "List all TPSL (Take Profit / Stop Loss) positions. Requires active TPSL subscription.",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_tpsl_subscribe",
-            "Subscribe to TPSL position updates from Core. Data available via mt_tpsl_list.",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_tpsl_unsubscribe",
-            "Unsubscribe from TPSL position updates.",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_tpsl_cancel",
-            "Cancel a TPSL (Take Profit / Stop Loss) position by ID. " +
-            "Requires an active TPSL subscription (call mt_tpsl_subscribe first). " +
-            "The id can be obtained from mt_tpsl_list. Requires confirm=true.",
-            Prop("id", "string", "TPSL position ID", required: true),
-            Prop("confirm", "boolean", "Must be true to proceed", required: true),
-            Prop("profile", "string", "Target server profile"));
-
-        // ── Trading Performance ──
-        yield return Tool("mt_perf_list",
-            "List trading performance data. Requires active performance subscription.",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_perf_subscribe",
-            "Subscribe to trading performance updates from Core.",
-            Prop("market", "string", "Market type: FUTURES, SPOT, INVERSE (default: FUTURES)"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_perf_unsubscribe",
-            "Unsubscribe from trading performance updates.",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_perf_request",
-            "Request trading performance data refresh or reset.",
-            Prop("action", "string", "Action: refresh or reset (default: refresh)"),
-            Prop("profile", "string", "Target server profile"));
-
-        // ── Reports Enhancement (CSV Export & Store) ──
-        yield return Tool("mt_reports_export",
-            "Export trade reports to CSV file. Supports all standard report filters. " +
-            "Returns the file path of the exported CSV.",
-            Prop("period", "string", "Time period: today, 24h, 7d, 30d, 90d (default: 24h)"),
-            Prop("symbol", "string", "Symbol filter (e.g. BTCUSDT)"),
-            Prop("algo", "string", "Algorithm name filter"),
-            Prop("sig", "string", "Signature filter"),
-            Prop("path", "string", "Output file path (default: ~/mt-reports/reports_TIMESTAMP.csv)"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_reports_fleet_export",
-            "Export trade reports from ALL connected servers merged into a single CSV file. " +
-            "Trades are sorted by close time across all servers. Ideal for consolidated P&L analysis.",
-            Prop("period", "string", "Time period: today, 24h, 7d, 30d, 90d (default: 24h)"),
-            Prop("symbol", "string", "Symbol filter (e.g. BTCUSDT)"),
-            Prop("path", "string", "Output file path (default: ~/mt-reports/reports_TIMESTAMP.csv)"));
-        yield return Tool("mt_reports_store",
-            "Store trade report query results locally with a name. " +
-            "Stored sets can be retrieved, displayed, and exported later without re-querying Core.",
-            Prop("name", "string", "Name for the stored report set", required: true),
-            Prop("period", "string", "Time period: today, 24h, 7d, 30d, 90d (default: 24h)"),
-            Prop("symbol", "string", "Symbol filter"),
-            Prop("all_servers", "string", "Set to true to query all connected servers"),
-            Prop("profile", "string", "Target server profile (ignored if all_servers=true)"));
-        yield return Tool("mt_reports_stored",
-            "List all locally stored report sets with summary statistics. " +
-            "Shows name, server, trade count, PnL, win rate, capture time.");
-        yield return Tool("mt_reports_load",
-            "Load a previously stored report set by name and display its trade table and summary stats. " +
-            "The tool returns formatted text output; it does not return raw rows for further processing. " +
-            "Use mt_reports_stored to list available stored sets first.",
-            Prop("name", "string", "Name of the stored report set", required: true));
-        yield return Tool("mt_reports_delete",
-            "Delete a stored report set by name.",
-            Prop("name", "string", "Name of the stored report set to delete", required: true));
-
-        // ── Fleet P4 Extensions ──
-        yield return Tool("mt_fleet_autostops",
-            "Query auto-stop configuration across ALL connected servers. " +
-            "Shows which servers have balance/report filters configured.");
-        yield return Tool("mt_fleet_blacklist",
-            "Query blacklist configuration across ALL connected servers. " +
-            "Shows market/quote/symbol filter counts per server.");
-        yield return Tool("mt_fleet_perf",
-            "Query trading performance subscription status across ALL connected servers. " +
-            "Shows entry counts and subscription state per server.");
-        yield return Tool("mt_fleet_reports",
-            "Query trade reports across ALL connected servers with per-server P&L breakdown. " +
-            "Shows trades, PnL, fees, win rate, volume per server with fleet totals.",
-            Prop("period", "string", "Time period: today, 7d, 30d (default: 24h)"));
-
-
-        // ── Notifications ──
-        yield return Tool("mt_notifications_list",
-            "List cached notifications from Core. Shows type, time, and message.",
-            Prop("count", "string", "Number of notifications to show (default: 50)"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_notifications_subscribe",
-            "Subscribe to real-time notifications from Core (deal complete, order fill, liquidation, alerts, errors).",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_notifications_unsubscribe",
-            "Unsubscribe from notifications.",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_notifications_clear",
-            "Clear cached notification history for a connection.",
-            Prop("profile", "string", "Target server profile"));
-
-        // ── Market Data ──
-        yield return Tool("mt_marketdata_status",
-            "Show all active market data subscriptions (trades, depth, mark price, klines, tickers).",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_marketdata_trades",
-            "View recent trade data for a symbol. Requires active trade subscription.",
-            Prop("symbol", "string", "Trading pair (e.g. BTCUSDT)", required: true),
-            Prop("market", "string", "Market type: FUTURES, SPOT (default: FUTURES)"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_marketdata_trades_subscribe",
-            "Subscribe to real-time trade feed for a symbol.",
-            Prop("symbol", "string", "Trading pair (e.g. BTCUSDT)", required: true),
-            Prop("market", "string", "Market type: FUTURES, SPOT (default: FUTURES)"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_marketdata_trades_unsubscribe",
-            "Unsubscribe from trade feed for a symbol.",
-            Prop("symbol", "string", "Trading pair (e.g. BTCUSDT)", required: true),
-            Prop("market", "string", "Market type: FUTURES, SPOT (default: FUTURES)"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_marketdata_depth",
-            "View order book (top 10 bids/asks) for a symbol. Requires active depth subscription.",
-            Prop("symbol", "string", "Trading pair (e.g. BTCUSDT)", required: true),
-            Prop("market", "string", "Market type: FUTURES, SPOT (default: FUTURES)"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_marketdata_depth_subscribe",
-            "Subscribe to real-time order book (depth) feed for a symbol.",
-            Prop("symbol", "string", "Trading pair (e.g. BTCUSDT)", required: true),
-            Prop("market", "string", "Market type: FUTURES, SPOT (default: FUTURES)"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_marketdata_depth_unsubscribe",
-            "Unsubscribe from depth feed for a symbol.",
-            Prop("symbol", "string", "Trading pair (e.g. BTCUSDT)", required: true),
-            Prop("market", "string", "Market type: FUTURES, SPOT (default: FUTURES)"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_marketdata_markprice",
-            "View mark price, funding rate, and next funding time for a symbol.",
-            Prop("symbol", "string", "Trading pair (e.g. BTCUSDT)", required: true),
-            Prop("market", "string", "Market type: FUTURES, SPOT (default: FUTURES)"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_marketdata_markprice_subscribe",
-            "Subscribe to real-time mark price and funding rate updates for a symbol.",
-            Prop("symbol", "string", "Trading pair (e.g. BTCUSDT)", required: true),
-            Prop("market", "string", "Market type: FUTURES, SPOT (default: FUTURES)"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_marketdata_markprice_unsubscribe",
-            "Unsubscribe from mark price feed for a symbol.",
-            Prop("symbol", "string", "Trading pair (e.g. BTCUSDT)", required: true),
-            Prop("market", "string", "Market type: FUTURES, SPOT (default: FUTURES)"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_marketdata_klines",
-            "View last kline (candlestick) data for a symbol and interval.",
-            Prop("symbol", "string", "Trading pair (e.g. BTCUSDT)", required: true),
-            Prop("interval", "string", "Kline interval: 1s, 1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 6h, 12h, 1d, 3d, 1w, 1mo", required: true),
-            Prop("market", "string", "Market type: FUTURES, SPOT (default: FUTURES)"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_marketdata_klines_subscribe",
-            "Subscribe to real-time kline (candlestick) updates for a symbol and interval.",
-            Prop("symbol", "string", "Trading pair (e.g. BTCUSDT)", required: true),
-            Prop("interval", "string", "Kline interval: 1s, 1m, 5m, 15m, 1h, 4h, 1d", required: true),
-            Prop("market", "string", "Market type: FUTURES, SPOT (default: FUTURES)"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_marketdata_klines_unsubscribe",
-            "Unsubscribe from kline feed for a symbol and interval.",
-            Prop("symbol", "string", "Trading pair (e.g. BTCUSDT)", required: true),
-            Prop("interval", "string", "Kline interval: 1s, 1m, 5m, 15m, 1h, 4h, 1d", required: true),
-            Prop("market", "string", "Market type: FUTURES, SPOT (default: FUTURES)"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_marketdata_ticker",
-            "View ticker data (last price, volume) for all symbols. Requires active ticker subscription.",
-            Prop("market", "string", "Market type: FUTURES, SPOT (default: FUTURES)"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_marketdata_ticker_subscribe",
-            "Subscribe to real-time ticker updates for ALL symbols on a market.",
-            Prop("market", "string", "Market type: FUTURES, SPOT (default: FUTURES)"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_marketdata_ticker_unsubscribe",
-            "Unsubscribe from ticker feed.",
-            Prop("market", "string", "Market type: FUTURES, SPOT (default: FUTURES)"),
-            Prop("profile", "string", "Target server profile"));
-
-        // ── Alerts ──
-        yield return Tool("mt_alerts_list",
-            "List active price alerts with conditions and status.",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_alerts_subscribe",
-            "Subscribe to real-time alert updates (new, modified, deleted alerts).",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_alerts_unsubscribe",
-            "Unsubscribe from alert updates.",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_alerts_history",
-            "View alert trigger history.",
-            Prop("count", "string", "Number of history entries to show (default: 50)"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_alerts_history_subscribe",
-            "Subscribe to alert history updates.",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_alerts_history_unsubscribe",
-            "Unsubscribe from alert history updates.",
-            Prop("profile", "string", "Target server profile"));
-
-        // Profiling
-        yield return Tool("mt_profiling_subscribe",
-            "Subscribe to real-time algorithm profiling data stream.",
-            Prop("symbol", "string", "Trading pair symbol", true),
-            Prop("algo_id", "string", "Algorithm ID", true),
-            Prop("market", "string", "Market type (FUTURES/SPOT)"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_profiling_unsubscribe",
-            "Unsubscribe from algorithm profiling data stream.",
-            Prop("symbol", "string", "Trading pair symbol", true),
-            Prop("algo_id", "string", "Algorithm ID", true),
-            Prop("market", "string", "Market type (FUTURES/SPOT)"),
-            Prop("profile", "string", "Target server profile"));
-
-        // Triggers
-        yield return Tool("mt_triggers_list",
-            "List received trigger events.",
-            Prop("count", "integer", "Number of recent entries to show"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_triggers_subscribe",
-            "Subscribe to trigger events.",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_triggers_unsubscribe",
-            "Unsubscribe from trigger events.",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_triggers_save",
-            "Save/create a trigger action.",
-            Prop("data", "string", "Trigger action JSON data", true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_triggers_delete",
-            "Delete a trigger action.",
-            Prop("data", "string", "Trigger action JSON data", true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_triggers_start",
-            "Start a trigger action.",
-            Prop("data", "string", "Trigger action JSON data", true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_triggers_stop",
-            "Stop a trigger action.",
-            Prop("data", "string", "Trigger action JSON data", true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_triggers_start_all",
-            "Start all trigger actions.",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_triggers_stop_all",
-            "Stop all trigger actions.",
-            Prop("profile", "string", "Target server profile"));
-
-        // LiveMarkets
-        yield return Tool("mt_livemarkets_list",
-            "List live market metrics data.",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_livemarkets_subscribe",
-            "Subscribe to live market metrics streaming.",
-            Prop("symbol", "string", "Filter by symbol (optional)"),
-            Prop("market", "string", "Market type (FUTURES/SPOT)"),
-            Prop("quote_asset", "string", "Filter by quote asset (e.g. USDT)"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_livemarkets_unsubscribe",
-            "Unsubscribe from live market metrics.",
-            Prop("symbol", "string", "Symbol to unsubscribe"),
-            Prop("market", "string", "Market type"),
-            Prop("quote_asset", "string", "Quote asset"),
-            Prop("profile", "string", "Target server profile"));
-
-        // AutoBuy
-        yield return Tool("mt_autobuy_list",
-            "List AutoBuy (DCA/recurring buy) events.",
-            Prop("count", "integer", "Number of recent entries"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_autobuy_subscribe",
-            "Subscribe to AutoBuy events.",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_autobuy_unsubscribe",
-            "Unsubscribe from AutoBuy events.",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_autobuy_save",
-            "Save/create an AutoBuy configuration.",
-            Prop("data", "string", "AutoBuy config JSON data", true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_autobuy_delete",
-            "Delete an AutoBuy configuration.",
-            Prop("data", "string", "AutoBuy ID JSON data", true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_autobuy_start",
-            "Start an AutoBuy configuration.",
-            Prop("data", "string", "AutoBuy ID JSON data", true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_autobuy_stop",
-            "Stop an AutoBuy configuration.",
-            Prop("data", "string", "AutoBuy ID JSON data", true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_autobuy_refresh_pairs",
-            "Refresh AutoBuy asset pair lists.",
-            Prop("profile", "string", "Target server profile"));
-
-        // GraphTool
-        yield return Tool("mt_graphtool_list",
-            "List graph tool (chart drawing) events.",
-            Prop("count", "integer", "Number of recent entries"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_graphtool_subscribe",
-            "Subscribe to graph tool events.",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_graphtool_unsubscribe",
-            "Unsubscribe from graph tool events.",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_graphtool_save",
-            "Save a graph tool (chart drawing).",
-            Prop("data", "string", "Graph tool JSON data", true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_graphtool_delete",
-            "Delete a graph tool (chart drawing).",
-            Prop("data", "string", "Graph tool JSON data", true),
-            Prop("profile", "string", "Target server profile"));
-
-        // Signals
-        yield return Tool("mt_signals_send",
-            "Send an external trading signal to MTCore for automated execution.",
-            Prop("symbol", "string", "Trading pair symbol", true),
-            Prop("side", "string", "Order side: BUY or SELL", true),
-            Prop("price", "string", "Signal price", true),
-            Prop("market", "string", "Market type (FUTURES/SPOT)"),
-            Prop("take_profit", "string", "Take profit percentage"),
-            Prop("stop_loss", "string", "Stop loss percentage"),
-            Prop("channel", "string", "Signal channel ID"),
-            Prop("profile", "string", "Target server profile"));
-
-        // Dust
-        yield return Tool("mt_dust_get",
-            "Get dust (small balance) information for potential conversion.",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_dust_convert",
-            "Convert dust (small balances) to main asset.",
-            Prop("profile", "string", "Target server profile"));
-
-        // Deposit
-        yield return Tool("mt_deposit_info",
-            "Get deposit information for a coin (networks, limits).",
-            Prop("coin", "string", "Coin symbol (e.g. BTC, ETH)", true),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_deposit_address",
-            "Get deposit address for a coin and network.",
-            Prop("coin", "string", "Coin symbol (e.g. BTC, ETH)", true),
-            Prop("network", "string", "Network name", true),
-            Prop("profile", "string", "Target server profile"));
-
-        // Extended Order Operations
-        yield return Tool("mt_orders_move_batch",
-            "Move multiple orders to new prices in a single batch.",
-            Prop("orders_json", "string", "JSON object: {clientOrderId: newPrice, ...}", true),
-            Prop("market", "string", "Market type (FUTURES/SPOT)"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_orders_join",
-            "Join (merge) split orders back into one.",
-            Prop("client_order_id", "string", "Client order ID to join", true),
-            Prop("market", "string", "Market type (FUTURES/SPOT)"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_orders_split",
-            "Split an order into multiple smaller orders.",
-            Prop("client_order_id", "string", "Client order ID to split", true),
-            Prop("count", "string", "Number of parts to split into"),
-            Prop("percentage", "string", "Percentage distribution per split"),
-            Prop("market", "string", "Market type (FUTURES/SPOT)"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_fund_transfer",
-            "Transfer funds between accounts (FUNDING <-> TRADING).",
-            Prop("from_account", "string", "Source: FUNDING or TRADING", true),
-            Prop("asset", "string", "Asset to transfer (e.g. USDT)", true),
-            Prop("amount", "string", "Amount to transfer", true),
-            Prop("to_account", "string", "Destination: FUNDING or TRADING", true),
-            Prop("confirm", "boolean", "Must be true to apply"),
-            Prop("profile", "string", "Target server profile"));
-
-        // Extended Exchange Data
-
-        // Extended Reports
-
-        // Profile Settings
-        yield return Tool("mt_profile_settings_get",
-            "Get profile-level settings (all server configuration key-values).",
-            Prop("profile_name", "string", "Profile name (empty for current)"),
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_profile_settings_update",
-            "Update one or more profile settings on the connected MTCore. " +
-            "updates_json is a flat JSON object mapping setting keys to string values, e.g. " +
-            "{\"BlackList.FirstInitialization\":\"1\",\"NewListedMarket.AddToBlacklistEnabled\":\"1\"}. " +
-            "Setting values are always strings on the wire; numbers and booleans must be quoted. " +
-            "Some keys (e.g. blacklist arrays) require typed-object JSON values — see mt_blacklist_* tools. " +
-            "Some changes require a Core restart to take full effect (this is reported in the tool response).",
-            Prop("profile_name", "string", "Profile name to update", true),
-            Prop("updates_json", "string", "JSON object of key-value updates (string-valued)", true),
-            Prop("profile", "string", "Target server profile"));
-    }
-
-
-    #region MCP Tool Builder Helpers
-
-    private static JObject Tool(string name, string description, params JObject[] properties)
-    {
-        var props = new JObject();
-        var required = new JArray();
-
-        foreach (JObject p in properties)
-        {
-            string? propName = p["_name"]!.Value<string>()!;
-            var propDef = new JObject
-            {
-                ["type"] = p["type"],
-                ["description"] = p["description"]
-            };
-            if (p["items"] != null)
-                propDef["items"] = p["items"];
-            props[propName] = propDef;
-
-            if (p["_required"]?.Value<bool>() == true)
-            {
-                required.Add(propName);
-            }
-        }
-
-        return new JObject
-        {
-            ["name"] = name,
-            ["description"] = description,
-            ["inputSchema"] = new JObject
-            {
-                ["type"] = "object",
-                ["properties"] = props,
-                ["required"] = required
-            }
-        };
-    }
-
-    private static JObject Prop(string name, string type, string description, bool required = false)
-    {
-        var prop = new JObject
-        {
-            ["_name"] = name,
-            ["type"] = type,
-            ["description"] = description,
-            ["_required"] = required
-        };
-        if (type == "array")
-            prop["items"] = new JObject { ["type"] = "string" };
-        return prop;
-    }
-
-    #endregion
 
     #region Command Builder Helpers
 
@@ -1875,6 +1032,97 @@ public sealed class McpServer
         return $"monitor {subcommand}{profileSuffix}";
     }
 
+    /// <summary>
+    /// Stage 1.3: render the optional <c>order_type</c> MCP arg as a
+    /// <c>--order-type &lt;type&gt;</c> flag for <c>orders close-by-tpsl</c>.
+    /// Returns empty string when absent so back-compat callers keep the
+    /// MARKET default.
+    /// </summary>
+    private static string BuildOrderTypeArg(JObject arguments)
+    {
+        string? ot = arguments["order_type"]?.Value<string>();
+        if (string.IsNullOrWhiteSpace(ot)) return "";
+        string norm = ot.Trim().ToUpperInvariant();
+        if (norm != "MARKET" && norm != "LIMIT") return "";
+        return $" --order-type {norm}";
+    }
+
+    /// <summary>
+    /// Stage 2.1 — render the REPL command line for
+    /// <c>orders update-tpsl &lt;symbol&gt; &lt;side&gt; …</c>.  Mirrors the
+    /// schema in ToolRegistry; tolerates missing optional fields by omitting
+    /// the corresponding flag.  Numeric fields are forwarded as strings; the
+    /// underlying command handler parses them with InvariantCulture.
+    /// </summary>
+    private static string BuildUpdateOrderTpslCommand(JObject arguments, string profileSuffix, string confirm)
+    {
+        string symbol = arguments["symbol"]?.Value<string>() ?? "";
+        string side   = arguments["side"]?.Value<string>() ?? "";
+        var parts = new List<string> { "orders update-tpsl", symbol, side };
+
+        string? market = arguments["market"]?.Value<string>();
+        if (!string.IsNullOrWhiteSpace(market))
+        {
+            string norm = market.Trim().ToUpperInvariant();
+            if (norm == "FUTURES" || norm == "SPOT" || norm == "MARGIN" || norm == "DELIVERY")
+                parts.Add($"--market {norm}");
+        }
+
+        string? positionSide = arguments["position_side"]?.Value<string>();
+        if (!string.IsNullOrWhiteSpace(positionSide))
+        {
+            string norm = positionSide.Trim().ToUpperInvariant();
+            if (norm == "BOTH" || norm == "LONG" || norm == "SHORT")
+                parts.Add($"--position-side {norm}");
+        }
+
+        string? tp = arguments["take_profit_percent"]?.Value<string>();
+        if (!string.IsNullOrWhiteSpace(tp)) parts.Add($"--tp {tp.Trim()}");
+
+        string? sl = arguments["stop_loss_percent"]?.Value<string>();
+        if (!string.IsNullOrWhiteSpace(sl)) parts.Add($"--sl {sl.Trim()}");
+
+        string? trail = arguments["trailing_spread"]?.Value<string>();
+        if (!string.IsNullOrWhiteSpace(trail)) parts.Add($"--trailing-spread {trail.Trim()}");
+
+        string? coid = arguments["client_order_id"]?.Value<string>();
+        if (!string.IsNullOrWhiteSpace(coid))
+        {
+            string safe = new string(coid.Where(c =>
+                char.IsLetterOrDigit(c) || c == '-' || c == '_' || c == '.').ToArray());
+            if (safe.Length > 0 && safe.Length <= 64)
+                parts.Add($"--client-order-id {safe}");
+        }
+
+        return string.Join(" ", parts) + profileSuffix + confirm;
+    }
+
+    /// <summary>
+    /// Render TPSL IDs as a space-separated argument list for the underlying
+    /// `tpsl join` REPL command. The MCP schema declares <c>tpsl_ids</c> as an
+    /// array of string, but tolerate the legacy string form (space- or
+    /// comma-separated) for backwards compatibility with earlier clients.
+    /// </summary>
+    private static string BuildTpslJoinIds(JObject arguments)
+    {
+        JToken? raw = arguments["tpsl_ids"];
+        if (raw == null) return "";
+        if (raw is JArray arr)
+        {
+            var parts = new List<string>(arr.Count);
+            foreach (JToken t in arr)
+            {
+                string? s = t.Value<string>();
+                if (!string.IsNullOrWhiteSpace(s)) parts.Add(s.Trim());
+            }
+            return string.Join(" ", parts);
+        }
+        // Legacy string form: split on whitespace or comma.
+        string flat = raw.Value<string>() ?? "";
+        var split = flat.Split(new[] { ' ', ',', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+        return string.Join(" ", split);
+    }
+
     /// <summary>Build the REPL command for cross-server algo copy.</summary>
     private static string BuildCopyCommand(JObject arguments, string confirm)
     {
@@ -1888,11 +1136,355 @@ public sealed class McpServer
         return $"algos copy {id} to:{dest}{sourceSuffix}{confirm}";
     }
 
+    // ── Stage 4.1 paste-from-clipboard / import-json helpers ──
+
+    private static string BuildPasteFromClipboardCommand(JObject arguments, string confirm)
+    {
+        var parts = new List<string> { "algos paste-from-clipboard" };
+        string? dest = arguments["destination_profile"]?.Value<string>();
+        if (!string.IsNullOrWhiteSpace(dest)) parts.Add($"@{dest}");
+        AppendOverrideFlags(parts, arguments);
+        if (arguments["force"]?.Value<bool>() == true) parts.Add("--force");
+        return string.Join(" ", parts) + confirm;
+    }
+
+    private static string BuildImportJsonCommand(JObject arguments, string confirm)
+    {
+        var parts = new List<string> { "algos import-json" };
+        string? dest = arguments["destination_profile"]?.Value<string>();
+        if (!string.IsNullOrWhiteSpace(dest)) parts.Add($"@{dest}");
+        string? payload = arguments["payload"]?.Value<string>();
+        // Stage 6.8 — path argument overrides payload.  When the file exists,
+        // read its content and inject as the payload.  Error markers are
+        // embedded into the schema_version field so AlgosCommand's existing
+        // schema_version_mismatch failure path carries the path/reason to
+        // the operator without needing a new parser branch.
+        string? path = arguments["path"]?.Value<string>();
+        if (!string.IsNullOrWhiteSpace(path))
+        {
+            try
+            {
+                if (!System.IO.File.Exists(path))
+                    payload = "{\"schema_version\":\"stage68-path-not-found:" +
+                              path.Replace("\\", "\\\\").Replace("\"", "\\\"") +
+                              "\"}";
+                else
+                    payload = System.IO.File.ReadAllText(path);
+            }
+            catch (System.Exception ex)
+            {
+                payload = "{\"schema_version\":\"stage68-read-failed:" +
+                          ex.Message.Replace("\\", "\\\\").Replace("\"", "\\\"") +
+                          "\"}";
+            }
+        }
+        if (!string.IsNullOrWhiteSpace(payload))
+        {
+            // Base64-encode the payload so the REPL splitter doesn't choke on spaces / quotes;
+            // AlgosCommand.ImportFromJson decodes the --payload arg.
+            string b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(payload));
+            parts.Add($"--payload {b64}");
+        }
+        AppendOverrideFlags(parts, arguments);
+        if (arguments["force"]?.Value<bool>() == true) parts.Add("--force");
+        return string.Join(" ", parts) + confirm;
+    }
+
+    // Stage 5.1 — fleet set-margin-type with mandatory dry_run.
+    private static string BuildFleetSetMarginTypeCommand(JObject arguments, string confirm)
+    {
+        var parts = new List<string> { "fleet set-margin-type" };
+        string? symbol = arguments["symbol"]?.Value<string>();
+        string? margin = arguments["margin_type"]?.Value<string>()?.ToUpperInvariant();
+        if (!string.IsNullOrWhiteSpace(symbol) && !symbol.Contains(' ')) parts.Add(symbol);
+        if (margin == "CROSS" || margin == "ISOLATED") parts.Add(margin);
+        string? market = arguments["market"]?.Value<string>();
+        if (market is "SPOT" or "MARGIN" or "FUTURES" or "DELIVERY") parts.Add($"--market {market}");
+        string? profiles = arguments["profiles"]?.Value<string>();
+        if (!string.IsNullOrWhiteSpace(profiles) && !profiles.Contains(' ')) parts.Add($"--profiles {profiles}");
+        string? exclude = arguments["exclude"]?.Value<string>();
+        if (!string.IsNullOrWhiteSpace(exclude) && !exclude.Contains(' ')) parts.Add($"--exclude {exclude}");
+        return string.Join(" ", parts) + confirm;
+    }
+
+    private static string BuildAlgosCreateCommand(JObject arguments, string profileSuffix, string confirm)
+    {
+        var parts = new List<string> { "algos create" };
+        string? algoType = arguments["algo_type"]?.Value<string>()?.ToUpperInvariant();
+        if (algoType is "SHOTS" or "AVERAGES" or "WATCHERS" or "SIGNALS" or "SAVER" or "DEPTHSHOTS" or "VECTOR")
+            parts.Add($"--algo-type {algoType}");
+        string? presetName = arguments["preset_name"]?.Value<string>();
+        if (!string.IsNullOrWhiteSpace(presetName) && !presetName.Contains(' '))
+            parts.Add($"--signature {presetName}");
+        string? sourceId = arguments["source_algo_id"]?.Value<string>();
+        if (!string.IsNullOrWhiteSpace(sourceId) && long.TryParse(sourceId, out _))
+            parts.Add($"--source-id {sourceId}");
+        string? newName = arguments["new_name"]?.Value<string>();
+        if (!string.IsNullOrWhiteSpace(newName))
+        {
+            string cleanName = new string(newName.Where(c => char.IsLetterOrDigit(c) || c == '-' || c == '_' || c == '.').ToArray());
+            if (cleanName.Length > 0) parts.Add($"--new-name {cleanName}");
+        }
+        string? overrides = arguments["overrides_json"]?.Value<string>();
+        if (!string.IsNullOrWhiteSpace(overrides))
+        {
+            string b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(overrides));
+            parts.Add($"--overrides {b64}");
+        }
+        if (arguments["force"]?.Value<bool>() == true) parts.Add("--force");
+        if (arguments["no_dry_run"]?.Value<bool>() == true) parts.Add("--no-dry-run");
+        return string.Join(" ", parts) + profileSuffix + confirm;
+    }
+
+    private static string BuildBulkEditCommand(JObject arguments, string profileSuffix, string confirm)
+    {
+        var parts = new List<string> { "algos bulk-edit" };
+        string? filter = arguments["filter_json"]?.Value<string>();
+        string? mutation = arguments["mutation_json"]?.Value<string>();
+        if (!string.IsNullOrWhiteSpace(filter))
+            parts.Add($"--filter {Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(filter))}");
+        if (!string.IsNullOrWhiteSpace(mutation))
+            parts.Add($"--mutation {Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(mutation))}");
+        return string.Join(" ", parts) + profileSuffix + confirm;
+    }
+
+    private static void AppendOverrideFlags(List<string> parts, JObject arguments)
+    {
+        string? overrideSymbol = arguments["override_symbol"]?.Value<string>();
+        if (!string.IsNullOrWhiteSpace(overrideSymbol) && !overrideSymbol.Contains(' '))
+            parts.Add($"--override-symbol {overrideSymbol}");
+        string? overrideMarket = arguments["override_market"]?.Value<string>();
+        if (!string.IsNullOrWhiteSpace(overrideMarket) &&
+            (overrideMarket == "SPOT" || overrideMarket == "MARGIN" ||
+             overrideMarket == "FUTURES" || overrideMarket == "DELIVERY"))
+            parts.Add($"--override-market {overrideMarket}");
+    }
+
 
     private static string BuildCountArg(JObject arguments)
     {
         string? count = arguments["count"]?.Value<string>();
         return count != null ? $" --count {count}" : "";
+    }
+
+    // ── Stage 3.1 AutoStops balance-filter helpers ──
+
+    private static string BuildAutoStopAddCommand(JObject arguments, string profileSuffix, string confirm)
+    {
+        var parts = new List<string> { "autostops add" };
+        AppendFlag(parts, "--max-loss", arguments["max_loss"]?.Value<string>());
+        AppendFlag(parts, "--value-max", arguments["value_max"]?.Value<string>());
+        if (arguments["is_range"]?.Value<bool>() == true) parts.Add("--is-range");
+        AppendFlagSanitised(parts, "--filter-type", arguments["filter_type"]?.Value<string>(), AutoStopFilterTypes);
+        AppendFlagSanitised(parts, "--source-type", arguments["source_type"]?.Value<string>(), AutoStopSourceTypes);
+        AppendFlagSanitised(parts, "--market", arguments["market"]?.Value<string>(), AutoStopMarkets);
+        AppendFlag(parts, "--timeframe-ms", arguments["timeframe_ms"]?.Value<string>());
+        AppendFlag(parts, "--symbols", arguments["symbols"]?.Value<string>(), allowSpaces: false);
+        AppendFlag(parts, "--quotes", arguments["quotes"]?.Value<string>(), allowSpaces: false);
+        if (arguments["pause_algo"]?.Value<bool>() == true) parts.Add("--pause-algo");
+        return string.Join(" ", parts) + profileSuffix + confirm;
+    }
+
+    private static string BuildAutoStopEditCommand(JObject arguments, string profileSuffix, string confirm)
+    {
+        var parts = new List<string> { "autostops edit" };
+        string idx = arguments["index"]?.Value<string>() ?? "";
+        if (!int.TryParse(idx, out _)) idx = "0";
+        parts.Add(idx);
+        AppendFlag(parts, "--max-loss", arguments["max_loss"]?.Value<string>());
+        AppendFlag(parts, "--value-max", arguments["value_max"]?.Value<string>());
+        if (arguments["is_range"]?.Value<bool>() == true) parts.Add("--is-range");
+        if (arguments["no_range"]?.Value<bool>() == true) parts.Add("--no-range");
+        AppendFlagSanitised(parts, "--filter-type", arguments["filter_type"]?.Value<string>(), AutoStopFilterTypes);
+        AppendFlagSanitised(parts, "--source-type", arguments["source_type"]?.Value<string>(), AutoStopSourceTypes);
+        AppendFlagSanitised(parts, "--market", arguments["market"]?.Value<string>(), AutoStopMarkets);
+        AppendFlag(parts, "--timeframe-ms", arguments["timeframe_ms"]?.Value<string>());
+        AppendFlag(parts, "--symbols", arguments["symbols"]?.Value<string>(), allowSpaces: false);
+        AppendFlag(parts, "--quotes", arguments["quotes"]?.Value<string>(), allowSpaces: false);
+        if (arguments["pause_algo"]?.Value<bool>() == true) parts.Add("--pause-algo");
+        if (arguments["no_pause_algo"]?.Value<bool>() == true) parts.Add("--no-pause-algo");
+        if (arguments["enabled"] is JValue enVal && enVal.Type == JTokenType.Boolean)
+            parts.Add($"--enabled {enVal.Value<bool>().ToString().ToLowerInvariant()}");
+        return string.Join(" ", parts) + profileSuffix + confirm;
+    }
+
+    private static string BuildAutoStopToggleCommand(string verb, JObject arguments, string profileSuffix, string confirm)
+    {
+        string idx = arguments["index"]?.Value<string>() ?? "";
+        string idxPart = (!string.IsNullOrWhiteSpace(idx) && int.TryParse(idx, out int _)) ? $" {idx}" : "";
+        return $"autostops {verb}{idxPart}{profileSuffix}{confirm}";
+    }
+
+    private static string BuildAutoStopDeleteCommand(JObject arguments, string profileSuffix, string confirm)
+    {
+        string idx = arguments["index"]?.Value<string>() ?? "";
+        if (!int.TryParse(idx, out _)) idx = "0";
+        return $"autostops delete {idx}{profileSuffix}{confirm}";
+    }
+
+    private static readonly HashSet<string> AutoStopFilterTypes = new(StringComparer.OrdinalIgnoreCase)
+        { "GLOBAL_BY_SYMBOL", "ALGO_SYMBOLS", "ALGO_TOTAL", "CUSTOM" };
+    private static readonly HashSet<string> AutoStopSourceTypes = new(StringComparer.OrdinalIgnoreCase)
+        { "VALUE", "PRICE_DELTA_SUM", "PROFIT_FACTOR" };
+    private static readonly HashSet<string> AutoStopMarkets = new(StringComparer.OrdinalIgnoreCase)
+        { "SPOT", "MARGIN", "FUTURES", "DELIVERY" };
+
+    private static void AppendFlag(List<string> parts, string flag, string? value, bool allowSpaces = false)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+        if (!allowSpaces && value.Contains(' ')) return;
+        parts.Add($"{flag} {value}");
+    }
+
+    private static void AppendFlagSanitised(List<string> parts, string flag, string? value, HashSet<string> allowed)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+        if (!allowed.Contains(value)) return;
+        parts.Add($"{flag} {value}");
+    }
+
+    // Stage 6.9 — funding rate + leverage brackets builders.
+    private static string BuildExchangeFundingRateCommand(JObject arguments, string profileSuffix)
+    {
+        var parts = new List<string> { "exchange funding-rate" };
+        string? sym = arguments["symbol"]?.Value<string>();
+        if (!string.IsNullOrWhiteSpace(sym))
+        {
+            string clean = new string(sym.Where(c => char.IsLetterOrDigit(c) || c == '-').ToArray());
+            if (clean.Length > 0) parts.Add(clean);
+        }
+        string? mkt = arguments["market_type"]?.Value<string>();
+        if (mkt is "SPOT" or "MARGIN" or "FUTURES" or "DELIVERY") parts.Add(mkt);
+        return string.Join(" ", parts) + profileSuffix;
+    }
+
+    private static string BuildExchangeLeverageBracketsCommand(JObject arguments, string profileSuffix)
+    {
+        var parts = new List<string> { "exchange leverage-brackets" };
+        string? sym = arguments["symbol"]?.Value<string>();
+        if (!string.IsNullOrWhiteSpace(sym))
+        {
+            string clean = new string(sym.Where(c => char.IsLetterOrDigit(c) || c == '-').ToArray());
+            if (clean.Length > 0) parts.Add(clean);
+        }
+        string? mkt = arguments["market_type"]?.Value<string>();
+        if (mkt is "SPOT" or "MARGIN" or "FUTURES" or "DELIVERY") parts.Add(mkt);
+        return string.Join(" ", parts) + profileSuffix;
+    }
+
+    // Stage 6.7 fix — mt_profile_settings_update: base64-encode the JSON
+    // updates payload so the REPL tokenizer doesn't strip its double-quotes
+    // (without quotes, JSON keys with dots like "Core.LOG_LEVEL" parse as
+    // unquoted JS identifiers, which Newtonsoft rejects).  Same pattern Stage
+    // 4.1/4.2 already uses for inline-JSON tools.
+    private static string BuildProfileSettingsUpdateCommand(JObject arguments, string profileSuffix, string confirm)
+    {
+        string profileName = arguments["profile_name"]?.Value<string>() ?? "";
+        string updates = arguments["updates_json"]?.Value<string>() ?? "";
+        string encoded = string.IsNullOrEmpty(updates)
+            ? ""
+            : Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(updates));
+        return $"settings profile-update {profileName} {encoded}{profileSuffix}{confirm}";
+    }
+
+    // Stage 6.7 — profile_settings list + delete builders.
+    private static string BuildProfileSettingsListCommand(JObject arguments, string profileSuffix)
+    {
+        var parts = new List<string> { "settings profile-list" };
+        string? grep = arguments["grep"]?.Value<string>();
+        if (!string.IsNullOrWhiteSpace(grep))
+        {
+            // Sanitise: only alnum + dot + underscore + dash (typical setting key shape).
+            string clean = new string(grep.Where(c => char.IsLetterOrDigit(c) || c == '.' || c == '_' || c == '-').ToArray());
+            if (clean.Length > 0) parts.Add($"--grep {clean}");
+        }
+        return string.Join(" ", parts) + profileSuffix;
+    }
+
+    private static string BuildProfileSettingsDeleteCommand(JObject arguments, string profileSuffix, string confirm)
+    {
+        string? keys = arguments["keys"]?.Value<string>();
+        // CSV-of-keys; allow alnum + dot + underscore + dash + comma.
+        string clean = string.IsNullOrEmpty(keys)
+            ? ""
+            : new string(keys.Where(c => char.IsLetterOrDigit(c) || c == '.' || c == '_' || c == '-' || c == ',').ToArray());
+        return $"settings profile-delete {clean}{profileSuffix}{confirm}";
+    }
+
+    // Stage 5.3 — profiles.json command builders.
+    private static string BuildProfilesAddCommand(JObject arguments, string confirm)
+    {
+        string name = SanitiseToken(arguments["name"]?.Value<string>());
+        string address = SanitiseToken(arguments["address"]?.Value<string>(), allowDot: true);
+        string port = SanitiseToken(arguments["port"]?.Value<string>());
+        string token = SanitiseToken(arguments["token"]?.Value<string>());
+        string exchange = SanitiseToken(arguments["exchange"]?.Value<string>());
+        string folder = SanitiseToken(arguments["folder"]?.Value<string>());
+        var parts = new List<string> { "profiles add", name, address, port, token, exchange };
+        if (!string.IsNullOrEmpty(folder)) parts.Add(folder);
+        return string.Join(" ", parts) + confirm;
+    }
+
+    private static string BuildProfilesEditCommand(JObject arguments, string confirm)
+    {
+        var parts = new List<string> { "profiles edit", SanitiseToken(arguments["name"]?.Value<string>()) };
+        void Add(string key, string? val)
+        {
+            if (string.IsNullOrWhiteSpace(val)) return;
+            string clean = SanitiseToken(val, allowDot: true);
+            if (!string.IsNullOrEmpty(clean)) parts.Add($"--{key}={clean}");
+        }
+        Add("address", arguments["address"]?.Value<string>());
+        Add("port", arguments["port"]?.Value<string>());
+        Add("token", arguments["token"]?.Value<string>());
+        Add("exchange", arguments["exchange"]?.Value<string>());
+        Add("folder", arguments["folder"]?.Value<string>());
+        Add("rename", arguments["rename"]?.Value<string>());
+        return string.Join(" ", parts) + confirm;
+    }
+
+    private static string SanitiseToken(string? s, bool allowDot = false)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        return new string(s.Where(c => char.IsLetterOrDigit(c) || c == '-' || c == '_' || (allowDot && c == '.')).ToArray());
+    }
+
+    private static string SanitisePath(string? s)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        // Allow alnum, dash, underscore, dot, slash for filesystem paths.
+        return new string(s.Where(c => char.IsLetterOrDigit(c) || c == '-' || c == '_' || c == '.' || c == '/').ToArray());
+    }
+
+    // Stage 5.2 — whitelist CRUD command builder.  Mirrors BlackList shape:
+    // typed entries {MarketType, QuoteAsset, Symbol?}.  bulk-variants take CSV.
+    private static string BuildWhitelistMutationCommand(string verb, JObject arguments, string profileSuffix, string confirm, bool bulk)
+    {
+        string type = arguments["type"]?.Value<string>()?.ToLowerInvariant() ?? "symbol";
+        if (type != "symbol" && type != "quote") type = "symbol";
+        string market = arguments["market"]?.Value<string>() ?? "FUTURES";
+        if (market is not ("SPOT" or "MARGIN" or "FUTURES" or "DELIVERY")) market = "FUTURES";
+        string quote = arguments["quote"]?.Value<string>() ?? "";
+        string subcmd = $"{verb}-{type}";
+        // CLI form:
+        //   whitelist add-symbol      <market> <quote> <symbol>
+        //   whitelist bulk-add-symbol <market> <quote> <sym,sym,...>
+        //   whitelist add-quote       <market> <quote>
+        //   whitelist bulk-add-quote  <market> <quote,quote,...>
+        var parts = new List<string> { "whitelist", subcmd, market };
+        var clean = (string s) => new string(s.Where(c => char.IsLetterOrDigit(c) || c == ',' || c == '-' || c == '_').ToArray());
+        if (type == "symbol")
+        {
+            parts.Add(clean(quote));
+            string symbols = (bulk ? arguments["symbols"]?.Value<string>() : arguments["symbol"]?.Value<string>()) ?? "";
+            parts.Add(clean(symbols));
+        }
+        else
+        {
+            string quotes = bulk ? (arguments["quotes"]?.Value<string>() ?? "") : quote;
+            parts.Add(clean(quotes));
+        }
+        return string.Join(" ", parts) + profileSuffix + confirm;
     }
 
     private static string BuildBlacklistMutationCommand(string action, JObject arguments, string profileSuffix, string confirm)
@@ -2094,7 +1686,15 @@ public sealed class McpServer
         string? symbol = arguments["symbol"]!.Value<string>();
         string? interval = arguments["interval"]?.Value<string>() ?? "1h";
         string? limit = arguments["limit"]?.Value<string>() ?? "100";
-        return $"exchange klines {symbol} {interval} {limit}" + profileSuffix;
+        string marketSuffix = "";
+        string? marketArg = arguments["market"]?.Value<string>();
+        if (!string.IsNullOrWhiteSpace(marketArg))
+        {
+            string norm = marketArg.Trim().ToUpperInvariant();
+            if (norm == "FUTURES" || norm == "SPOT" || norm == "MARGIN" || norm == "DELIVERY")
+                marketSuffix = $" --market {norm}";
+        }
+        return $"exchange klines {symbol} {interval} {limit}{marketSuffix}" + profileSuffix;
     }
 
     private static string? BuildPlaceOrderCommand(JObject arguments, string profileSuffix, string confirm)
@@ -2136,6 +1736,32 @@ public sealed class McpServer
         if (emulated)
         {
             parts.Add("--emulated");
+        }
+
+        // Stage 6.11 — iceberg toggle (wires to OrderSettings.isIceberg).
+        bool iceberg = arguments["iceberg"]?.Value<bool>() ?? false;
+        if (iceberg)
+        {
+            parts.Add("--iceberg");
+        }
+
+        string? marketArg = arguments["market"]?.Value<string>();
+        if (!string.IsNullOrWhiteSpace(marketArg))
+        {
+            string norm = marketArg.Trim().ToUpperInvariant();
+            if (norm == "FUTURES" || norm == "SPOT" || norm == "MARGIN" || norm == "DELIVERY")
+                parts.Add($"--market {norm}");
+        }
+
+        string? coid = arguments["client_order_id"]?.Value<string>();
+        if (!string.IsNullOrWhiteSpace(coid))
+        {
+            // Reject any whitespace / newline / shell metachar; only allow id-safe runs.
+            // ConfirmGate / RequestSanitizer already strips \r\n upstream, but defence in depth.
+            string safe = new string(coid.Where(c =>
+                char.IsLetterOrDigit(c) || c == '-' || c == '_' || c == '.').ToArray());
+            if (safe.Length > 0 && safe.Length <= 64)
+                parts.Add($"--client-order-id {safe}");
         }
 
         return string.Join(" ", parts) + profileSuffix + confirm;
@@ -2229,9 +1855,24 @@ public sealed class McpServer
             "mt_config_snapshot"    => HandleConfigSnapshot(arguments),
             "mt_config_restore"     => HandleConfigRestore(arguments),
             "mt_settings_diff"      => HandleSettingsDiff(arguments),
+            "mt_settings_diff_snapshots" => HandleSettingsDiffSnapshots(arguments),  // Stage 6.10
             "mt_rate_status"        => HandleRateStatus(),    // MT-011
             "mt_vault_store_profile" => HandleVaultStoreProfile(arguments),  // HK-001
             "mt_vault_list_profiles" => HandleVaultListProfiles(arguments),  // HK-001
+            "mt_vault_get_profile"   => HandleVaultGetProfile(arguments),    // Stage 6.6
+            "mt_vault_delete_profile" => HandleVaultDeleteProfile(arguments),// Stage 6.6
+            "mt_notifications_config_groups"        => Core.NotificationConfigReflector.GroupsCatalog(),       // Stage 6.2
+            "mt_notifications_config_targets"       => Core.NotificationConfigReflector.TargetsCatalog(),      // Stage 6.2
+            "mt_notifications_config_descriptors"   => Core.NotificationConfigReflector.DescriptorsCatalog(),  // Stage 6.2
+            "mt_notifications_config_capabilities"  => Core.NotificationConfigReflector.CapabilitiesCatalog(), // Stage 6.2
+            "mt_alerts_save"                        => HandleAlertsSave(arguments),                            // Stage 6.3
+            "mt_alerts_delete"                      => HandleAlertsDelete(arguments),                          // Stage 6.3
+            "mt_alerts_set_running"                 => HandleAlertsSetRunning(arguments),                      // Stage 6.3
+            "mt_import_from_profile"                => HandleImportFromProfile(arguments),                     // Stage 6.8
+            "mt_reports_query"                      => HandleReportsQuery(arguments, asCsv: false),            // Stage 7.1
+            "mt_reports_csv_inline"                 => HandleReportsQuery(arguments, asCsv: true),             // Stage 7.1
+            "mt_reports_cancel"                     => HandleReportsCancel(arguments),                         // Stage 7.1
+            "mt_reports_status"                     => HandleReportsStatus(arguments),                         // Stage 7.1
             "mt_core_shutdown"       => HandleCoreShutdown(arguments),         // MT-023
             "mt_algos_tpsl_change"   => HandleAlgosTpslChange(arguments),       // MT-024
             "mt_algos_profiling"     => HandleAlgosProfiling(arguments),        // MT-024
@@ -2322,6 +1963,567 @@ public sealed class McpServer
         {
             return new JObject { ["error"] = ex.Message };
         }
+    }
+
+    // Stage 6.6 — Retrieve a stored API profile from Vault KV v2.
+    //   GET /v1/secret/data/mt/profiles/{name} → { data: { data: {api_key, api_secret, stored_at}, metadata: ... } }
+    // Returns: { name, api_key, api_secret, stored_at, version }.  api_secret
+    // is surfaced in cleartext — Vault is the secret store; the caller's
+    // responsibility is to handle the response securely.
+    private JObject HandleVaultGetProfile(JObject arguments)
+    {
+        string? name      = arguments["name"]?.Value<string>();
+        string vaultAddr  = arguments["vault_addr"]?.Value<string>()  ?? Environment.GetEnvironmentVariable("VAULT_ADDR") ?? "http://127.0.0.1:8200";
+        string vaultToken = arguments["vault_token"]?.Value<string>() ?? Environment.GetEnvironmentVariable("VAULT_TOKEN") ?? "";
+
+        if (string.IsNullOrEmpty(name))
+            return new JObject { ["error"] = "name is required" };
+
+        try
+        {
+            string url = $"{vaultAddr.TrimEnd('/')}/v1/secret/data/mt/profiles/{name}";
+            using var http = BuildVaultHttpClient(vaultToken);
+            var resp = http.GetAsync(url).GetAwaiter().GetResult();
+            string body = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+
+            if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
+                return new JObject { ["error"] = $"profile_not_found: '{name}' has no record in Vault at secret/mt/profiles/{name}" };
+            if (!resp.IsSuccessStatusCode)
+                return new JObject { ["error"] = $"Vault HTTP {(int)resp.StatusCode}: {body}" };
+
+            var parsed = JObject.Parse(body);
+            var data   = parsed["data"]?["data"] as JObject;
+            var meta   = parsed["data"]?["metadata"] as JObject;
+            if (data == null)
+                return new JObject { ["error"] = $"profile_present_but_empty: '{name}' returned no data envelope" };
+
+            return new JObject
+            {
+                ["name"]       = name,
+                ["api_key"]    = data["api_key"],
+                ["api_secret"] = data["api_secret"],
+                ["stored_at"]  = data["stored_at"],
+                ["version"]    = meta?["version"],
+            };
+        }
+        catch (Exception ex)
+        {
+            return new JObject { ["error"] = ex.Message };
+        }
+    }
+
+    // Stage 6.6 — Permanently delete an API profile via Vault KV v2 destroy-all-versions.
+    //   DELETE /v1/secret/metadata/mt/profiles/{name}   (removes versions + metadata)
+    // Requires confirm=true (also enforced by ConfirmGate at the registry layer).
+    private JObject HandleVaultDeleteProfile(JObject arguments)
+    {
+        string? name      = arguments["name"]?.Value<string>();
+        bool confirm      = arguments["confirm"]?.Value<bool>() ?? false;
+        string vaultAddr  = arguments["vault_addr"]?.Value<string>()  ?? Environment.GetEnvironmentVariable("VAULT_ADDR") ?? "http://127.0.0.1:8200";
+        string vaultToken = arguments["vault_token"]?.Value<string>() ?? Environment.GetEnvironmentVariable("VAULT_TOKEN") ?? "";
+
+        if (string.IsNullOrEmpty(name))
+            return new JObject { ["error"] = "name is required" };
+        if (!confirm)
+            return new JObject { ["error"] = "confirm=true is required to permanently destroy the Vault entry" };
+
+        try
+        {
+            string url = $"{vaultAddr.TrimEnd('/')}/v1/secret/metadata/mt/profiles/{name}";
+            using var http = BuildVaultHttpClient(vaultToken);
+            var resp = http.DeleteAsync(url).GetAwaiter().GetResult();
+            string body = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+
+            if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
+                return new JObject { ["status"] = "not_found", ["profile"] = name };
+            if (!resp.IsSuccessStatusCode)
+                return new JObject { ["error"] = $"Vault HTTP {(int)resp.StatusCode}: {body}" };
+
+            return new JObject { ["status"] = "deleted", ["profile"] = name };
+        }
+        catch (Exception ex)
+        {
+            return new JObject { ["error"] = ex.Message };
+        }
+    }
+
+    // Stage 7.1 — automation-friendly trade-reports query.  Returns either a
+    // structured rows envelope or a CSV string in the body, with the same
+    // rich-filter surface as mt_reports_trades (which only returns text).
+    private JObject HandleReportsQuery(JObject arguments, bool asCsv)
+    {
+        string? profile = arguments["profile"]?.Value<string>();
+        var conn = _manager.Resolve(profile);
+        if (conn == null)
+            return new JObject { ["error"] = $"no_connection: profile '{profile ?? "(default)"}' is not connected" };
+
+        // ── Date range.
+        string period = arguments["period"]?.Value<string>() ?? "24h";
+        string? from = arguments["from"]?.Value<string>();
+        string? to   = arguments["to"]?.Value<string>();
+        (long unixFrom, long unixTo, string rangeLabel) = ResolveDateRange(period, from, to);
+
+        // ── Optional filters.
+        string symbol     = arguments["symbol"]?.Value<string>() ?? "";
+        string algo       = arguments["algo"]?.Value<string>() ?? "";
+        string sig        = arguments["sig"]?.Value<string>() ?? "";
+        bool excludeEmu   = arguments["exclude_emulated"]?.Value<bool>() ?? false;
+        var closedBy      = ParseEnumList<MTShared.Types.ReportClosedByType>(arguments["closed_by"]?.Value<string>());
+        var marketTypes   = ParseEnumList<MTShared.Types.MarketType>(arguments["market"]?.Value<string>());
+        var orderSides    = ParseEnumList<MTShared.Types.OrderSideType>(arguments["side"]?.Value<string>());
+        var tradeMode     = ParseTradeMode(arguments["mode"]?.Value<string>());
+        int maxRows       = Math.Clamp(arguments["max_rows"]?.Value<int>() ?? 200, 1, 5000);
+
+        string filterSummary =
+            $"range={rangeLabel} sym={symbol} algo={algo} sig={sig} closedBy={closedBy.Count} " +
+            $"market={marketTypes.Count} side={orderSides.Count} mode={tradeMode} excludeEmu={excludeEmu} maxRows={maxRows}";
+
+        var entry = Core.ReportsRequestRegistry.Begin(profile ?? "(default)", filterSummary);
+
+        MTShared.Network.ReportListData? reportList;
+        try
+        {
+            reportList = conn.RequestReports(
+                unixFrom, unixTo, symbol, algo, sig,
+                includeMetrics: false, excludeEmulated: excludeEmu,
+                closedBy: closedBy.Count > 0 ? closedBy : null,
+                marketTypes: marketTypes.Count > 0 ? marketTypes : null,
+                orderSideTypes: orderSides.Count > 0 ? orderSides : null,
+                tradeModeType: tradeMode);
+        }
+        catch (Exception ex)
+        {
+            Core.ReportsRequestRegistry.Error(entry.RequestId, ex.Message);
+            return new JObject
+            {
+                ["error"] = $"reports_query_failed: {ex.Message}",
+                ["request_id"] = entry.RequestId,
+            };
+        }
+
+        if (reportList == null)
+        {
+            Core.ReportsRequestRegistry.Error(entry.RequestId, "wire_returned_null");
+            return new JObject
+            {
+                ["error"] = "reports_query_failed: wire returned null (timeout or no_connection)",
+                ["request_id"] = entry.RequestId,
+            };
+        }
+
+        var reports = reportList.reports ?? new List<MTShared.Network.ReportData>();
+        int totalRows = reports.Count;
+        int includedRows = Math.Min(totalRows, maxRows);
+
+        if (asCsv)
+        {
+            var csv = new System.Text.StringBuilder();
+            csv.AppendLine("id,reportOpenTime,reportTime,marketType,symbol,side,priceOpen,priceClose,qty,executedQty,profit,profitPercentage,commissionUSDT,profitUSDT,totalUSDT,closedBy,isEmulated");
+            for (int i = 0; i < includedRows; i++)
+            {
+                var r = reports[i];
+                csv.Append(r.id).Append(',')
+                   .Append(r.reportOpenTime).Append(',')
+                   .Append(r.reportTime).Append(',')
+                   .Append(r.marketType).Append(',')
+                   .Append(CsvEscape(r.symbol)).Append(',')
+                   .Append(r.orderSideType).Append(',')
+                   .Append(r.priceOpen.ToString("G17", System.Globalization.CultureInfo.InvariantCulture)).Append(',')
+                   .Append(r.priceClose.ToString("G17", System.Globalization.CultureInfo.InvariantCulture)).Append(',')
+                   .Append(r.qty.ToString("G17", System.Globalization.CultureInfo.InvariantCulture)).Append(',')
+                   .Append(r.executedQty.ToString("G17", System.Globalization.CultureInfo.InvariantCulture)).Append(',')
+                   .Append(r.profit.ToString("G17", System.Globalization.CultureInfo.InvariantCulture)).Append(',')
+                   .Append(r.profitPercentage.ToString("G9", System.Globalization.CultureInfo.InvariantCulture)).Append(',')
+                   .Append(r.commissionUSDT.ToString("G17", System.Globalization.CultureInfo.InvariantCulture)).Append(',')
+                   .Append(r.profitUSDT.ToString("G17", System.Globalization.CultureInfo.InvariantCulture)).Append(',')
+                   .Append(r.totalUSDT.ToString("G17", System.Globalization.CultureInfo.InvariantCulture)).Append(',')
+                   .Append(r.closedBy).Append(',')
+                   .Append(r.isEmulated ? "true" : "false")
+                   .AppendLine();
+            }
+            Core.ReportsRequestRegistry.Complete(entry.RequestId, includedRows);
+            return new JObject
+            {
+                ["request_id"] = entry.RequestId,
+                ["row_count"] = includedRows,
+                ["total_rows_on_wire"] = totalRows,
+                ["truncated"] = totalRows > includedRows,
+                ["range"] = rangeLabel,
+                ["csv"] = csv.ToString(),
+            };
+        }
+
+        var rows = new JArray();
+        for (int i = 0; i < includedRows; i++)
+        {
+            var r = reports[i];
+            rows.Add(new JObject
+            {
+                ["id"]                = r.id,
+                ["report_open_time"]  = r.reportOpenTime,
+                ["report_time"]       = r.reportTime,
+                ["market_type"]       = r.marketType.ToString(),
+                ["symbol"]            = r.symbol,
+                ["side"]              = r.orderSideType.ToString(),
+                ["price_open"]        = r.priceOpen,
+                ["price_close"]       = r.priceClose,
+                ["qty"]               = r.qty,
+                ["executed_qty"]      = r.executedQty,
+                ["profit"]            = r.profit,
+                ["profit_percentage"] = r.profitPercentage,
+                ["commission_usdt"]   = r.commissionUSDT,
+                ["profit_usdt"]       = r.profitUSDT,
+                ["total_usdt"]        = r.totalUSDT,
+                ["executed_qty_usdt"] = r.executedQtyUSDT,
+                ["closed_by"]         = r.closedBy.ToString(),
+                ["is_emulated"]       = r.isEmulated,
+            });
+        }
+        Core.ReportsRequestRegistry.Complete(entry.RequestId, includedRows);
+        return new JObject
+        {
+            ["request_id"] = entry.RequestId,
+            ["row_count"] = includedRows,
+            ["total_rows_on_wire"] = totalRows,
+            ["truncated"] = totalRows > includedRows,
+            ["range"] = rangeLabel,
+            ["filter_summary"] = filterSummary,
+            ["summary"] = new JObject
+            {
+                ["total"]        = reportList.total,
+                ["order_count"]  = reportList.orderCount,
+                ["deleted_count"] = reportList.deletedCount,
+            },
+            ["rows"] = rows,
+        };
+    }
+
+    private JObject HandleReportsCancel(JObject arguments)
+    {
+        string? requestId = arguments["request_id"]?.Value<string>();
+        if (string.IsNullOrEmpty(requestId))
+            return new JObject { ["error"] = "request_id is required" };
+
+        var entry = Core.ReportsRequestRegistry.Get(requestId);
+        if (entry == null)
+            return new JObject
+            {
+                ["status"] = "not_found",
+                ["request_id"] = requestId,
+                ["notice"] = "request_id_not_found: no recent reports query matches this id",
+            };
+
+        Core.ReportsRequestRegistry.RequestCancel(requestId);
+        return new JObject
+        {
+            ["status"] = entry.Status == "completed" ? "already_completed" : "cancel_requested",
+            ["request_id"] = requestId,
+            ["wire_is_synchronous"] = true,
+            ["notice"] = "reports_cancel_acknowledged: the SendReportListRequest wire on this build " +
+                         "blocks until completion or timeout; cancellation intent is recorded for " +
+                         "observability but does not interrupt the in-flight RPC.",
+        };
+    }
+
+    private JObject HandleReportsStatus(JObject arguments)
+    {
+        string? requestId = arguments["request_id"]?.Value<string>();
+        if (string.IsNullOrEmpty(requestId))
+            return new JObject { ["error"] = "request_id is required" };
+
+        var entry = Core.ReportsRequestRegistry.Get(requestId);
+        if (entry == null)
+            return new JObject
+            {
+                ["status"] = "not_found",
+                ["request_id"] = requestId,
+            };
+
+        double? latencyMs = null;
+        if (entry.CompletedAtUtc.HasValue)
+            latencyMs = (entry.CompletedAtUtc.Value - entry.StartedAtUtc).TotalMilliseconds;
+
+        return new JObject
+        {
+            ["request_id"]            = entry.RequestId,
+            ["profile"]               = entry.Profile,
+            ["filter_summary"]        = entry.FilterSummary,
+            ["status"]                = entry.Status,
+            ["started_at_utc"]        = entry.StartedAtUtc.ToString("o"),
+            ["completed_at_utc"]      = entry.CompletedAtUtc?.ToString("o"),
+            ["latency_ms"]            = latencyMs,
+            ["row_count"]             = entry.RowCount,
+            ["cancellation_requested"] = entry.CancellationRequested,
+            ["error_message"]         = entry.ErrorMessage,
+        };
+    }
+
+    // Stage 7.1 helpers.
+    private static (long unixFrom, long unixTo, string label) ResolveDateRange(string period, string? from, string? to)
+    {
+        DateTime utcNow = DateTime.UtcNow;
+        if (!string.IsNullOrEmpty(from))
+        {
+            DateTime fDt = DateTime.SpecifyKind(DateTime.Parse(from!, System.Globalization.CultureInfo.InvariantCulture), DateTimeKind.Utc);
+            DateTime tDt = !string.IsNullOrEmpty(to)
+                ? DateTime.SpecifyKind(DateTime.Parse(to!, System.Globalization.CultureInfo.InvariantCulture), DateTimeKind.Utc)
+                : utcNow;
+            return (new DateTimeOffset(fDt).ToUnixTimeSeconds(),
+                    new DateTimeOffset(tDt).ToUnixTimeSeconds(),
+                    $"{from} .. {to ?? utcNow.ToString("yyyy-MM-dd")}");
+        }
+        long nowSec = new DateTimeOffset(utcNow).ToUnixTimeSeconds();
+        long windowSec = period.ToLowerInvariant() switch
+        {
+            "today" => 86400,
+            "24h"   => 86400,
+            "7d"    => 7 * 86400,
+            "30d"   => 30 * 86400,
+            "90d"   => 90 * 86400,
+            _       => 86400,
+        };
+        return (nowSec - windowSec, nowSec, period);
+    }
+
+    private static List<T> ParseEnumList<T>(string? csv) where T : struct, Enum
+    {
+        var result = new List<T>();
+        if (string.IsNullOrWhiteSpace(csv)) return result;
+        foreach (var part in csv.Split(','))
+        {
+            if (string.IsNullOrWhiteSpace(part)) continue;
+            if (Enum.TryParse<T>(part.Trim(), true, out var v)) result.Add(v);
+        }
+        return result;
+    }
+
+    private static MTShared.Types.TradeModeType ParseTradeMode(string? mode)
+        => mode?.ToUpperInvariant() switch
+        {
+            "REAL"     => MTShared.Types.TradeModeType.REAL,
+            "EMULATED" => MTShared.Types.TradeModeType.EMULATED,
+            _          => MTShared.Types.TradeModeType.UNKNOWN,
+        };
+
+    private static string CsvEscape(string? s)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        if (s.IndexOfAny(new[] { ',', '"', '\n', '\r' }) < 0) return s;
+        return "\"" + s.Replace("\"", "\"\"") + "\"";
+    }
+
+    // Stage 6.8 — survey what would be imported from source_profile into
+    // destination_profile.  Read-only on both sides; emits a structured list
+    // entry per source algo with name/group/symbol/market and a duplicate
+    // flag (same name present on destination).
+    private JObject HandleImportFromProfile(JObject arguments)
+    {
+        string? src = arguments["source_profile"]?.Value<string>();
+        string? dst = arguments["destination_profile"]?.Value<string>();
+        string? filterGroup = arguments["filter_group_id"]?.Value<string>();
+        string? filterSymbol = arguments["filter_symbol"]?.Value<string>()?.ToLowerInvariant();
+
+        if (string.IsNullOrEmpty(src) || string.IsNullOrEmpty(dst))
+            return new JObject { ["error"] = "source_profile and destination_profile are required" };
+
+        var srcConn = _manager.Resolve(src);
+        var dstConn = _manager.Resolve(dst);
+        if (srcConn == null)
+            return new JObject { ["error"] = $"no_connection: source_profile '{src}' is not connected" };
+        if (dstConn == null)
+            return new JObject { ["error"] = $"no_connection: destination_profile '{dst}' is not connected" };
+
+        var srcAlgos = srcConn.AlgoStore.GetAll();
+        var dstAlgos = dstConn.AlgoStore.GetAll();
+        var dstNames = new HashSet<string>(
+            dstAlgos.Select(a => a.name ?? "").Where(n => n.Length > 0),
+            System.StringComparer.OrdinalIgnoreCase);
+
+        var entries = new JArray();
+        int totalEligible = 0, duplicateCount = 0;
+        foreach (var algo in srcAlgos)
+        {
+            // Optional filters.
+            if (!string.IsNullOrEmpty(filterGroup) &&
+                algo.groupID.ToString() != filterGroup) continue;
+            if (!string.IsNullOrEmpty(filterSymbol) &&
+                !string.Equals(algo.symbol?.ToLowerInvariant(), filterSymbol, System.StringComparison.Ordinal)) continue;
+
+            totalEligible++;
+            bool isDup = !string.IsNullOrEmpty(algo.name) && dstNames.Contains(algo.name);
+            if (isDup) duplicateCount++;
+            entries.Add(new JObject
+            {
+                ["id"] = algo.id,
+                ["name"] = algo.name,
+                ["group_id"] = algo.groupID,
+                ["symbol"] = algo.symbol,
+                ["market"] = algo.marketType.ToString(),
+                ["duplicate_on_destination"] = isDup,
+                ["status"] = algo.actionType.ToString(),
+            });
+        }
+
+        return new JObject
+        {
+            ["source_profile"] = src,
+            ["destination_profile"] = dst,
+            ["source_total_algos"] = srcAlgos.Count,
+            ["destination_total_algos"] = dstAlgos.Count,
+            ["eligible_for_import"] = totalEligible,
+            ["duplicate_count"] = duplicateCount,
+            ["filter_group_id"] = filterGroup,
+            ["filter_symbol"] = filterSymbol,
+            ["entries"] = entries,
+            ["mutation_supported"] = false,
+            ["mutation_notice"] =
+                "import_from_profile_dry_run_only: this tool is read-only. " +
+                "To actually copy, drive mt_algos_copy per id (one round-trip per algo) " +
+                "or use mt_algos_paste_from_clipboard / mt_algos_import_json for the " +
+                "clipboard-based flow.  Bulk-mutation as a single MCP call is deferred " +
+                "to a follow-up workstream.",
+        };
+    }
+
+    // Stage 6.3 — build a populated AlertInfoData from typed MCP args and send.
+    // Returns the structured envelope { ok, message, alert: { name, symbol, … } }
+    // when the wire call resolves; surfaces 'no_connection' if the profile isn't connected.
+    private JObject HandleAlertsSave(JObject arguments)
+    {
+        string? profile = arguments["profile"]?.Value<string>();
+        var conn = _manager.Resolve(profile);
+        if (conn == null)
+            return new JObject { ["error"] = $"no_connection: profile '{profile ?? "(default)"}' is not connected" };
+
+        string? name   = arguments["name"]?.Value<string>();
+        string? symbol = arguments["symbol"]?.Value<string>();
+        string? marketStr = arguments["market_type"]?.Value<string>();
+        string? condStr   = arguments["condition_type"]?.Value<string>();
+        double  refPrice  = arguments["ref_price"]?.Value<double>() ?? 0;
+        string? dirStr    = arguments["direction"]?.Value<string>() ?? "BOTH";
+        double  changeVal = arguments["change_value"]?.Value<double>() ?? 0;
+        long    alertId   = arguments["alert_id"]?.Value<long?>() ?? 0;
+        string? repeatStr = arguments["repeat_type"]?.Value<string>() ?? "ONLY_ONCE";
+
+        if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(symbol) ||
+            string.IsNullOrEmpty(marketStr) || string.IsNullOrEmpty(condStr))
+            return new JObject { ["error"] = "name, symbol, market_type, condition_type are required" };
+
+        if (!Enum.TryParse<MTShared.Types.MarketType>(marketStr, true, out var marketType))
+            return new JObject { ["error"] = $"invalid market_type '{marketStr}' — expected FUTURES or SPOT" };
+        if (!Enum.TryParse<MTShared.Types.AlertConditionType>(condStr, true, out var condType))
+            return new JObject { ["error"] = $"invalid condition_type '{condStr}' — expected CROSSING|PERCENTAGE_CHANGE|VALUE_CHANGE" };
+        if (!Enum.TryParse<MTShared.Types.AlertDirectionType>(dirStr, true, out var dirType))
+            return new JObject { ["error"] = $"invalid direction '{dirStr}' — expected BOTH|UP|DOWN" };
+        if (!Enum.TryParse<MTShared.Types.AlertRepeatType>(repeatStr, true, out var repeatType))
+            return new JObject { ["error"] = $"invalid repeat_type '{repeatStr}' — expected ONLY_ONCE|EVERY_TIME" };
+
+        var settings = new MTShared.Structs.AlertConditionSettingsData
+        {
+            refPrice = refPrice,
+            changeValue = changeVal,
+            graphToolId = "",
+            directionType = dirType,
+        };
+        var condition = new MTShared.Structs.AlertConditionData
+        {
+            type = condType,
+            crossing          = condType == MTShared.Types.AlertConditionType.CROSSING          ? settings : new MTShared.Structs.AlertConditionSettingsData(),
+            percentageChange  = condType == MTShared.Types.AlertConditionType.PERCENTAGE_CHANGE ? settings : new MTShared.Structs.AlertConditionSettingsData(),
+            valueChange       = condType == MTShared.Types.AlertConditionType.VALUE_CHANGE      ? settings : new MTShared.Structs.AlertConditionSettingsData(),
+        };
+        var options = new MTShared.Structs.AlertOptionsData
+        {
+            expirationType = MTShared.Types.AlertExpirationType.NEVER,
+            expirationTime = 0,
+            repeatType = repeatType,
+            repeatFrequency = 0,
+            bufferPercentage = 0,
+        };
+        var alert = new MTShared.Network.AlertInfoData
+        {
+            isRunning = true,
+            id = alertId,
+            name = name,
+            marketType = marketType,
+            symbol = symbol,
+            condition = condition,
+            options = options,
+            trigger = new MTShared.Structs.TriggerInfoData(),
+            lastAlertTime = 0,
+        };
+
+        string serverMsg = conn.SendAlertsSave(new List<MTShared.Network.AlertInfoData> { alert });
+        return new JObject
+        {
+            ["ok"] = true,
+            ["message"] = serverMsg,
+            ["alert"] = new JObject
+            {
+                ["name"] = name, ["symbol"] = symbol, ["market_type"] = marketType.ToString(),
+                ["condition_type"] = condType.ToString(), ["direction"] = dirType.ToString(),
+                ["ref_price"] = refPrice, ["change_value"] = changeVal, ["alert_id_in"] = alertId,
+            },
+        };
+    }
+
+    private JObject HandleAlertsDelete(JObject arguments)
+    {
+        string? profile = arguments["profile"]?.Value<string>();
+        var conn = _manager.Resolve(profile);
+        if (conn == null)
+            return new JObject { ["error"] = $"no_connection: profile '{profile ?? "(default)"}' is not connected" };
+
+        bool applyToAll = arguments["apply_to_all"]?.Value<bool>() ?? false;
+        var ids = ParseAlertIds(arguments["alert_ids"]?.Value<string>());
+        if (!applyToAll && ids.Count == 0)
+            return new JObject { ["error"] = "either alert_ids (csv) or apply_to_all=true is required" };
+
+        string serverMsg = conn.SendAlertsDelete(ids, applyToAll);
+        return new JObject
+        {
+            ["ok"] = true,
+            ["message"] = serverMsg,
+            ["deleted_ids"] = new JArray(ids.ConvertAll(x => (JToken)x)),
+            ["apply_to_all"] = applyToAll,
+        };
+    }
+
+    private JObject HandleAlertsSetRunning(JObject arguments)
+    {
+        string? profile = arguments["profile"]?.Value<string>();
+        var conn = _manager.Resolve(profile);
+        if (conn == null)
+            return new JObject { ["error"] = $"no_connection: profile '{profile ?? "(default)"}' is not connected" };
+
+        bool running = arguments["running"]?.Value<bool>() ?? throw new InvalidOperationException("running is required");
+        bool applyToAll = arguments["apply_to_all"]?.Value<bool>() ?? false;
+        var ids = ParseAlertIds(arguments["alert_ids"]?.Value<string>());
+        if (!applyToAll && ids.Count == 0)
+            return new JObject { ["error"] = "either alert_ids (csv) or apply_to_all=true is required" };
+
+        string serverMsg = conn.SendAlertsSetRunning(ids, running, applyToAll);
+        return new JObject
+        {
+            ["ok"] = true,
+            ["message"] = serverMsg,
+            ["targeted_ids"] = new JArray(ids.ConvertAll(x => (JToken)x)),
+            ["apply_to_all"] = applyToAll,
+            ["running"] = running,
+        };
+    }
+
+    private static List<long> ParseAlertIds(string? csv)
+    {
+        var result = new List<long>();
+        if (string.IsNullOrWhiteSpace(csv)) return result;
+        foreach (var part in csv.Split(','))
+        {
+            string t = part.Trim();
+            if (t.Length == 0) continue;
+            if (long.TryParse(t, out long id) && id > 0) result.Add(id);
+        }
+        return result;
     }
 
     // MT-023: Send shutdown/restart service command to MTCore
@@ -2874,6 +3076,95 @@ public sealed class McpServer
     }
 
     // MT-010: Diff settings between two profiles
+    /// <summary>
+    /// Stage 6.10 — diff two snapshot files written by <c>mt_config_snapshot</c>.
+    /// Pure client-side, no MTCore wire calls.  Snapshot path may be absolute
+    /// or a bare filename relative to <c>~/.mt-snapshots/</c>.  Diffs the
+    /// <c>settings</c> section of each snapshot (added / removed / changed).
+    /// </summary>
+    private JObject HandleSettingsDiffSnapshots(JObject arguments)
+    {
+        string? rawA = arguments["snapshot_a"]?.Value<string>();
+        string? rawB = arguments["snapshot_b"]?.Value<string>();
+        if (string.IsNullOrEmpty(rawA) || string.IsNullOrEmpty(rawB))
+            return new JObject { ["error"] = "snapshot_a and snapshot_b are required (snapshot file paths or filenames under ~/.mt-snapshots/)" };
+
+        string Resolve(string p)
+        {
+            if (Path.IsPathRooted(p)) return p;
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".mt-snapshots", p);
+        }
+        string pathA = Resolve(rawA);
+        string pathB = Resolve(rawB);
+        if (!File.Exists(pathA)) return new JObject { ["error"] = $"snapshot_not_found: {pathA}" };
+        if (!File.Exists(pathB)) return new JObject { ["error"] = $"snapshot_not_found: {pathB}" };
+
+        JObject snapA, snapB;
+        try { snapA = JObject.Parse(File.ReadAllText(pathA)); }
+        catch (Exception ex) { return new JObject { ["error"] = $"snapshot_a parse error: {ex.Message}" }; }
+        try { snapB = JObject.Parse(File.ReadAllText(pathB)); }
+        catch (Exception ex) { return new JObject { ["error"] = $"snapshot_b parse error: {ex.Message}" }; }
+
+        // Each snapshot has shape {profile, captured_at, settings: {...}, algos_count}.
+        // The 'settings' block is what we diff.  Tolerate the section being
+        // present as object OR array (legacy snapshots may use either shape).
+        var dictA = SnapshotToDict(snapA["settings"]);
+        var dictB = SnapshotToDict(snapB["settings"]);
+
+        var allKeys = dictA.Keys.Union(dictB.Keys).OrderBy(k => k).ToList();
+        var diffs = new JArray();
+        int sameCount = 0;
+        foreach (string key in allKeys)
+        {
+            bool inA = dictA.TryGetValue(key, out string? va);
+            bool inB = dictB.TryGetValue(key, out string? vb);
+            if (!inA)        diffs.Add(new JObject { ["key"] = key, ["a"] = null, ["b"] = vb, ["change"] = "added" });
+            else if (!inB)   diffs.Add(new JObject { ["key"] = key, ["a"] = va, ["b"] = null, ["change"] = "removed" });
+            else if (va != vb) diffs.Add(new JObject { ["key"] = key, ["a"] = va, ["b"] = vb, ["change"] = "changed" });
+            else sameCount++;
+        }
+
+        return new JObject
+        {
+            ["snapshot_a_path"] = pathA,
+            ["snapshot_b_path"] = pathB,
+            ["snapshot_a_profile"] = snapA["profile"]?.ToString() ?? "?",
+            ["snapshot_b_profile"] = snapB["profile"]?.ToString() ?? "?",
+            ["snapshot_a_captured_at"] = snapA["captured_at"]?.ToString() ?? "?",
+            ["snapshot_b_captured_at"] = snapB["captured_at"]?.ToString() ?? "?",
+            ["diff_count"] = diffs.Count,
+            ["same_count"] = sameCount,
+            ["diffs"] = diffs,
+        };
+    }
+
+    private static Dictionary<string, string> SnapshotToDict(JToken? settingsToken)
+    {
+        var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (settingsToken == null) return d;
+        if (settingsToken is JObject obj)
+        {
+            foreach (var kv in obj)
+                d[kv.Key] = kv.Value?.ToString() ?? "";
+        }
+        else if (settingsToken is JArray arr)
+        {
+            // Legacy snapshots may serialise settings as an array of {Key, Value}.
+            foreach (var item in arr)
+            {
+                if (item is JObject row)
+                {
+                    string? k = row["Key"]?.Value<string>() ?? row["key"]?.Value<string>();
+                    if (!string.IsNullOrEmpty(k))
+                        d[k] = row["Value"]?.ToString() ?? row["value"]?.ToString() ?? "";
+                }
+            }
+        }
+        return d;
+    }
+
     private JObject HandleSettingsDiff(JObject arguments)
     {
         string? profileA = arguments["profile_a"]?.Value<string>();
@@ -2955,165 +3246,6 @@ public sealed class McpServer
     }
 
     // MT-006/MT-009/MT-010: Tool definitions
-    private static IEnumerable<JObject> GetInternalToolDefinitions()
-    {
-        // MT-006
-        yield return Tool("mt_metrics_get",
-            "Get Prometheus-compatible metrics for tool calls, errors, events, and connections");
-
-        // MT-011
-        yield return Tool("mt_rate_status",
-            "MT-011: Return sliding-window rate limit status per category (orders/market/account). " +
-            "Shows limit, used, and remaining capacity within the current window.");
-
-        // HK-001
-        yield return Tool("mt_vault_store_profile",
-            "HK-001: Store an exchange API profile (api_key + api_secret) in HashiCorp Vault. " +
-            "Credentials are stored securely and never written to disk.",
-            Prop("name",        "string", "Profile name (e.g. bybit_main)",   required: true),
-            Prop("api_key",     "string", "Exchange API key",                  required: true),
-            Prop("api_secret",  "string", "Exchange API secret",               required: true),
-            Prop("vault_addr",  "string", "Vault address (default: dev server)"),
-            Prop("vault_token", "string", "Vault token (default: dev token)"));
-        yield return Tool("mt_vault_list_profiles",
-            "HK-001: List all API profiles stored in HashiCorp Vault.",
-            Prop("vault_addr",  "string", "Vault address (default: dev server)"),
-            Prop("vault_token", "string", "Vault token (default: dev token)"));
-
-        // MT-009
-        yield return Tool("mt_config_snapshot",
-            "Snapshot all settings + algo list for a profile to a timestamped JSON file",
-            Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_config_restore",
-            "Restore profile settings from a snapshot file (requires confirm=true)",
-            Prop("path", "string", "Path to snapshot JSON file", required: true),
-            Prop("confirm", "boolean", "Must be true to actually apply"),
-            Prop("profile", "string", "Target server profile"));
-
-        // MT-010
-        yield return Tool("mt_settings_diff",
-            "Diff settings between two profiles — shows added, removed, changed keys",
-            Prop("profile_a", "string", "First server profile", required: true),
-            Prop("profile_b", "string", "Second server profile", required: true));
-
-        // MT-023
-        yield return Tool("mt_core_shutdown",
-            "MT-023: Send a service command to MTCore (shutdown or restart). Requires confirm=true.",
-            Prop("command",  "string",  "Command: shutdown | restart | restart_update | restart_clear_orders | restart_clear_archive (default: shutdown)"),
-            Prop("confirm",  "boolean", "Must be true to proceed",  required: true),
-            Prop("profile",  "string",  "Target server profile (default: first active)"));
-
-        // MT-024
-        yield return Tool("mt_algos_tpsl_change",
-            "MT-024: Send a TP/SL algorithm change request to MT-Core (fire-and-forget).",
-            Prop("tp_enabled",       "boolean", "Enable take profit"),
-            Prop("tp_pct",           "number",  "Take profit percentage"),
-            Prop("sl_enabled",       "boolean", "Enable stop loss"),
-            Prop("sl_pct",           "number",  "Stop loss percentage"),
-            Prop("trailing_enabled", "boolean", "Enable trailing stop loss"),
-            Prop("trailing_spread",  "number",  "Trailing stop spread percentage"),
-            Prop("profile",          "string",  "Target server profile"));
-
-        yield return Tool("mt_algos_profiling",
-            "MT-024: Request algorithm profiling data from MT-Core. Result is delivered asynchronously via mt_events_poll.",
-            Prop("symbol",   "string",  "Trading symbol (e.g. BTCUSDT)", required: true),
-            Prop("algo_id",  "integer", "Algorithm ID (0 = all algos for symbol)"),
-            Prop("market",   "string",  "Market type: FUTURES | INVERSE | SPOT (default: FUTURES)"),
-            Prop("profile",  "string",  "Target server profile"));
-
-        // State reconciliation tools
-        yield return Tool("mt_algos_snapshot",
-            "Return a structured snapshot of all groups and algorithms across all connected profiles. " +
-            "Includes group names, algo IDs, names, symbols, running state, and signatures. " +
-            "Designed for state reconciliation — compare desired vs actual state.",
-            Prop("profile", "string", "Target server profile (omit for all connected)"));
-        yield return Tool("mt_algos_group_by_name",
-            "Find a group by name (case-insensitive). Returns group ID, name, type, and contained algorithms.",
-            Prop("name",    "string", "Group name to search for", required: true),
-            Prop("profile", "string", "Target server profile"));
-    }
-
-
-    private static IEnumerable<JObject> GetEventToolDefinitions()
-    {
-        yield return Tool("mt_events_poll",
-            "MT-005: Poll buffered events (algo state changes, connection events, errors). " +
-            "Returns events since 'since_seq' (or last N if omitted). Use 'current_seq' from response as next 'since_seq'.",
-            Prop("since_seq", "integer", "Return events with seq > since_seq (0 = last N events)"),
-            Prop("n",         "integer", "Max events to return when since_seq=0 (default: 50)"));
-        yield return Tool("mt_events_status",
-            "MT-005: Show event stream status — current sequence number, SSE server port, URLs.",
-            /* no fields */ Prop("_", "string", "unused", required: false));
-        yield return Tool("mt_config_import_algos",
-            "Import algorithms from algorithms.config JSON (native MTCore format). Bypasses V2 text parsing.",
-            Prop("path", "string", "Path to algorithms.config JSON file"),
-            Prop("confirm", "boolean", "Must be true to apply"),
-            Prop("emulated", "boolean", "Set isEmulated=true on all trading algos", false),
-            Prop("profile", "string", "Target server profile"));
-
-        // Core Service Extended
-        yield return Tool("mt_core_restart",
-            "Restart the trading core server (requires --confirm)",
-            Prop("profile", "string", "Target server profile"),
-            Prop("confirm", "boolean", "Safety confirmation", required: true));
-        yield return Tool("mt_core_restart_update",
-            "Restart the core with software update (requires --confirm)",
-            Prop("profile", "string", "Target server profile"),
-            Prop("confirm", "boolean", "Safety confirmation", required: true));
-        yield return Tool("mt_core_clear_orders",
-            "Restart core and clear orders cache (requires --confirm)",
-            Prop("profile", "string", "Target server profile"),
-            Prop("confirm", "boolean", "Safety confirmation", required: true));
-        yield return Tool("mt_core_clear_archive",
-            "Restart core and clear archive data (requires --confirm)",
-            Prop("profile", "string", "Target server profile"),
-            Prop("confirm", "boolean", "Safety confirmation", required: true));
-
-        // Position Close/Reset by TPSL
-        yield return Tool("mt_orders_close_by_tpsl",
-            "Close a position using TPSL mechanism (requires --confirm)",
-            Prop("symbol", "string", "Trading pair symbol", required: true),
-            Prop("market", "string", "Market type: FUTURES, SPOT"),
-            Prop("side", "string", "Position side: LONG, SHORT, BOTH"),
-            Prop("profile", "string", "Target server profile"),
-            Prop("confirm", "boolean", "Safety confirmation", required: true));
-        yield return Tool("mt_orders_reset_tpsl",
-            "Reset TP/SL settings on a position (requires --confirm)",
-            Prop("symbol", "string", "Trading pair symbol", required: true),
-            Prop("market", "string", "Market type"),
-            Prop("side", "string", "Position side: LONG, SHORT, BOTH"),
-            Prop("profile", "string", "Target server profile"),
-            Prop("confirm", "boolean", "Safety confirmation", required: true));
-
-        // TPSL Join/Split
-        yield return Tool("mt_tpsl_join",
-            "Join multiple TPSL (Take Profit / Stop Loss) positions into a single position. " +
-            "Requires an active TPSL subscription and valid tpsl_ids (see mt_tpsl_list). " +
-            "Requires confirm=true.",
-            Prop("tpsl_ids", "string", "Space-separated TPSL IDs to join", required: true),
-            Prop("profile", "string", "Target server profile"),
-            Prop("confirm", "boolean", "Safety confirmation", required: true));
-        yield return Tool("mt_tpsl_split",
-            "Split a TPSL (Take Profit / Stop Loss) position into two halves. " +
-            "Requires an active TPSL subscription and a valid tpsl_id (see mt_tpsl_list). " +
-            "Requires confirm=true.",
-            Prop("tpsl_id", "string", "TPSL ID to split", required: true),
-            Prop("profile", "string", "Target server profile"),
-            Prop("confirm", "boolean", "Safety confirmation", required: true));
-
-        // Funding
-        yield return Tool("mt_funding_request",
-            "Request funding account balances (fire-and-forget)",
-            Prop("profile", "string", "Target server profile"));
-
-        // BuyApiLimit
-        yield return Tool("mt_buylimit_request",
-            "Check buy API rate limit for given amount",
-            Prop("amount", "string", "Amount to check limit for", required: true),
-            Prop("profile", "string", "Target server profile"));
-
-
-    }
 
     // ── MT-011: Sliding-window exchange rate limit tracker ──────────────────
     private sealed class RateLimitTracker
