@@ -95,11 +95,37 @@ Passing one category does not establish coverage of another.
 
 LiveTrade tests place LIMIT orders at or near market so they actually fill, and **cleanup is absent by design** — the resulting fills populate MTCore's Firebird DB, which the reports-family tools (`mt_reports_query`, `mt_reports_dates`, `mt_reports_comments`, etc.) read from. Wiping the DB resets that foundation. Assertions target FILLED / PARTIALLY_FILLED and the matching `mt_reports_trades` entry, not a "cancelled" terminus. Never set `MTC_LIVE_TRADES=1` against a non-disposable profile.
 
-## Apple Silicon — MTShared.dll PE patch
+## Vendor libs — `lib/` layout + fetch-at-build
 
-`lib/MTShared.dll` ships from upstream built as x64 (`Machine=0x8664`). On Apple Silicon the .NET 8 CLR refuses to load that as a native dep. The repo ships the DLL already patched to ARM64 (`Machine=0xAA64`); the managed IL is AnyCPU and JITs fine. The `PatchMTSharedArm64` MSBuild target in [MTTextClient.csproj](MTTextClient.csproj) re-runs [scripts/patch_mtshared_arm64.py](scripts/patch_mtshared_arm64.py) after every macOS build as an idempotent safety net (no-op on Linux/Windows). A vendor refresh of `MTShared.dll` re-introduces 0x8664; the next macOS build flips it back automatically. Missing `python3` downgrades the post-build target to a warning rather than a build failure.
+`MTShared.dll` and `LiteNetLib.dll` are vendored from the published MoonTrader
+build. The csproj resolves them per host RID:
 
-`BouncyCastle.Cryptography` is pinned to `2.0.0` — it is the AES256 implementation that `MTShared.dll`'s crypto path resolves to. `Static/BouncyCastleVersionPinTests.cs` enforces the pin at runtime. Do not bump without verifying the wire-protocol crypto path still loads.
+1. `lib/MTShared.dll` — committed baseline. This is the API surface the
+   project is currently compiled against. The build picks this when it exists.
+2. `lib/<rid>/MTShared.dll` — per-RID copy produced by
+   [`scripts/fetch_vendor_libs.py`](scripts/fetch_vendor_libs.py). Used as a
+   fallback when the committed baseline is missing. Becomes the canonical
+   source once the wire layer is upgraded to track the latest vendor build
+   and the committed baseline is removed.
+
+`scripts/fetch_vendor_libs.py` downloads the right MoonTrader tarball for the
+host RID (`osx-arm64`, `osx-x64`, `linux-x64`, `linux-arm64`) from
+`https://cdn3.moontrader.com/beta/<channel>/`, verifies the SHA-256 against
+the vendor-published `version.txt` manifest, extracts `MTShared.dll` and
+`LiteNetLib.dll` into `lib/<rid>/`, and applies a PE Machine-field flip
+(x64 → ARM64) on `osx-arm64` because the vendor doesn't publish a
+macosx-arm64 build. The csproj's `FetchVendorLibs` MSBuild target runs the
+script before reference resolution when *neither* the legacy file nor the
+RID-specific copy exists (or when `-p:FetchVendorLibs=true` is passed).
+Set `MTC_VENDOR_RID=<rid>` to override the host-derived RID.
+
+`BouncyCastle.Cryptography` is pinned to `2.0.0` — it is the AES256
+implementation that `MTShared.dll`'s crypto path resolves to.
+`Static/BouncyCastleVersionPinTests.cs` enforces the pin at runtime. Do not
+bump without verifying the wire-protocol crypto path still loads.
+
+See [`lib/README.md`](lib/README.md) for the full vendor-libs layout, RID
+table, and refresh workflow.
 
 ## Environment variables
 

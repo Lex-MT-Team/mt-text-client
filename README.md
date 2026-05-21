@@ -28,7 +28,12 @@ MTTextClient communicates with MTCore over [LiteNetLib](https://github.com/Reven
 ## Requirements
 
 - [.NET 8.0 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) (or later)
-- `MTShared.dll` and `LiteNetLib.dll` (included in `lib/`)
+- Python 3 (only when refreshing vendor libs; see [`lib/README.md`](lib/README.md))
+- `MTShared.dll` and `LiteNetLib.dll` — committed as the active baseline in
+  [`lib/`](lib/) and fetchable from the public MoonTrader CDN per host RID
+  via `scripts/fetch_vendor_libs.py`. The build picks per-RID copies when
+  present, falls back to the committed baseline. See [`lib/README.md`](lib/README.md)
+  for the full layout, supported RIDs, and refresh workflow.
 
 ## Quick Start
 
