@@ -395,7 +395,9 @@ public sealed class ExchangeCommand : ICommand
         if (result.tickerPriceList == null || result.tickerPriceList.Count == 0)
         {
             return CommandResult.Ok(
-                $"[{conn.Name}] No ticker data for {symbol}.",
+                $"[{conn.Name}] No ticker data for {symbol}. " +
+                "The one-shot ticker24 API may not respond on this MTCore version. " +
+                "Use mt_marketdata_ticker_subscribe + mt_marketdata_ticker for live price data.",
                 new { Server = conn.Name, Symbol = symbol, Tickers = new List<object>() });
         }
 

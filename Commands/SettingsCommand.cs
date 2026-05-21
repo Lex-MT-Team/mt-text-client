@@ -343,7 +343,7 @@ public sealed class SettingsCommand : ICommand
             return error!;
         }
 
-        string profileName = subArgs.Length > 0 ? subArgs[0] : conn.Name;
+        string profileName = subArgs.Length > 0 ? subArgs[0] : "";
         string? result = conn.GetProfileSettings(profileName);
         if (string.IsNullOrEmpty(result))
         {

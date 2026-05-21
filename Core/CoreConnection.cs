@@ -808,7 +808,7 @@ public sealed class CoreConnection : IDisposable
     /// Get 24h ticker price statistics for a symbol.
     /// </summary>
     public TickerPrice24ListData? RequestTicker24(
-        MarketType marketType, string symbol, int timeoutMs = 30_000)
+        MarketType marketType, string symbol, int timeoutMs = 5_000)
     {
         if (_udpClient == null)
         {
