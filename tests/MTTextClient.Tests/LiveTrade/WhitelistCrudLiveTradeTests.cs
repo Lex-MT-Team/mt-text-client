@@ -5,24 +5,24 @@ using Xunit;
 namespace MTTextClient.Tests.LiveTrade;
 
 /// <summary>
-/// Stage 5.2 LiveTrade — full profile-level WhiteList CRUD round-trip on a
-/// real bench (bench_02 BINANCE FUTURES). Adds one entry, bulk-adds two more,
-/// bulk-removes all three, verifies baseline restored exactly.
+/// Whitelist CRUD LiveTrade — full profile-level WhiteList CRUD round-trip on
+/// a real bench (bench_02 BINANCE FUTURES). Adds one entry, bulk-adds two
+/// more, bulk-removes all three, verifies baseline restored exactly.
 /// </summary>
 [Collection(BenchCollection.Name)]
 [Trait("Category", TraitCategories.LiveTrade)]
-public sealed class Stage52WhitelistLiveTradeTests
+public sealed class WhitelistCrudLiveTradeTests
 {
     private const string Profile = "bench_02";
     private readonly McpFixture _mcp;
     private readonly BenchFixture _bench;
-    public Stage52WhitelistLiveTradeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
+    public WhitelistCrudLiveTradeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
 
     [SkippableFact]
     public async Task FullCrudRoundTrip_Add_BulkAdd_BulkRemove_RestoresBaseline()
     {
         Skip.IfNot(EnvFlags.LiveTrades,
-            "MTC_LIVE_TRADES=1 not set — Stage 5.2 LiveTrade mutates profile WhiteList settings.");
+            "MTC_LIVE_TRADES=1 not set — this LiveTrade mutates profile WhiteList settings.");
         Skip.If(!EnvFlags.TestingEnv, "MTC_TESTING_ENV not set.");
         Skip.If(!_bench.IsBenchAvailable(Profile),
             $"Bench {Profile} not observed on UDP port; skipping.");
@@ -66,7 +66,7 @@ public sealed class Stage52WhitelistLiveTradeTests
 
         // 4) Baseline restored.
         (await ReadCount(Profile)).Should().Be(before,
-            because: "Stage 5.2 CRUD round-trip must leave WhiteList.Symbols at the same count it found");
+            because: "the CRUD round-trip must leave WhiteList.Symbols at the same count it found");
     }
 
     private async Task<int> ReadCount(string profile)

@@ -24,7 +24,7 @@ namespace MTTextClient.Commands;
 ///   fleet health               — health check across all servers
 ///   fleet summary              — comprehensive fleet overview (one-shot)
 ///   fleet disconnect           — disconnect from all servers
-///   fleet batchconnect          — connect to specific named profiles in parallel (MT-004)
+///   fleet batchconnect          — connect to specific named profiles in parallel
 ///
 /// Optimized for 900+ servers with parallel operations throughout.
 /// </summary>
@@ -80,7 +80,7 @@ public sealed class FleetCommand : ICommand
             "blacklist" or "bl" => HandleFleetBlacklist(),
             "perf" or "performance" => HandleFleetPerformance(),
             "reports" or "rep" => HandleFleetReports(args.Length > 1 ? args[1..] : Array.Empty<string>()),
-            // Stage 5.1 — fleet-wide margin-type campaign.
+            // Fleet-wide margin-type campaign.
             "set-margin-type" or "smt" => HandleFleetSetMarginType(args.Length > 1 ? args[1..] : Array.Empty<string>()),
             _ => CommandResult.Fail($"Unknown fleet subcommand: '{subcommand}'. Use: connect, status, balances, positions, algos, health, summary, disconnect, autostops, blacklist, perf, reports, set-margin-type")
         };
@@ -860,7 +860,7 @@ public sealed class FleetCommand : ICommand
         return true;
     }
 
-    // ── Connection Pool Health (MT-003) ─────────────────────
+    // ── Connection Pool Health ─────────────────────
 
     /// <summary>
     /// Returns connection pool health records for all tracked profiles.
@@ -903,7 +903,7 @@ public sealed class FleetCommand : ICommand
         return CommandResult.Ok(summary, new { summary, connections = rows });
     }
 
-    // ── Batch Connect (MT-004) ───────────────────────────────
+    // ── Batch Connect ───────────────────────────────
 
     /// <summary>
     /// Connect to a specific set of named profiles in parallel.
@@ -997,7 +997,7 @@ public sealed class FleetCommand : ICommand
     }
 
 
-// ── MT-008: Batch Algo Operations ─────────────────────────────────────────
+// ── Batch Algo Operations ─────────────────────────────────────────
 // Start/stop/config an algorithm (by name pattern) across multiple servers.
 
 /// <summary>
@@ -1062,7 +1062,7 @@ private CommandResult HandleBatchAlgoOp(string[] args, AlgorithmData.ActionType 
         {
             var request = new MTShared.Network.AlgorithmData(algo) { actionType = actionType };
 
-            // Always resolve Core-internal type name for START to avoid silent init failure (BUG-13 mitigation)
+            // Always resolve Core-internal type name for START to avoid silent init failure.
             if (actionType == AlgorithmData.ActionType.START)
             {
                 string? typeName = AlgoTypeNames.Resolve(algo.signature);
@@ -1421,10 +1421,10 @@ private CommandResult HandleBatchConfig(string[] args)
 
     #endregion
 
-    #region Stage 5.1 — Fleet margin-type campaign with mandatory dry_run
+    #region Fleet margin-type campaign with mandatory dry_run
 
     /// <summary>
-    /// Stage 5.1 — fleet-wide margin-type campaign.  DRY-RUN is the default
+    /// Fleet-wide margin-type campaign.  DRY-RUN is the default
     /// safety contract: without <c>--confirm</c>, the tool returns a per-profile
     /// preview (current margin → proposed margin, current_margin_known flag,
     /// any preflight warnings) and DOES NOT call <c>ModifyMarginType</c>.

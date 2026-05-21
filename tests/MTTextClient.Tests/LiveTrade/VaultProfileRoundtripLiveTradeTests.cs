@@ -7,8 +7,9 @@ using Xunit;
 namespace MTTextClient.Tests.LiveTrade;
 
 /// <summary>
-/// Stage 6.6 LiveTrade — full store + list + get + delete + get-after-delete
-/// round-trip against the dev-mode HashiCorp Vault on 127.0.0.1:8200.
+/// Vault profile round-trip LiveTrade — full store + list + get + delete +
+/// get-after-delete round-trip against the dev-mode HashiCorp Vault on
+/// 127.0.0.1:8200.
 ///
 /// The "live" part here is the real Vault server (a Docker container running
 /// `vault -dev`), not MTCore.  No bench profile is needed — Vault is a
@@ -17,10 +18,10 @@ namespace MTTextClient.Tests.LiveTrade;
 /// </summary>
 [Collection(McpCollection.Name)]
 [Trait("Category", TraitCategories.LiveTrade)]
-public sealed class Stage66VaultLiveTradeTests
+public sealed class VaultProfileRoundtripLiveTradeTests
 {
     private readonly McpFixture _mcp;
-    public Stage66VaultLiveTradeTests(McpFixture mcp) { _mcp = mcp; }
+    public VaultProfileRoundtripLiveTradeTests(McpFixture mcp) { _mcp = mcp; }
 
     private static string? ResolveDevToken()
         => Environment.GetEnvironmentVariable("MTC_VAULT_TOKEN")
@@ -30,13 +31,13 @@ public sealed class Stage66VaultLiveTradeTests
     public async Task Store_Get_List_Delete_Roundtrip_AgainstDevVault()
     {
         Skip.IfNot(EnvFlags.LiveTrades,
-            "MTC_LIVE_TRADES=1 not set — Stage 6.6 LiveTrade mutates Vault state.");
+            "MTC_LIVE_TRADES=1 not set — this LiveTrade mutates Vault state.");
         Skip.If(!EnvFlags.TestingEnv, "MTC_TESTING_ENV not set.");
         string? token = ResolveDevToken();
         Skip.If(string.IsNullOrEmpty(token),
             "No MTC_VAULT_TOKEN/VAULT_TOKEN; see docs/vault-bootstrap.md.");
 
-        string sentinel = $"stage6-6-livetrade-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+        string sentinel = $"vault-roundtrip-livetrade-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
         string apiKey   = "lt-key-" + Guid.NewGuid().ToString("N").Substring(0, 12);
         string apiSec   = "lt-sec-" + Guid.NewGuid().ToString("N").Substring(0, 12);
 
@@ -122,7 +123,7 @@ public sealed class Stage66VaultLiveTradeTests
 
             await WriteArtifact(new
             {
-                Stage = "6.6",
+                Scenario = "VaultProfileRoundtrip",
                 VaultAddr = "http://127.0.0.1:8200",
                 Sentinel = sentinel,
                 BaselineCount = baselineCount,
@@ -154,7 +155,7 @@ public sealed class Stage66VaultLiveTradeTests
     {
         string dir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            "mt-test-artifacts", "stage6_6");
+            "mt-test-artifacts", "vault-roundtrip");
         Directory.CreateDirectory(dir);
         string fname = $"vault_{DateTime.UtcNow:yyyyMMdd-HHmmss}.json";
         await File.WriteAllTextAsync(

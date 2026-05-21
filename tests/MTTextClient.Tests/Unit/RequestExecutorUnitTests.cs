@@ -9,7 +9,7 @@ using Xunit;
 namespace MTTextClient.Tests.Unit;
 
 /// <summary>
-/// Stage 0.4 — in-process unit tests for <see cref="RequestExecutor"/>.
+/// In-process unit tests for <see cref="RequestExecutor"/>.
 /// No MTCore required; we drive a synthetic sender via callbacks.
 ///
 /// Each test names exactly the property it asserts:
@@ -74,7 +74,7 @@ public sealed class RequestExecutorUnitTests
             throw new InvalidOperationException("transport blew up");
         }, timeoutMs: 1000);
 
-        result.Should().BeNull(because: "sender threw, the executor must swallow and return null");
+        result.Should().BeNull(because: "sender threw, RequestExecutor must swallow and return null");
     }
 
     [Fact]

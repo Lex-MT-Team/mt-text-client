@@ -9,14 +9,7 @@ namespace MTTextClient.Tests.Tools;
 /// for the trade-affecting tools (place / cancel) run as Static — they assert
 /// the tool name is in the registry but do NOT call MTCore and do NOT execute
 /// trades, so they should not be counted as real LiveTrade evidence.
-/// Real trade-execution coverage lives in <see cref="LiveTrade.Stage1LiveTradeTests"/>.
-///
-/// <para><b>Supervisor P2 fix (2026-05-12):</b> mt_orders_place_is_in_catalog
-/// and mt_orders_cancel_is_in_catalog were previously tagged
-/// <see cref="TraitCategories.LiveTrade"/> and inflated the LiveTrade pass
-/// count without exercising any wire path.  Retagged as
-/// <see cref="TraitCategories.Static"/> so the LiveTrade count reflects only
-/// tests that actually place / mutate / read live MTCore state.</para>
+/// Real trade-execution coverage lives in <see cref="LiveTrade.OrdersPlaceFillLiveTradeTests"/>.
 /// </summary>
 [Collection(BenchCollection.Name)]
 public sealed class OrdersTests
@@ -68,10 +61,10 @@ public sealed class OrdersTests
     }
 
     // Catalog-presence checks for trade-affecting tools.  These do NOT call
-    // MTCore — they only assert the tool name is in the registry.  Retagged
-    // from LiveTrade → Static per Supervisor P2 finding so the LiveTrade
-    // pass count reflects only real wire-touching tests.  Real place / cancel
-    // execution coverage lives in LiveTrade.Stage1LiveTradeTests.
+    // MTCore — they only assert the tool name is in the registry.  Tagged
+    // Static so the LiveTrade pass count reflects only real wire-touching
+    // tests.  Real place / cancel execution coverage lives in
+    // LiveTrade.OrdersPlaceFillLiveTradeTests.
 
     [Fact]
     [Trait("Category", TraitCategories.Static)]

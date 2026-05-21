@@ -80,29 +80,29 @@ public static class Program
         Registry.Register(new UseCommand(Manager));
         Registry.Register(new StatusCommand(Manager));
 
-        // Account data (Phase A)
+        // Account data
         Registry.Register(new AccountCommand(Manager));
         Registry.Register(new CoreStatusCommand(Manager));
         Registry.Register(new ExchangeCommand(Manager));
 
-        // Algorithm management (Phase B — full lifecycle)
+        // Algorithm management (full lifecycle)
         Registry.Register(new AlgosCommand(Manager));
 
-        // Server profile settings (Phase B)
+        // Server profile settings
         Registry.Register(new SettingsCommand(Manager));
 
-        // V2 import + templates (Phase C)
+        // V2 import + templates
         Registry.Register(new ImportCommand(Manager));
 
-        // Orders & positions (Phase D)
+        // Orders & positions
         Registry.Register(new OrdersCommand(Manager));
         ReportStore ReportStore = new ReportStore();
         Registry.Register(new ReportsCommand(Manager, ReportStore));
 
-        // Monitor — real-time core monitoring via UDP (Phase E)
+        // Monitor — real-time core monitoring via UDP
         Registry.Register(new MonitorCommand(Manager));
 
-        // Fleet management (Phase F)
+        // Fleet management
         Registry.Register(new FleetCommand(Manager));
 
         // Risk Management & Observability
@@ -168,7 +168,7 @@ public static class Program
             PrintPrompt();
         };
 
-        // Phase A events
+        // Data-stream events
         Manager.OnCoreStatusReceived += conn =>
         {
             CoreLicenseSnapshot? license = conn.CoreStatusStore.GetLicense();

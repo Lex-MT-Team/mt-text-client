@@ -1,23 +1,17 @@
-# Vault Bootstrap (Stage 6.6)
+# Vault Bootstrap
 
 This document explains how to set up a local HashiCorp Vault for the
 `mt_vault_*` MCP tool family, and how to wire the dev token into the
 test suite and into mt-text-client at runtime.
 
-## Status
-
-Stage 6.6 ships:
+## Tools
 
 | Tool                       | Purpose                                                   |
 |----------------------------|-----------------------------------------------------------|
-| `mt_vault_list_profiles`   | List stored exchange API profile names (pre-existing).    |
+| `mt_vault_list_profiles`   | List stored exchange API profile names.                   |
 | `mt_vault_store_profile`   | Store `{api_key, api_secret}` under a profile name.       |
-| `mt_vault_get_profile`     | **New.** Retrieve `{api_key, api_secret, stored_at}` for a profile. |
-| `mt_vault_delete_profile`  | **New.** Permanently destroy a profile (KV v2 metadata + all versions). Requires `confirm=true`. |
-
-The previous gap (MCP-006) was that there was no documented path from a
-fresh checkout to a working Vault token; the test asserted the broken
-state instead of fixing it.  This file is that path.
+| `mt_vault_get_profile`     | Retrieve `{api_key, api_secret, stored_at}` for a profile. |
+| `mt_vault_delete_profile`  | Permanently destroy a profile (KV v2 metadata + all versions). Requires `confirm=true`. |
 
 ## 1. Run Vault in dev mode
 
@@ -62,14 +56,14 @@ export VAULT_TOKEN=nexus-dev-token
 ```
 
 Every `mt_vault_*` call also accepts inline `vault_token` and
-`vault_addr` arguments that override the env vars — useful when an
-operator wants to point at a different Vault instance without
-restarting the MCP subprocess.
+`vault_addr` arguments that override the env vars — useful when a
+caller wants to point at a different Vault instance without restarting
+the MCP subprocess.
 
 ## 3. Provide the token to the test suite
 
 The xunit Vault tests (`tests/MTTextClient.Tests/Tools/VaultTests.cs`
-and `tests/MTTextClient.Tests/LiveTrade/Stage66VaultLiveTradeTests.cs`)
+and `tests/MTTextClient.Tests/LiveTrade/VaultProfileRoundtripLiveTradeTests.cs`)
 resolve the token from either `MTC_VAULT_TOKEN` or `VAULT_TOKEN`, in
 that order.  Tests skip cleanly with a clear message when neither is
 set, so a fresh checkout doesn't fail.  To run them:
@@ -89,7 +83,7 @@ For the LiveTrade round-trip:
 export MTC_LIVE_TRADES=1
 dotnet test tests/MTTextClient.Tests/MTTextClient.Tests.csproj \
   -c Release --no-build \
-  --filter "FullyQualifiedName~Stage66VaultLiveTradeTests"
+  --filter "FullyQualifiedName~VaultProfileRoundtripLiveTradeTests"
 ```
 
 ## 4. KV v2 layout (informational)

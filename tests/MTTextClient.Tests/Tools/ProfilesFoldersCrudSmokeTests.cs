@@ -7,20 +7,20 @@ using Xunit;
 namespace MTTextClient.Tests.Tools;
 
 /// <summary>
-/// Stage 5.3 — Smoke coverage for the local profiles.json / folders.json CRUD.
+/// Smoke coverage for the local profiles.json / folders.json CRUD.
 /// These tools operate on the on-disk client config and do not require any
 /// bench to be reachable.  We use unique sentinel names so the test never
-/// collides with the operator's real profiles.
+/// collides with the caller's real profiles.
 /// </summary>
 [Collection(BenchCollection.Name)]
 [Trait("Category", TraitCategories.Smoke)]
-public sealed class Stage53ProfilesFoldersTests
+public sealed class ProfilesFoldersCrudSmokeTests
 {
     private readonly McpFixture _mcp;
-    public Stage53ProfilesFoldersTests(McpFixture mcp) { _mcp = mcp; }
+    public ProfilesFoldersCrudSmokeTests(McpFixture mcp) { _mcp = mcp; }
 
-    private const string SentinelFolder = "stage53_sentinel_folder";
-    private const string SentinelProfile = "stage53_sentinel_profile";
+    private const string SentinelFolder = "profiles_folders_sentinel_folder";
+    private const string SentinelProfile = "profiles_folders_sentinel_profile";
 
     [SkippableFact]
     public async Task mt_profiles_add_without_confirm_is_rejected_by_gate()
@@ -180,7 +180,7 @@ public sealed class Stage53ProfilesFoldersTests
         Skip.If(!EnvFlags.TestingEnv, "MTC_TESTING_ENV not set.");
 
         // Write a malformed CSV to a temp path.  Missing required columns.
-        string path = Path.Combine(Path.GetTempPath(), $"stage53_csv_{System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}.csv");
+        string path = Path.Combine(Path.GetTempPath(), $"profiles_csv_{System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}.csv");
         File.WriteAllText(path, "name,address\nrowA,127.0.0.1\n");
 
         var resp = await _mcp.CallTool("mt_profiles_import_csv", new

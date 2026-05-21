@@ -7,16 +7,16 @@ using Xunit;
 namespace MTTextClient.Tests.Static;
 
 /// <summary>
-/// Stage 6.2 — parity check that the typed notifications-config reflector
-/// returns every MTShared NotificationGroupType / NotificationTarget /
+/// Parity check that the typed notifications-config reflector returns every
+/// MTShared NotificationGroupType / NotificationTarget /
 /// SwitchableNotificationDescriptor.  Runs in-process; no subprocess required.
 /// </summary>
 [Collection(McpCollection.Name)]
 [Trait("Category", TraitCategories.Static)]
-public sealed class Stage62NotificationsConfigStaticTests
+public sealed class NotificationsConfigReflectionTests
 {
     private readonly McpFixture _mcp;
-    public Stage62NotificationsConfigStaticTests(McpFixture mcp) => _mcp = mcp;
+    public NotificationsConfigReflectionTests(McpFixture mcp) => _mcp = mcp;
 
     [Fact]
     public void Catalog_Matches_MtShared_Reflection_Counts()

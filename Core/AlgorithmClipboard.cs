@@ -5,24 +5,22 @@ using Newtonsoft.Json.Linq;
 namespace MTTextClient.Core;
 
 /// <summary>
-/// Stage 4.1 — file-backed clipboard for cross-profile / cross-exchange
-/// algorithm transfer.  The clipboard lives at
-/// <c>~/mt-clipboard/algo-clipboard.json</c> so it survives MCP-subprocess
-/// restarts and is readable from a separate session.
+/// File-backed clipboard for cross-profile / cross-exchange algorithm transfer.
+/// The clipboard lives at <c>~/mt-clipboard/algo-clipboard.json</c> so it
+/// survives MCP-subprocess restarts and is readable from a separate session.
 ///
-/// Single-slot semantics: copy-to-clipboard overwrites; paste reads.  Future
-/// stages may grow this to a multi-slot deck.
+/// Single-slot semantics: copy-to-clipboard overwrites; paste reads.
 ///
 /// <para><b>Schema version</b>: bumped when the exported JSON shape changes
-/// in a way that breaks import on older builds.  Old payloads are rejected
+/// in a way that breaks import on older builds. Old payloads are rejected
 /// with a structured <c>schema_version_mismatch</c> error — never silently
 /// applied — so an MTCore update that ships a new algorithm config layout
 /// can not corrupt the destination by paste.</para>
 /// </summary>
 public static class AlgorithmClipboard
 {
-    /// <summary>Version of the export-JSON shape.  Bump on any field rename / addition.</summary>
-    public const string CurrentSchemaVersion = "stage4-v1";
+    /// <summary>Version of the export-JSON shape. Bump on any field rename / addition.</summary>
+    public const string CurrentSchemaVersion = "v1";
 
     public static readonly string ClipboardDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),

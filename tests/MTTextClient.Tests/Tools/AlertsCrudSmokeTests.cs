@@ -6,19 +6,19 @@ using Xunit;
 namespace MTTextClient.Tests.Tools;
 
 /// <summary>
-/// Stage 6.3 — Smoke probes for mt_alerts_save / mt_alerts_delete /
+/// Smoke probes for mt_alerts_save / mt_alerts_delete /
 /// mt_alerts_set_running.  The destructive tools (delete, set_running)
 /// must be rejected without confirm; save is non-destructive (create
 /// or update) and runs without confirm.
 /// </summary>
 [Collection(BenchCollection.Name)]
 [Trait("Category", TraitCategories.Smoke)]
-public sealed class Stage63AlertsCrudTests
+public sealed class AlertsCrudSmokeTests
 {
     private const string Profile = "bench_02";
     private readonly McpFixture _mcp;
     private readonly BenchFixture _bench;
-    public Stage63AlertsCrudTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
+    public AlertsCrudSmokeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
 
     [SkippableFact]
     public async Task mt_alerts_delete_without_confirm_is_rejected_by_gate()
@@ -56,7 +56,7 @@ public sealed class Stage63AlertsCrudTests
         // Invalid market_type — handler rejects before wire.
         var bad = await _mcp.CallTool("mt_alerts_save", new
         {
-            name = "stage63-smoke",
+            name = "alerts-crud-smoke",
             symbol = "btcusdt",
             market_type = "WAFFLE_MARKET",
             condition_type = "CROSSING",
@@ -79,7 +79,7 @@ public sealed class Stage63AlertsCrudTests
         // (BTC would have to cross $1.00 on the way down to trigger).
         var resp = await _mcp.CallTool("mt_alerts_save", new
         {
-            name = $"stage63-smoke-{System.DateTimeOffset.UtcNow.ToUnixTimeSeconds()}",
+            name = $"alerts-crud-smoke-{System.DateTimeOffset.UtcNow.ToUnixTimeSeconds()}",
             symbol = "btcusdt",
             market_type = "FUTURES",
             condition_type = "CROSSING",

@@ -7,27 +7,27 @@ using Xunit;
 namespace MTTextClient.Tests.LiveTrade;
 
 /// <summary>
-/// Stage 7.1 LiveTrade — exercises mt_reports_query / _csv_inline / _status
-/// against bench_02 BINANCE.  No state is mutated (reports are read-only on
-/// the wire); the LiveTrade tier is still appropriate because the test
-/// reaches into the real wire path with a real bench.  Captures whatever
-/// row count the bench has at probe time — if non-zero, the first 5 rows
-/// land in the artifact for the PoW doc.
+/// Reports query LiveTrade — exercises mt_reports_query / _csv_inline /
+/// _status against bench_02 BINANCE.  No state is mutated (reports are
+/// read-only on the wire); the LiveTrade tier is still appropriate because
+/// the test reaches into the real wire path with a real bench.  Captures
+/// whatever row count the bench has at probe time — if non-zero, the first
+/// 5 rows land in the artifact for evidence.
 /// </summary>
 [Collection(BenchCollection.Name)]
 [Trait("Category", TraitCategories.LiveTrade)]
-public sealed class Stage71ReportsQueryLiveTradeTests
+public sealed class ReportsQueryLiveTradeTests
 {
     private const string Profile = "bench_02";
     private readonly McpFixture _mcp;
     private readonly BenchFixture _bench;
-    public Stage71ReportsQueryLiveTradeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
+    public ReportsQueryLiveTradeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
 
     [SkippableFact]
     public async Task Query_Csv_Status_Cancel_Round_Trip()
     {
         Skip.IfNot(EnvFlags.LiveTrades,
-            "MTC_LIVE_TRADES=1 not set — Stage 7.1 LiveTrade exercises live reports wire.");
+            "MTC_LIVE_TRADES=1 not set — this LiveTrade exercises live reports wire.");
         Skip.If(!EnvFlags.TestingEnv, "MTC_TESTING_ENV not set.");
         Skip.If(!_bench.IsBenchAvailable(Profile), $"Bench {Profile} unavailable.");
 
@@ -35,7 +35,7 @@ public sealed class Stage71ReportsQueryLiveTradeTests
         (await _mcp.WaitForConnected(Profile, 60)).Should().BeTrue();
 
         // 1) JSON query — 90d wide window to maximise odds of finding any
-        //    Stage 1+2 fills if present.  When the bench shows 0 rows we
+        //    earlier-run fills if present.  When the bench shows 0 rows we
         //    still verify the envelope shape.
         var q = await _mcp.CallTool("mt_reports_query", new
         {
@@ -91,7 +91,7 @@ public sealed class Stage71ReportsQueryLiveTradeTests
 
         await WriteArtifact(new
         {
-            Stage = "7.1",
+            Scenario = "ReportsQuery",
             Profile,
             RequestId = requestId,
             RowCount = rowCount,
@@ -107,7 +107,7 @@ public sealed class Stage71ReportsQueryLiveTradeTests
     {
         string dir = Path.Combine(
             System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile),
-            "mt-test-artifacts", "stage7_1");
+            "mt-test-artifacts", "reports-query");
         Directory.CreateDirectory(dir);
         string fname = $"bench_02_{System.DateTime.UtcNow:yyyyMMdd-HHmmss}.json";
         await File.WriteAllTextAsync(

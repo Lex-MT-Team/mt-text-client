@@ -68,7 +68,7 @@ public sealed class Campaign_A_LocalConfigTests
             rename = profileRenamed,
             confirm = true,
         });
-        // Stage 5.3 dispatcher rejects empty-string folder as "missing" — use a
+        // The dispatcher rejects empty-string folder as "missing" — use a
         // real folder name so the wire path runs.  Folder we created above is
         // still alive; reuse it.
         await CampaignEvidence.Probe(_mcp, Letter, "mt_profiles_move", new
@@ -134,7 +134,7 @@ public sealed class Campaign_A_LocalConfigTests
         // The handlers exist but the WatchdogConnection layer is not yet wired.
         // Calling these returns a real structured response, but the underlying
         // wire is intentionally not implemented (per docs/watchdog-integration.md).
-        // We still probe so the operator sees the real shape of the response.
+        // We still probe so the caller sees the real shape of the response.
         await CampaignEvidence.Probe(_mcp, Letter, "mt_watchdog_status",
             new { }, note: "placeholder — WatchdogConnection not wired");
         await CampaignEvidence.Probe(_mcp, Letter, "mt_watchdog_token_update",

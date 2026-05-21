@@ -6,30 +6,25 @@ using Xunit;
 namespace MTTextClient.Tests.Tools;
 
 /// <summary>
-/// Stage 6.7 — Smoke coverage for mt_profile_settings_list + _delete.
+/// Smoke coverage for mt_profile_settings_list + _delete.
 ///
-/// Discovery findings (recorded for posterity):
+/// Background:
 ///   • MTShared exposes <c>SendGetCurrentProfileSettingsRequest</c>,
 ///     <c>SendGetProfileSettingsRequest(profileName)</c>, and
 ///     <c>SendUpdateProfileSettingsRequest(profileName, updated, deleted)</c>.
 ///   • There is NO list-named-profiles RPC.  The string 'RemoveProfile'
 ///     appears in the binary but is not a Send*Request wire method.
-///   • UpdateProfileSettings already accepts a <c>deleted: HashSet&lt;string&gt;</c>
-///     parameter — the previous <c>mt_profile_settings_update</c> schema only
-///     exposed <c>updates_json</c>, so deletes had no MCP entry point until
-///     this sub-stage.
-///   • MCP-010-ext schema fix referenced in the plan is HISTORIC — already
-///     applied (mt_profile_settings_update has <c>confirm</c> in
-///     <c>inputSchema.required</c>, verified by ConfirmGateStaticTests).
+///   • UpdateProfileSettings accepts a <c>deleted: HashSet&lt;string&gt;</c>
+///     parameter, used by the typed delete tool here.
 /// </summary>
 [Collection(BenchCollection.Name)]
 [Trait("Category", TraitCategories.Smoke)]
-public sealed class Stage67ProfileSettingsListDeleteTests
+public sealed class ProfileSettingsListDeleteSmokeTests
 {
     private const string Profile = "bench_02";
     private readonly McpFixture _mcp;
     private readonly BenchFixture _bench;
-    public Stage67ProfileSettingsListDeleteTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
+    public ProfileSettingsListDeleteSmokeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
 
     [SkippableFact]
     public async Task mt_profile_settings_list_returns_sorted_keys()
@@ -114,7 +109,7 @@ public sealed class Stage67ProfileSettingsListDeleteTests
         await _mcp.WaitForConnected(Profile);
 
         // Sentinel that won't collide with real settings.
-        string sentinelKey = $"Stage67.SmokeSentinel.{System.DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+        string sentinelKey = $"ProfileSettings.SmokeSentinel.{System.DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
 
         // 1) ADD via the existing update tool.
         var addResp = await _mcp.CallTool("mt_profile_settings_update", new
@@ -130,7 +125,7 @@ public sealed class Stage67ProfileSettingsListDeleteTests
         var listResp = await _mcp.CallTool("mt_profile_settings_list", new
         {
             profile = Profile,
-            grep = "Stage67.SmokeSentinel",
+            grep = "ProfileSettings.SmokeSentinel",
         });
         listResp.InnerSuccess.Should().BeTrue();
         int hits = listResp.ParsedBody!.Value.GetProperty("data").GetProperty("KeyCount").GetInt32();
@@ -153,7 +148,7 @@ public sealed class Stage67ProfileSettingsListDeleteTests
         var post = await _mcp.CallTool("mt_profile_settings_list", new
         {
             profile = Profile,
-            grep = "Stage67.SmokeSentinel",
+            grep = "ProfileSettings.SmokeSentinel",
         });
         int postHits = post.ParsedBody!.Value.GetProperty("data").GetProperty("KeyCount").GetInt32();
         postHits.Should().BeLessThan(hits, because: "delete must remove the sentinel");

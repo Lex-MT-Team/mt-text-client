@@ -9,7 +9,7 @@ using Newtonsoft.Json.Linq;
 namespace MTTextClient.Commands;
 
 /// <summary>
-/// Stage 5.2 — typed CRUD over the profile-level WhiteList.
+/// Typed CRUD over the profile-level WhiteList.
 ///
 /// Storage shape (mirrors BlackList — confirmed via live-bench probe):
 ///   WhiteList.Symbols : JArray of { MarketType:int, QuoteAsset:string, Symbol:string, TimeFilter:{} }
@@ -18,7 +18,7 @@ namespace MTTextClient.Commands;
 ///
 /// This is the <b>profile-level</b> whitelist (which pairs the profile is
 /// allowed to trade) — distinct from per-algo <c>whiteList</c> in argsJson
-/// which Stage 4.2's <c>mt_algos_bulk_edit</c> mutates.
+/// which <c>mt_algos_bulk_edit</c> mutates.
 ///
 /// Subcommands:
 ///   whitelist list
@@ -40,7 +40,7 @@ public sealed class WhitelistCommand : ICommand
     private readonly ConnectionManager _manager;
 
     public string Name => "whitelist";
-    public string Description => "Profile-level whitelist CRUD (Stage 5.2)";
+    public string Description => "Profile-level whitelist CRUD";
     public string Usage => "whitelist <list|add-symbol|add-quote|remove-symbol|remove-quote|bulk-*> [args] [@profile]";
 
     public WhitelistCommand(ConnectionManager manager) { _manager = manager; }

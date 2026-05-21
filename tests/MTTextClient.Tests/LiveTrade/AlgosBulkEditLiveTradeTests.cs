@@ -6,25 +6,25 @@ using Xunit;
 namespace MTTextClient.Tests.LiveTrade;
 
 /// <summary>
-/// Stage 4.2 LiveTrade — full bulk-edit round-trip on a real bench
+/// Algos bulk-edit LiveTrade — full bulk-edit round-trip on a real bench
 /// (<c>bench_02</c> BINANCE). Dry-run, commit, verify, revert, verify again.
 /// </summary>
 [Collection(BenchCollection.Name)]
 [Trait("Category", TraitCategories.LiveTrade)]
-public sealed class Stage4BulkEditLiveTradeTests
+public sealed class AlgosBulkEditLiveTradeTests
 {
     private const string Profile = "bench_02";
     private const string Marker = "_BULKEDIT_LT_ETHUSDT_";  // unique marker, easy to detect + revert
 
     private readonly McpFixture _mcp;
     private readonly BenchFixture _bench;
-    public Stage4BulkEditLiveTradeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
+    public AlgosBulkEditLiveTradeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
 
     [SkippableFact]
     public async Task BulkAdd_DryRun_Commit_Revert_RoundTrip()
     {
         Skip.IfNot(EnvFlags.LiveTrades,
-            "MTC_LIVE_TRADES=1 not set — Stage 4.2 LiveTrade mutates real algo whitelists.");
+            "MTC_LIVE_TRADES=1 not set — this LiveTrade mutates real algo whitelists.");
         Skip.If(!EnvFlags.TestingEnv, "MTC_TESTING_ENV not set.");
         Skip.If(!_bench.IsBenchAvailable(Profile),
             $"Bench {Profile} not observed on UDP port; skipping.");

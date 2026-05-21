@@ -8,8 +8,8 @@ using Xunit;
 namespace MTTextClient.Tests.Static;
 
 /// <summary>
-/// Stage 0.6 — Apple Silicon build hygiene. Verify the post-build MSBuild
-/// target in <c>MTTextClient.csproj</c> ran and produced an ARM64-marked
+/// Apple Silicon build hygiene. Verify the post-build MSBuild target in
+/// <c>MTTextClient.csproj</c> ran and produced an ARM64-marked
 /// <c>lib/MTShared.dll</c>, plus that the patch script is idempotent.
 ///
 /// Vendor ships <c>MTShared.dll</c> with PE Machine field 0x8664 (AMD64).
@@ -28,7 +28,7 @@ public sealed class AppleSiliconBuildTests
     private const ushort MachineAmd64 = 0x8664;
     private const ushort MachineArm64 = 0xAA64;
 
-    /// <summary>Repo-relative path to the patch script (committed in Stage 0.6).</summary>
+    /// <summary>Repo-relative path to the patch script.</summary>
     private static string ScriptPath => Path.Combine(RepoPaths.Root, "scripts", "patch_mtshared_arm64.py");
 
     /// <summary>Repo-relative path to the source MTShared.dll (the vendor copy).</summary>

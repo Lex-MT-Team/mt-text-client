@@ -11,7 +11,7 @@ using System.Threading;
 namespace MTTextClient.Commands;
 
 /// <summary>
-/// Phase C: Import algorithms from V2 text format and manage algorithm templates.
+/// Import algorithms from V2 text format and manage algorithm templates.
 ///
 /// import v2 <file-or-text>            — parse V2 format, show what would be created
 /// import v2 <file-or-text> --confirm  — actually create and save to Core
@@ -19,9 +19,9 @@ namespace MTTextClient.Commands;
 /// import add-numeric <id> <delta>      — add delta to all numeric params of an algo (--confirm)
 ///
 /// FIX HISTORY:
-///   - BUG-11: Group creation on import via SAVE_GROUP action.
-///   - BUG-15: Group ID remapping — Core reassigns IDs on SAVE_GROUP, so algo groupIDs
-///             must be remapped to the new server-assigned IDs before SAVE.
+///   - Group creation on import via SAVE_GROUP action.
+///   - Group ID remapping — Core reassigns IDs on SAVE_GROUP, so algo groupIDs
+///     must be remapped to the new server-assigned IDs before SAVE.
 /// </summary>
 public sealed class ImportCommand : ICommand
 {
@@ -170,7 +170,7 @@ public sealed class ImportCommand : ICommand
         var results = new List<string>();
         int successCount = 0;
 
-        // FIX BUG-11 + BUG-15: Create groups FIRST, then remap algo groupIDs.
+        // Create groups FIRST, then remap algo groupIDs.
         // Core reassigns group IDs via GetNextID() in AddFolder(), so we must:
         //   1. Send SAVE_GROUP with old ID
         //   2. Wait for Core to broadcast new group data via AlgorithmListData
@@ -244,8 +244,8 @@ public sealed class ImportCommand : ICommand
         {
             algo.actionType = AlgorithmData.ActionType.SAVE;
 
-            // FIX BUG-15: Remap groupID if we have a mapping
-            // Fix #13: drop > 0 guard — TryGetValue is itself the filter; groupID=0 is a legal map key
+            // Remap groupID if we have a mapping.
+            // (No > 0 guard — TryGetValue is itself the filter; groupID=0 is a legal map key.)
             if (groupIdMap.TryGetValue(algo.groupID, out long newGroupId))
             {
                 algo.groupID = newGroupId;

@@ -7,16 +7,11 @@ using Xunit;
 namespace MTTextClient.Tests.LiveTrade;
 
 /// <summary>
-/// Stage 1 LiveTrade — places REAL BTCUSDT FUTURES orders on each connecting
-/// bench and proves the full order lifecycle via a 4-phase evidence path.
-///
-/// <para>
-/// <b>Supervisor P1 fix (2026-05-12):</b> the previous test polled
-/// <c>mt_orders_list</c> for 30 s and failed if it didn't see FILLED in that
-/// window.  Binance proved that too brittle: the order was real and filled,
-/// but later than the assertion window (UDS reconcile after a place).  This
-/// version uses a 4-phase proof path with explicit failure classification.
-/// </para>
+/// Orders place / fill LiveTrade — places REAL BTCUSDT FUTURES orders on each
+/// connecting bench and proves the full order lifecycle via a 4-phase evidence
+/// path with explicit failure classification (handles late fills from venue
+/// UDS reconcile so a real fill outside the polling window still classifies
+/// as PASS).
 ///
 /// <para><b>Phases:</b></para>
 /// <list type="number">
@@ -31,26 +26,24 @@ namespace MTTextClient.Tests.LiveTrade;
 ///   <c>placed_filled_late</c>.  Not found = FAIL with classification
 ///   <c>report_missing_after_fill</c>.</item>
 ///   <item><b>Artifact</b> — write a structured JSON record to
-///   <c>~/mt-test-artifacts/stage1/&lt;profile&gt;_&lt;ts&gt;.json</c> covering
-///   exchange/profile/client_order_id/returned_order_id/final_status/
+///   <c>~/mt-test-artifacts/orders-place-fill/&lt;profile&gt;_&lt;ts&gt;.json</c>
+///   covering exchange/profile/client_order_id/returned_order_id/final_status/
 ///   fill_timestamp/failure_classification/elapsed_ms regardless of pass/fail.
 ///   This is the audit evidence.</item>
 /// </list>
 ///
 /// <para>
 /// <b>POLICY</b>: this test class is gated by <c>MTC_LIVE_TRADES=1</c>
-/// AND <c>MTC_TESTING_ENV=1</c>. The agent does not invoke it; the
-/// operator runs it explicitly via:
+/// AND <c>MTC_TESTING_ENV=1</c>. The caller runs it explicitly via:
 /// </para>
 /// <code>
 /// MTC_TESTING_ENV=1 MTC_LIVE_TRADES=1 \
 ///     dotnet test -c Release --filter "Category=LiveTrade"
 /// </code>
 /// <para>
-/// <b>NO CLEANUP</b>: per the bench-data-retention policy
-/// (see <c>~/mt-dev/CLAUDE.md</c> "Bench data retention" section),
+/// <b>NO CLEANUP</b>: per the bench-data-retention policy,
 /// filled orders + positions + TPSLs are intentionally left in place.
-/// Stage 7 reports-family tools depend on this DB seed.
+/// Reports-family tools depend on this DB seed.
 /// </para>
 /// <para>
 /// <b>FINANCIAL EXPOSURE</b>: each row places a LIMIT BUY BTCUSDT
@@ -63,19 +56,19 @@ namespace MTTextClient.Tests.LiveTrade;
 /// </summary>
 [Collection(BenchCollection.Name)]
 [Trait("Category", TraitCategories.LiveTrade)]
-public sealed class Stage1LiveTradeTests
+public sealed class OrdersPlaceFillLiveTradeTests
 {
     private readonly McpFixture _mcp;
     private readonly BenchFixture _bench;
-    public Stage1LiveTradeTests(McpFixture mcp, BenchFixture bench)
+    public OrdersPlaceFillLiveTradeTests(McpFixture mcp, BenchFixture bench)
     {
         _mcp = mcp;
         _bench = bench;
     }
 
-    // Supervisor P1 fix — explicit failure classification enum, embedded in the
-    // JSON artifact.  Distinguishes "real failure" (not_connected,
-    // place_rejected, report_missing_after_fill) from "real success but slow"
+    // Explicit failure classification enum, embedded in the JSON artifact.
+    // Distinguishes "real failure" (not_connected, place_rejected,
+    // report_missing_after_fill) from "real success but slow"
     // (placed_filled_late) from "real success in window" (filled_within_window).
     private static class Classification
     {
@@ -91,7 +84,7 @@ public sealed class Stage1LiveTradeTests
     /// <summary>
     /// Per-bench parameterisation: profile name + minimum BTCUSDT order
     /// quantity for that exchange. The minimum is conservative; the
-    /// operator can adjust if vendor minima change.
+    /// caller can adjust if vendor minima change.
     /// </summary>
     public static IEnumerable<object[]> BenchData() => new[]
     {
@@ -108,7 +101,7 @@ public sealed class Stage1LiveTradeTests
     {
         Skip.IfNot(EnvFlags.LiveTrades,
             "MTC_LIVE_TRADES=1 not set — LiveTrade tests place real orders and are " +
-            "operator-gated. Set the env var and re-run if you intend to commit funds.");
+            "explicitly gated. Set the env var and re-run if you intend to commit funds.");
         Skip.If(!EnvFlags.TestingEnv, "MTC_TESTING_ENV not set.");
         Skip.If(!_bench.IsBenchAvailable(profile),
             $"Bench {profile} ({exchange}) not observed on the expected UDP port; skipping.");
@@ -118,7 +111,7 @@ public sealed class Stage1LiveTradeTests
             "HL MCP call latency exceeds test timeout on this host — separate investigation needed");
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        var artifact = new Stage1Artifact
+        var artifact = new OrdersPlaceFillArtifact
         {
             Exchange = exchange,
             Profile = profile,
@@ -126,8 +119,8 @@ public sealed class Stage1LiveTradeTests
             StartedAtUtc = DateTime.UtcNow,
         };
 
-        // Per-test subprocess isolation (Stage 1 pattern — prevents cross-test
-        // starvation when other benches are slow / frozen).
+        // Per-test subprocess isolation — prevents cross-test
+        // starvation when other benches are slow / frozen.
         await _mcp.RestartSubprocessAsync();
 
         // Warm-start: best-effort per-bench 60 s budget.  A frozen bench is
@@ -168,7 +161,7 @@ public sealed class Stage1LiveTradeTests
 
         // OKX requires [A-Za-z0-9]{1,32}; Binance/Bybit accept that intersection.
         string profileAlnum = new string(profile.Where(char.IsLetterOrDigit).ToArray());
-        string clientOrderId = $"stage1lt{profileAlnum}{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+        string clientOrderId = $"opfltrade{profileAlnum}{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
         artifact.ClientOrderId = clientOrderId;
 
         // ─── Phase 1: Place ─────────────────────────────────────────────────
@@ -227,7 +220,7 @@ public sealed class Stage1LiveTradeTests
             artifact.FailureClassification = Classification.FilledWithinWindow;
             artifact.FillTimestampUtc = DateTime.UtcNow;
             // Phase 2 succeeded; verify reports row exists as supporting evidence
-            // (don't hard-fail if reports lag — reports lag is a different defect).
+            // (don't hard-fail if reports lag — reports lag is a different concern).
             await EnrichWithReportsIfAvailable(artifact, profile, lookupCoid);
             await FinaliseArtifact(artifact, sw);
             return; // PASS
@@ -247,7 +240,7 @@ public sealed class Stage1LiveTradeTests
                 artifact.FillTimestampUtc = ExtractFillTimestamp(reportsResp.ParsedBody, lookupCoid)
                     ?? DateTime.UtcNow;
                 await FinaliseArtifact(artifact, sw);
-                // The Supervisor explicitly says: real fill is real fill.  PASS.
+                // Real fill is real fill.  PASS.
                 return;
             }
         }
@@ -267,7 +260,7 @@ public sealed class Stage1LiveTradeTests
 
     // ─── Artifact writer ────────────────────────────────────────────────────
 
-    private sealed class Stage1Artifact
+    private sealed class OrdersPlaceFillArtifact
     {
         public string Exchange { get; set; } = "";
         public string Profile { get; set; } = "";
@@ -288,14 +281,14 @@ public sealed class Stage1LiveTradeTests
         public string? ArtifactPath { get; set; }
     }
 
-    private async Task FinaliseArtifact(Stage1Artifact a, System.Diagnostics.Stopwatch sw)
+    private async Task FinaliseArtifact(OrdersPlaceFillArtifact a, System.Diagnostics.Stopwatch sw)
     {
         a.EndedAtUtc = DateTime.UtcNow;
         a.ElapsedMs = sw.ElapsedMilliseconds;
 
         string dir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            "mt-test-artifacts", "stage1");
+            "mt-test-artifacts", "orders-place-fill");
         Directory.CreateDirectory(dir);
         string fname = $"{a.Profile}_{a.StartedAtUtc:yyyyMMdd-HHmmss}.json";
         string path = Path.Combine(dir, fname);
@@ -305,7 +298,7 @@ public sealed class Stage1LiveTradeTests
         await File.WriteAllTextAsync(path, JsonSerializer.Serialize(a, opts));
     }
 
-    private async Task EnrichWithReportsIfAvailable(Stage1Artifact a, string profile, string lookupCoid)
+    private async Task EnrichWithReportsIfAvailable(OrdersPlaceFillArtifact a, string profile, string lookupCoid)
     {
         try
         {

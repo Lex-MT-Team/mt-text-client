@@ -23,9 +23,9 @@ public sealed class ServerProfile
     public Dictionary<string, string> Tags { get; set; } = new();
 
     /// <summary>
-    /// Stage 5.3 — optional logical folder label (e.g. "production", "sandbox",
-    /// "client-x").  Used purely client-side to group profiles in display /
-    /// dispatch; never sent to MTCore.  Empty string = unfoldered (root).
+    /// Optional logical folder label (e.g. "production", "sandbox", "client-x").
+    /// Used purely client-side to group profiles in display / dispatch; never
+    /// sent to MTCore. Empty string = unfoldered (root).
     /// </summary>
     public string Folder { get; set; } = string.Empty;
 

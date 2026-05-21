@@ -6,19 +6,19 @@ using Xunit;
 namespace MTTextClient.Tests.Tools;
 
 /// <summary>
-/// Stage 5.2 — Smoke coverage for the profile-level WhiteList typed CRUD.
+/// Smoke coverage for the profile-level WhiteList typed CRUD.
 /// Five tools: list (read-only), add / remove (single), bulk_add / bulk_remove
 /// (csv).  All four mutating tools are confirm-required.  Each typed entry is
 /// {MarketType, QuoteAsset, Symbol?, TimeFilter:{}} — mirrors BlackList shape.
 /// </summary>
 [Collection(BenchCollection.Name)]
 [Trait("Category", TraitCategories.Smoke)]
-public sealed class Stage52WhitelistTests
+public sealed class WhitelistCrudSmokeTests
 {
     private const string Profile = "bench_02";
     private readonly McpFixture _mcp;
     private readonly BenchFixture _bench;
-    public Stage52WhitelistTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
+    public WhitelistCrudSmokeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
 
     [SkippableFact]
     public async Task mt_whitelist_add_without_confirm_is_rejected_by_gate()

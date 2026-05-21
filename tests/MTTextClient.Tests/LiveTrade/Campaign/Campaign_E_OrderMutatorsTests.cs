@@ -18,10 +18,10 @@ namespace MTTextClient.Tests.LiveTrade.Campaign;
 ///   2. After cancel, exercise the leverage / margin / position-mode tools
 ///      (they touch venue state but not the order book).
 ///   3. close/close_all/close_by_tpsl/reset_tpsl operate on positions; we run
-///      them anyway — bench_02 has stage 1/2 fills from prior campaigns,
+///      them anyway — bench_02 has earlier-run fills from prior campaigns,
 ///      so the venue will either close real positions or surface a structured
 ///      no-op response.  Either is real-wire evidence.
-///   4. mt_orders_panic_sell is NEVER auto-invoked (operator-gated).
+///   4. mt_orders_panic_sell is NEVER auto-invoked (explicitly gated).
 /// </summary>
 [Collection(BenchCollection.Name)]
 [Trait("Category", TraitCategories.LiveTrade)]
@@ -196,7 +196,7 @@ public sealed class Campaign_E_OrderMutatorsTests
 
         // ── Blocker: panic_sell never auto-invoked ──
         CampaignEvidence.RecordBlocker(Letter, "mt_orders_panic_sell",
-            "destructive; operator-only — never auto-invoked by the campaign.");
+            "destructive — never auto-invoked by the campaign.");
     }
 
     private Task<McpResponse?> Probe(string tool, object args)
@@ -204,7 +204,7 @@ public sealed class Campaign_E_OrderMutatorsTests
 
     private async Task<decimal> GetLastPriceAsync()
     {
-        // Try klines first (Stage 1 pattern), then ticker24 fallback.
+        // Try klines first, then ticker24 fallback.
         try
         {
             var kl = await _mcp.CallTool("mt_exchange_klines",

@@ -11,7 +11,7 @@ namespace MTTextClient.Tests.Tools;
 /// algorithm creator with 3-layer resilience against MoonTrader-update drift.
 ///
 /// What these probes prove:
-///   • ConfirmGate fires when confirm is omitted (Stage 0.4).
+///   • ConfirmGate fires when confirm is omitted.
 ///   • Dry-run is the default — calling with confirm=true but without
 ///     no_dry_run returns a preview, NOT a real wire SAVE.
 ///   • Auto-discovery by algo_type works on a bench that carries at least
@@ -19,7 +19,7 @@ namespace MTTextClient.Tests.Tools;
 ///   • Unknown algo_type returns the structured 'algo_type_unknown:' error
 ///     with the list of allowed types.
 ///   • Unknown override fields are warned (unknown_override_fields) but
-///     accepted — the operator may know about a new MT field before MCP.
+///     accepted — the caller may know about a new MT field before MCP.
 ///   • template_not_available is returned when no source can be found
 ///     AND no source_algo_id was specified.
 /// </summary>

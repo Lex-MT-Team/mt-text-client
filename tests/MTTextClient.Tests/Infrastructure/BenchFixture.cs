@@ -6,22 +6,21 @@ using Xunit;
 namespace MTTextClient.Tests.Infrastructure;
 
 /// <summary>
-/// Per OV-3 / OV-4: Smoke and BenchAll tests run against REAL MTCore
-/// processes. This fixture is a lightweight pre-flight check (it does not
-/// own MTCore's lifecycle): when <see cref="EnvFlags.TestingEnv"/> is true
-/// it probes every bench port in <see cref="EnvFlags.AllBenches"/> and
-/// records which are reachable. Tests can then conditionally skip per-bench.
+/// Smoke and BenchAll tests run against REAL MTCore processes. This fixture
+/// is a lightweight pre-flight check (it does not own MTCore's lifecycle):
+/// when <see cref="EnvFlags.TestingEnv"/> is true it probes every bench port
+/// in <see cref="EnvFlags.AllBenches"/> and records which are reachable.
+/// Tests can then conditionally skip per-bench.
 ///
-/// Operators start MTCore out-of-band via
-/// <c>~/mt-bench/scripts/start_all_cores.sh</c> (or the testing-environment
-/// CI workflow does it). When <see cref="EnvFlags.TestingEnv"/> is false
-/// (PR-gate CI default), this fixture no-ops; Smoke / BenchAll tests check
+/// MTCore is started out-of-band (or the testing-environment CI workflow
+/// does it). When <see cref="EnvFlags.TestingEnv"/> is false (PR-gate CI
+/// default), this fixture no-ops; Smoke / BenchAll tests check
 /// <see cref="EnvFlags.TestingEnv"/> themselves and skip.
 ///
-/// Stage 0.4 upgrade: the fixture went from "probe bench_01" to "probe all
-/// four benches in parallel" and exposes <see cref="PortBound"/> + per-bench
-/// availability via <see cref="IsBenchAvailable"/>. The handshake check
-/// itself (mt_connect → wait for CONNECTED state) lives in
+/// The fixture probes all configured benches in parallel and exposes
+/// <see cref="PortBound"/> + per-bench availability via
+/// <see cref="IsBenchAvailable"/>. The handshake check itself
+/// (mt_connect → wait for CONNECTED state) lives in
 /// <see cref="McpFixture.WaitForConnected"/> — see the per-test class
 /// helpers. Doing both pieces in McpFixture is the right place because
 /// they share the MCP subprocess, whereas this fixture is purely the
@@ -45,7 +44,7 @@ public sealed class BenchFixture : IAsyncLifetime
     public string? PreflightMessage { get; private set; }
 
     /// <summary>
-    /// Stage 0.4 — true if the named bench profile has MTCore observed on
+    /// True if the named bench profile has MTCore observed on
     /// its expected UDP port (per <see cref="EnvFlags.AllBenches"/>). Used
     /// by BenchAll tests to skip benches that aren't up.
     /// </summary>
@@ -103,7 +102,7 @@ public sealed class BenchFixture : IAsyncLifetime
               "Missing: " + string.Join(", ",
                   System.Linq.Enumerable.Where(_byProfile, kv => !kv.Value)
                     .Select(kv => kv.Key)) +
-              ". Run ~/mt-bench/scripts/start_all_cores.sh to start all four.";
+              ". Start the bench MTCores on their configured UDP ports.";
         return Task.CompletedTask;
     }
 
@@ -112,8 +111,8 @@ public sealed class BenchFixture : IAsyncLifetime
     /// <summary>
     /// UDP is connectionless, so the "is the port bound?" check is to
     /// attempt to bind the same port — if bind fails with AddressInUse,
-    /// something else is already there. This is the same probe used in
-    /// Stage 0.1; Stage 0.4 just iterates four of them.
+    /// something else is already there.  This probe is iterated over every
+    /// configured bench port.
     /// </summary>
     private static bool IsUdpPortBound(int port)
     {

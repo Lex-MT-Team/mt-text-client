@@ -6,23 +6,22 @@ using Xunit;
 namespace MTTextClient.Tests.LiveTrade;
 
 /// <summary>
-/// Stage 2.1 LiveTrade — exercises `mt_orders_update_tpsl` against a real,
-/// just-filled BTCUSDT FUTURES position on bench_02 BINANCE (the only
-/// reachable / non-frozen bench under DEFECT-11 / MTCORE-FREEZE).
+/// Orders update-tpsl LiveTrade — exercises `mt_orders_update_tpsl` against a
+/// real, just-filled BTCUSDT FUTURES position on bench_02 BINANCE (the only
+/// reachable / non-frozen bench in practice).
 ///
 /// <para>
 /// <b>POLICY</b> — gated by <c>MTC_LIVE_TRADES=1</c> AND
-/// <c>MTC_TESTING_ENV=1</c>.  The agent does not invoke it; the operator
-/// runs it explicitly via:
+/// <c>MTC_TESTING_ENV=1</c>.  Run it explicitly via:
 /// </para>
 /// <code>
 /// MTC_TESTING_ENV=1 MTC_LIVE_TRADES=1 \
-///     dotnet test -c Release --filter "Category=LiveTrade&amp;DisplayName~Stage2UpdateTpsl"
+///     dotnet test -c Release --filter "Category=LiveTrade&amp;DisplayName~OrdersUpdateTpsl"
 /// </code>
 /// <para>
 /// <b>NO CLEANUP</b> — the placed order, the resulting position, and the
-/// applied TP/SL stay in place after the test.  Stage 7 reports tooling
-/// reads this state.
+/// applied TP/SL stay in place after the test.  Reports tooling reads
+/// this state.
 /// </para>
 /// <para>
 /// <b>FINANCIAL EXPOSURE</b> — one LIMIT BUY 0.001 BTCUSDT FUTURES priced
@@ -34,7 +33,7 @@ namespace MTTextClient.Tests.LiveTrade;
 /// </summary>
 [Collection(BenchCollection.Name)]
 [Trait("Category", TraitCategories.LiveTrade)]
-public sealed class Stage2UpdateTpslLiveTradeTests
+public sealed class OrdersUpdateTpslLiveTradeTests
 {
     private const string Profile = "bench_02";
     private const string Exchange = "BINANCE";
@@ -42,19 +41,19 @@ public sealed class Stage2UpdateTpslLiveTradeTests
 
     private readonly McpFixture _mcp;
     private readonly BenchFixture _bench;
-    public Stage2UpdateTpslLiveTradeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
+    public OrdersUpdateTpslLiveTradeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
 
     [SkippableFact]
     public async Task PlaceFill_ThenUpdateTpsl_AcceptedByMtCore()
     {
         Skip.IfNot(EnvFlags.LiveTrades,
-            "MTC_LIVE_TRADES=1 not set — Stage 2 LiveTrade places real orders + mutates TP/SL on a live position.");
+            "MTC_LIVE_TRADES=1 not set — this LiveTrade places real orders + mutates TP/SL on a live position.");
         Skip.If(!EnvFlags.TestingEnv, "MTC_TESTING_ENV not set.");
         Skip.If(!_bench.IsBenchAvailable(Profile),
             $"Bench {Profile} ({Exchange}) not observed on UDP port; skipping.");
 
-        // Per-test subprocess (Stage 1 isolation pattern — prevents cross-test starvation
-        // when bench_01 / bench_04 are frozen elsewhere in the suite).
+        // Per-test subprocess isolation — prevents cross-test starvation
+        // when bench_01 / bench_04 are frozen elsewhere in the suite.
         await _mcp.RestartSubprocessAsync();
 
         bool connected = await _mcp.WaitForConnected(Profile, firstAttemptSeconds: 60);
@@ -75,7 +74,7 @@ public sealed class Stage2UpdateTpslLiveTradeTests
 
         // 2) Place a LIMIT BUY 0.1 % above market so it fills near-instantly.
         decimal limitPrice = decimal.Round(lastClose * 1.001m, 2);
-        string clientOrderId = $"stage2lt{Profile.Replace("_","")}{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+        string clientOrderId = $"updtpsltrade{Profile.Replace("_","")}{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
         var placeResp = await _mcp.CallTool("mt_orders_place", new
         {
             symbol = Symbol,
@@ -107,11 +106,12 @@ public sealed class Stage2UpdateTpslLiveTradeTests
         // Soft-assert: even if the poll window doesn't catch the FILLED state,
         // the order is on Binance's book and will fill — we proceed to attempt
         // the TPSL update regardless (the update targets the resulting position
-        // by symbol+side, which is what Stage 2 actually exercises).
+        // by symbol+side, which is what this test actually exercises).
         // The hard assertion is on the update-tpsl response below.
 
-        // 4) Stage 2 — call mt_orders_update_tpsl on the BTCUSDT/BUY position.
-        // TP at +0.5 %, SL at -0.5 %.  position_side=BOTH matches the place call.
+        // 4) Call mt_orders_update_tpsl on the BTCUSDT/BUY position.
+        // TP at +0.5 %, SL at -0.5 %.  position_side=BOTH matches the place
+        // call; the update targets the resulting position by symbol+side.
         var updateResp = await _mcp.CallTool("mt_orders_update_tpsl", new
         {
             symbol = Symbol,

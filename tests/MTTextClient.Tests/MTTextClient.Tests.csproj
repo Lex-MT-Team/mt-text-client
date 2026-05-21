@@ -8,10 +8,10 @@
     <IsTestProject>true</IsTestProject>
     <RootNamespace>MTTextClient.Tests</RootNamespace>
     <!-- Smoke + Integration tests still drive the built MCP binary as a stdio
-         subprocess (see McpFixture). Static tests added in Stage 0.3 also call
-         the registry + dispatcher in-process via the ProjectReference below;
-         that's how DispatcherSnapshotTests / ReadmeParityTests assert
-         byte-equivalence against the committed snapshot and README. -->
+         subprocess (see McpFixture). Static tests also call the registry +
+         dispatcher in-process via the ProjectReference below; that's how
+         DispatcherSnapshotTests / ReadmeParityTests assert byte-equivalence
+         against the committed snapshot and README. -->
   </PropertyGroup>
 
   <ItemGroup>

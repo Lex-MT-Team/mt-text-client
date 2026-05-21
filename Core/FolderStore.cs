@@ -5,13 +5,12 @@ using Newtonsoft.Json;
 namespace MTTextClient.Core;
 
 /// <summary>
-/// Stage 5.3 — persists the set of known folder names independently of which
-/// profiles reference them.  Stored at
-/// <c>~/.config/mt-textclient/folders.json</c>; sibling of
-/// <see cref="ProfileManager"/>'s <c>profiles.json</c>.
+/// Persists the set of known folder names independently of which profiles
+/// reference them. Stored at <c>~/.config/mt-textclient/folders.json</c>;
+/// sibling of <see cref="ProfileManager"/>'s <c>profiles.json</c>.
 ///
 /// Folders are a pure client-side concept used for display / dispatch grouping;
-/// MTCore is unaware of them.  Empty Folder on a profile = root (unfoldered).
+/// MTCore is unaware of them. Empty Folder on a profile = root (unfoldered).
 /// </summary>
 public static class FolderStore
 {

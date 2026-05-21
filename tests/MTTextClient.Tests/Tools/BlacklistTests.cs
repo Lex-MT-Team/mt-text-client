@@ -89,6 +89,6 @@ public sealed class BlacklistTests
         bool gated = resp.IsRpcError ||
             (resp.ParsedBody is { } b && b.TryGetProperty("success", out var s) &&
              s.ValueKind == System.Text.Json.JsonValueKind.False);
-        gated.Should().BeTrue(because: "OV-5 + ConfirmGateStaticTests: blacklist_add must reject without confirm");
+        gated.Should().BeTrue(because: "ConfirmGate: blacklist_add must reject without confirm");
     }
 }

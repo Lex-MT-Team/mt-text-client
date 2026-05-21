@@ -13,21 +13,16 @@ Versions follow [SemVer](https://semver.org).
 
 * `tests/MTTextClient.Tests/` — xUnit + FluentAssertions test project. PR-gate
   CI runs `Category=Static|Category=Unit` on every PR (Linux + macOS arm64,
-  no MTCore subprocess). Smoke + LiveTrade run in the new
-  `.github/workflows/testing-environment.yml` workflow against a real bench
-  MTCore (operator-initiated, gated by `MTC_TESTING_ENV=1`).
-* `tests/MTTextClient.Tests/_expected/tools.minimum.json` — locked 206-tool
+  no MTCore subprocess). Smoke + LiveTrade run in
+  `.github/workflows/testing-environment.yml` against a real bench MTCore
+  (manual dispatch, gated by `MTC_TESTING_ENV=1`).
+* `tests/MTTextClient.Tests/_expected/tools.minimum.json` — locked tool
   catalog baseline. Static tests fail if any baseline tool disappears or
   loses a required arg.
 * `tests/MTTextClient.Tests/Static/ConfirmGateStaticTests.cs` — declarative
   audit of which tools must declare `confirm` in `inputSchema.required`.
-  Catches MCP-010-class regressions at PR time.
-* Known broken tools (MCP-003 timeout cluster, MCP-005 import path, MCP-006
-  Vault auth, MCP-010-ext profile_settings_update confirm) are covered by
-  smoke tests with `[Trait("KnownIssue", "MCP-...")]` so the suite stays
-  green while the bugs remain documented.
-* See `tests/README.md` and `docs/PR-test-foundation-xunit-verification.md`
-  for run instructions.
+  Catches regressions on the destructive-action gate at PR time.
+* See `tests/README.md` for the test categories and how to run each one.
 
 ---
 
@@ -59,7 +54,7 @@ Versions follow [SemVer](https://semver.org).
 
 * `algos list` and friends now resolve display name in priority order
   `info parameter` → `description` → `name`, with synthetic
-  `mt-algo-XXXXXX` values filtered out so operator-set labels surface
+  `mt-algo-XXXXXX` values filtered out so user-set labels surface
   consistently.
 * V2 import remap (`Commands/ImportCommand.cs` and `MCP/McpServer.cs`) no
   longer skips entries whose `groupID` happens to be `0`. Algorithms
@@ -69,12 +64,12 @@ Versions follow [SemVer](https://semver.org).
 ### Fixed
 
 * Silent ungrouped-import data corruption when V2 bundles contained a
-  `GROUP_START 0` block (issue #13).
-* `algos list` output hiding operator-set labels behind the synthetic
-  `mt-algo-XXXXXX` name (issue #15).
+  `GROUP_START 0` block.
+* `algos list` output hiding user-set labels behind the synthetic
+  `mt-algo-XXXXXX` name.
 * MCP wrappers offering no way to access dust balances, archived orders,
   closed positions, custom execution tails, or the FUTURES/SPOT side of a
-  24h ticker (issue #16).
+  24h ticker.
 
 ### Build
 

@@ -5,24 +5,22 @@ using System.Threading.Tasks;
 namespace MTTextClient.Core;
 
 /// <summary>
-/// Stage 0.4 — generic request-execution helper.
+/// Generic request-execution helper.
 ///
-/// The MTCore UDP request/response cycle currently lives inline in
-/// <see cref="CoreConnection"/>'s per-request methods (RequestReports,
-/// RequestTicker24, RequestReportComments, RequestReportDates,
-/// RequestAutoStopsReports, …). Each one follows the same recipe:
+/// The MTCore UDP request/response cycle in <see cref="CoreConnection"/>'s
+/// per-request methods (RequestReports, RequestTicker24, RequestReportComments,
+/// RequestReportDates, RequestAutoStopsReports, …) follows the same recipe:
 ///   1. check <c>_udpClient != null</c> (connection is up)
 ///   2. call <c>SendAndWait</c> with a per-request timeout
 ///   3. return <c>T?</c> — null on timeout, T on success
-/// — plus, post-PR1 (fix/known-defects-batch-1), the MCP-003 cluster sites
-/// translate null-on-timeout into <c>success:true, data:[]</c> at the
-/// command-handler layer.
+/// Some cluster sites translate null-on-timeout into <c>success:true, data:[]</c>
+/// at the command-handler layer (the empty-array recipe).
 ///
-/// <see cref="RequestExecutor"/> formalises this recipe so future request
-/// paths can adopt a single seam instead of duplicating the pattern. It
-/// is intentionally a thin wrapper, not a replacement for SendAndWait —
-/// SendAndWait owns the circuit-breaker / rate-limiter interaction inside
-/// CoreConnection and stays there.
+/// <see cref="RequestExecutor"/> formalises the recipe so future request paths
+/// can adopt a single seam instead of duplicating the pattern. It is a thin
+/// wrapper, not a replacement for SendAndWait — SendAndWait owns the
+/// circuit-breaker / rate-limiter interaction inside CoreConnection and stays
+/// there.
 ///
 /// Three operations are provided:
 ///
@@ -31,7 +29,7 @@ namespace MTTextClient.Core;
 ///       the value or null on timeout.
 ///   • <see cref="ExecuteWithFallback{T}(Func{Action{T?}, bool}, int, Func{T})"/>
 ///     — same, but returns <c>fallback()</c> instead of null on timeout
-///       (the MCP-003 empty-array pattern).
+///       (the empty-array recipe).
 ///   • <see cref="ExecuteAsync{T}(Func{Action{T?}, bool}, int)"/>
 ///     — async variant suitable for non-blocking dispatch.
 ///
@@ -43,7 +41,7 @@ public sealed class RequestExecutor
 {
     /// <summary>
     /// Default timeout floor when callers pass <c>0</c>. Matches the
-    /// pre-Stage-0.4 SendAndWait default for "no explicit timeout" calls.
+    /// SendAndWait default for "no explicit timeout" calls.
     /// </summary>
     public const int DefaultTimeoutMs = 30_000;
 
@@ -86,11 +84,11 @@ public sealed class RequestExecutor
 
     /// <summary>
     /// As <see cref="Execute{T}"/> but invokes <paramref name="fallback"/> on
-    /// timeout instead of returning null. This is the MCP-003 empty-array
-    /// pattern: cold/empty Firebird responds with silence, and the caller
-    /// wants an empty result envelope (<c>success:true, data:[]</c>) rather
-    /// than a timeout error. The fallback factory runs only on the
-    /// timeout branch — fast path is unchanged.
+    /// timeout instead of returning null. This is the empty-array recipe:
+    /// cold/empty Firebird responds with silence, and the caller wants an
+    /// empty result envelope (<c>success:true, data:[]</c>) rather than a
+    /// timeout error. The fallback factory runs only on the timeout branch —
+    /// fast path is unchanged.
     /// </summary>
     public T ExecuteWithFallback<T>(
         Func<Action<T?>, bool> send,
@@ -102,17 +100,16 @@ public sealed class RequestExecutor
     }
 
     /// <summary>
-    /// Stage 7.2 — command-layer overload.  Wraps any synchronous
-    /// null-returning getter with a fallback factory.  Use this at
-    /// command-layer call-sites (ReportsCommand, ExchangeCommand,
-    /// AutoStopsCommand) to centralise the MCP-003 empty-result recipe
-    /// without each handler open-coding the null-check + empty-envelope
-    /// branch.
+    /// Command-layer overload. Wraps any synchronous null-returning getter
+    /// with a fallback factory. Use this at command-layer call-sites
+    /// (ReportsCommand, ExchangeCommand, AutoStopsCommand) to centralise
+    /// the empty-result recipe without each handler open-coding the
+    /// null-check + empty-envelope branch.
     ///
     /// The getter must already encapsulate its own timeout and accept-check
-    /// (CoreConnection.RequestX methods do this via SendAndWait).  Any
+    /// (CoreConnection.RequestX methods do this via SendAndWait). Any
     /// exception thrown by the getter is treated as a timeout — the
-    /// fallback is invoked and the exception swallowed.  This matches the
+    /// fallback is invoked and the exception swallowed. This matches the
     /// "silent on timeout" semantics callers already rely on.
     /// </summary>
     public T ExecuteWithFallback<T>(Func<T?> getter, Func<T> fallback) where T : class

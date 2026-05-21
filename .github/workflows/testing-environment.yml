@@ -1,25 +1,25 @@
 name: Testing Environment (Smoke + BenchAll + LiveTrade)
 
-# Per UnifiedDevelopmentPlan §5.3 / OV-4, Stage 0.7:
 # This workflow exercises the categories that hit a REAL MTCore process —
-# Smoke (bench_01 only), BenchAll (all 4 bench profiles), and optionally
-# LiveTrade. It is NOT triggered by PRs. Triggers:
+# Smoke (first bench profile only), BenchAll (every configured bench
+# profile), and optionally LiveTrade. It is NOT triggered by PRs. Triggers:
 #
-#   * workflow_dispatch — operator-initiated. Choose whether to enable
-#     BenchAll (default on) and LiveTrade (default off).
+#   * workflow_dispatch — manual. Choose whether to enable BenchAll
+#     (default on) and LiveTrade (default off).
 #   * schedule — nightly at 03:30 UTC. Smoke + BenchAll. LiveTrade stays
-#     off in the scheduled run (no operator to authorise real-trade).
+#     off in the scheduled run (no human present to authorise real trading).
 #
 # The self-hosted runner must have:
-#   1. ~/mt-bench/scripts/start_all_cores.sh available and previously run.
-#   2. At least bench_01 (UDP:4242) bound to a live MTCore process. The
-#      preflight step below checks each bench port and reports which are
-#      up before the test job starts.
-#   3. The disposable test profile (Tour_CORP_001) is the bench_01 target.
+#   1. A bench MTCore launcher available and previously run (see
+#      bench/start_all_cores.sh).
+#   2. At least the first bench profile (UDP:4242) bound to a live MTCore
+#      process. The preflight step below checks each bench port and reports
+#      which are up before the test job starts.
+#   3. A disposable test profile configured in ~/.config/mt-textclient/profiles.json
+#      as the first-bench target. Never point LiveTrade at a real-money profile.
 #
-# MTC_TESTING_ENV=1 is set unconditionally; LiveTrade requires the
-# operator-only enable_live_trades input AND is suppressed in scheduled
-# runs.
+# MTC_TESTING_ENV=1 is set unconditionally; LiveTrade requires the explicit
+# enable_live_trades input AND is suppressed in scheduled runs.
 
 on:
   workflow_dispatch:
@@ -42,7 +42,7 @@ on:
           - 'true'
   schedule:
     # 03:30 UTC nightly — quiet hours for the bench cores' upstream
-    # exchanges, and gives the operator a daily green/red signal.
+    # exchanges; gives a daily green/red signal.
     - cron: '30 3 * * *'
 
 permissions:
@@ -60,8 +60,8 @@ jobs:
     env:
       MTC_TESTING_ENV: '1'
       # LiveTrade only fires on manual dispatch with explicit consent.
-      # The scheduled run leaves MTC_LIVE_TRADES unset, guaranteeing
-      # no scheduled real-trade execution.
+      # The scheduled run leaves MTC_LIVE_TRADES unset, guaranteeing no
+      # scheduled real-trade execution.
       MTC_LIVE_TRADES: ${{ github.event_name == 'workflow_dispatch' && inputs.enable_live_trades == 'true' && '1' || '' }}
 
     steps:
@@ -98,7 +98,7 @@ jobs:
           done <<< "$benches"
           echo "up=$up" >> "$GITHUB_OUTPUT"
           if [ "$up" -lt 1 ]; then
-            echo "::error::No MTCore observed on any bench port. Run ~/mt-bench/scripts/start_all_cores.sh first."
+            echo "::error::No MTCore observed on any bench port. Run bench/start_all_cores.sh first."
             exit 1
           fi
           echo "::notice::$up/4 bench MTCores reachable."
@@ -108,13 +108,13 @@ jobs:
 
       - name: Build (Release)
         # On macOS the post-build PatchMTSharedArm64 target re-applies the
-        # PE Machine-field flip (Stage 0.6); on Linux the condition is false.
+        # PE Machine-field flip; on Linux the condition is false.
         run: dotnet build MTTextClient.sln -c Release --no-restore
 
       - name: Run Smoke
-        # Bench_01 must be up for Smoke to pass; preflight already verified
-        # at least one bench is reachable, and Smoke is gated on bench_01
-        # specifically inside the fixture.
+        # The first bench must be up for Smoke to pass; preflight already
+        # verified at least one bench is reachable, and Smoke is gated on
+        # the first bench specifically inside the fixture.
         run: >
           dotnet test MTTextClient.sln
           -c Release --no-build
@@ -124,8 +124,8 @@ jobs:
 
       - name: Run BenchAll
         # Manual dispatch can disable via the run_benchall input; scheduled
-        # runs always include BenchAll. Per-bench skip-on-unavailable in
-        # the fixture means down benches don't block the suite.
+        # runs always include BenchAll. Per-bench skip-on-unavailable in the
+        # fixture means down benches don't block the suite.
         if: github.event_name == 'schedule' || inputs.run_benchall == 'true'
         run: >
           dotnet test MTTextClient.sln
@@ -135,7 +135,7 @@ jobs:
           --results-directory ./TestResults
 
       - name: Run LiveTrade (gated)
-        # Only when the operator explicitly opted in on workflow_dispatch.
+        # Only when an explicit workflow_dispatch run opted in.
         # Scheduled runs never reach here because MTC_LIVE_TRADES stays empty.
         if: env.MTC_LIVE_TRADES == '1'
         run: >
@@ -162,7 +162,7 @@ jobs:
             echo ""
             echo "| Trigger | $(echo $GITHUB_EVENT_NAME) |"
             echo "|---|---|"
-            echo "| Benches up at preflight | ${{ steps.preflight.outputs.up }}/4 |"
+            echo "| Benches up at preflight | ${{ steps.preflight.outputs.up }} |"
             echo "| BenchAll requested | ${{ github.event_name == 'schedule' || inputs.run_benchall == 'true' }} |"
             echo "| LiveTrade enabled | ${{ env.MTC_LIVE_TRADES == '1' }} |"
             echo ""

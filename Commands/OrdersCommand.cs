@@ -10,7 +10,7 @@ using MTTextClient.Core;
 namespace MTTextClient.Commands;
 
 /// <summary>
-/// Phase D + Phase K: Order & Position management commands.
+/// Order & Position management commands.
 ///
 /// orders list                                — list active orders (from AccountStore)
 /// orders cancel <clientOrderId>              — cancel a specific order (--confirm)
@@ -97,7 +97,7 @@ public sealed class OrdersCommand : ICommand
             "fund-transfer" => TransferAccountFunds(subArgs, targetProfile, confirmFlag),
             "close-by-tpsl" => ClosePositionByTPSL(subArgs, targetProfile, confirmFlag),
             "reset-tpsl" => ResetPositionTPSL(subArgs, targetProfile, confirmFlag),
-            // Stage 2.1 — active-order TP/SL/TS update (wires SendOrderTPSLUpdateRequest).
+            // Active-order TP/SL/TS update (wires SendOrderTPSLUpdateRequest).
             "update-tpsl" => UpdateOrderTpsl(subArgs, targetProfile, confirmFlag),
             _ => CommandResult.Fail($"Unknown subcommand: {subCmd}. {Usage}")
         };
@@ -463,7 +463,7 @@ public sealed class OrdersCommand : ICommand
             new { Server = conn.Name, Action = "CLOSE_ALL", Count = positions.Count });
     }
 
-    #region Phase K: New Order Operations
+    #region New Order Operations
 
     private CommandResult PlaceOrder(string[] args, string? targetProfile, bool confirmed)
     {
@@ -1378,10 +1378,9 @@ public sealed class OrdersCommand : ICommand
         string symbol = args[0];
         MarketType marketType = MarketType.FUTURES;
         PositionSide posSide = PositionSide.BOTH;
-        // Stage 1.3: order_type defaults to MARKET (back-compat with the
-        // pre-Stage-1 behaviour). The MCP wrapper exposes the new
-        // semantic via the order_type schema field; pre-Stage-1 callers
-        // that pass no override still get MARKET.
+        // order_type defaults to MARKET (back-compat with earlier behaviour).
+        // The MCP wrapper exposes the semantic via the order_type schema field;
+        // callers that pass no override still get MARKET.
         OrderType orderType = OrderType.MARKET;
 
         for (int i = 1; i < args.Length; i++)
@@ -1476,7 +1475,7 @@ public sealed class OrdersCommand : ICommand
     }
 
     /// <summary>
-    /// Stage 2.1 — update Take-Profit / Stop-Loss (and optional trailing spread) on
+    /// Update Take-Profit / Stop-Loss (and optional trailing spread) on
     /// an active order or open position.  Wires
     /// <see cref="CoreConnection.UpdateOrderTPSL"/> →
     /// <c>SendOrderTPSLUpdateRequest</c> on the MTShared wire.

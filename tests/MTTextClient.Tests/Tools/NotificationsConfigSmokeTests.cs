@@ -6,16 +6,16 @@ using Xunit;
 namespace MTTextClient.Tests.Tools;
 
 /// <summary>
-/// Stage 6.2 — Smoke probes for the 4 notifications-config tools, via the
+/// Smoke probes for the 4 notifications-config tools, via the
 /// MCP subprocess.  No MTCore connection required (these are internal
 /// reflection-only tools), so we don't gate on bench availability.
 /// </summary>
 [Collection(McpCollection.Name)]
 [Trait("Category", TraitCategories.Smoke)]
-public sealed class Stage62NotificationsConfigTests
+public sealed class NotificationsConfigSmokeTests
 {
     private readonly McpFixture _mcp;
-    public Stage62NotificationsConfigTests(McpFixture mcp) => _mcp = mcp;
+    public NotificationsConfigSmokeTests(McpFixture mcp) => _mcp = mcp;
 
     [SkippableFact]
     public async Task mt_notifications_config_groups_returns_typed_envelope()
@@ -78,7 +78,7 @@ public sealed class Stage62NotificationsConfigTests
             because: "NotificationSettingsEditor is not yet wired through CoreConnection");
         data.GetProperty("mutation_notice").GetString()
             .Should().Contain("notifications_config_mutation_not_wired",
-                because: "the gap must be surfaced honestly to operators");
+                because: "the gap must be surfaced honestly to callers");
         data.GetProperty("groups").GetProperty("count").GetInt32().Should().BeGreaterThan(0);
         data.GetProperty("descriptors").GetProperty("count").GetInt32().Should().BeGreaterThan(0);
         data.GetProperty("targets").GetProperty("count").GetInt32().Should().BeGreaterThan(0);

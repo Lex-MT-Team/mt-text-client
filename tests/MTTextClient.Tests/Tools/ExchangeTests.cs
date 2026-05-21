@@ -6,7 +6,7 @@ namespace MTTextClient.Tests.Tools;
 
 /// <summary>
 /// Exchange info tools. Mostly read-only. <c>mt_exchange_ticker24</c> is in the
-/// MCP-003 timeout cluster.
+/// fallback cluster (cold/empty exchange-info cache returns empty envelopes).
 /// </summary>
 [Collection(BenchCollection.Name)]
 public sealed class ExchangeTests
@@ -134,8 +134,8 @@ public sealed class ExchangeTests
         Skip.If(!EnvFlags.TestingEnv || !_bench.BenchAvailable, _bench.PreflightMessage);
         await _mcp.WaitForConnected(EnvFlags.DefaultBenchProfile);
 
-        // MCP-003 fix: cold/empty exchange-info cache now returns success:true with
-        // an empty Tickers list instead of timing out. 35s leaves headroom.
+        // Cold/empty exchange-info cache returns success:true with an empty
+        // Tickers list instead of timing out. 35s leaves headroom.
         var resp = await _mcp.CallTool("mt_exchange_ticker24",
             new { symbol = "btcusdt", profile = EnvFlags.DefaultBenchProfile },
             timeout: TimeSpan.FromSeconds(35));

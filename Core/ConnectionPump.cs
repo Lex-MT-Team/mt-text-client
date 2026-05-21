@@ -3,7 +3,7 @@ using System.Threading;
 namespace MTTextClient.Core;
 
 /// <summary>
-/// MT-013 + MT-018: Multi-worker UDP polling pump for all CoreConnections.
+/// Multi-worker UDP polling pump for all CoreConnections.
 ///
 /// Workers = min(4, ProcessorCount/2), each owning a stripe of connections.
 /// Adaptive sleep per worker: targets ~8ms cycle regardless of connection count.
@@ -11,7 +11,7 @@ namespace MTTextClient.Core;
 /// </summary>
 public sealed class ConnectionPump : IDisposable
 {
-    // MT-018: scale workers with CPU, cap at 4
+    // Scale workers with CPU, cap at 4
     private static readonly int WorkerCount =
         Math.Max(1, Math.Min(4, Environment.ProcessorCount / 2));
 
@@ -65,7 +65,7 @@ public sealed class ConnectionPump : IDisposable
     /// Each worker owns connections at indices: stripe, stripe+W, stripe+2W ...
     /// Even distribution without locking.
     ///
-    /// MT-013 fix: sleep is derived from actual owned connection count,
+    /// Sleep is derived from actual owned connection count,
     /// targeting an ~8ms poll cycle. Previously Math.Clamp(5,1,15) always
     /// returned 5 (the first arg was the value, not the range midpoint).
     /// </summary>

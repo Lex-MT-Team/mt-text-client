@@ -7,8 +7,8 @@ using Xunit;
 namespace MTTextClient.Tests.Tools;
 
 /// <summary>
-/// Stage 4.2 — Smoke coverage for <c>mt_algos_bulk_edit</c>.  The LiveTrade
-/// suite carries the real bench_02 whitelist round-trip; these probes prove:
+/// Smoke coverage for <c>mt_algos_bulk_edit</c>.  The LiveTrade suite carries
+/// the real bench_02 whitelist round-trip; these probes prove:
 ///   • ConfirmGate fires when confirm is omitted.
 ///   • Without confirm, the tool returns a DRY RUN preview (no mutation).
 ///   • Schema-mismatch detection: a 'set' block referencing an argsJson key
@@ -18,12 +18,12 @@ namespace MTTextClient.Tests.Tools;
 /// </summary>
 [Collection(BenchCollection.Name)]
 [Trait("Category", TraitCategories.Smoke)]
-public sealed class Stage4BulkEditTests
+public sealed class AlgosBulkEditSmokeTests
 {
     private const string Profile = "bench_02";
     private readonly McpFixture _mcp;
     private readonly BenchFixture _bench;
-    public Stage4BulkEditTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
+    public AlgosBulkEditSmokeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
 
     [SkippableFact]
     public async Task mt_algos_bulk_edit_without_confirm_is_rejected_by_gate()
@@ -96,7 +96,7 @@ public sealed class Stage4BulkEditTests
         // With a bogus key every algo carries schema_mismatch and the partial_result
         // shows every row failed.  The TOP-LEVEL success bit is true because
         // bulk-edit's contract is partial — even an all-mismatch run returns Ok
-        // with rows-of-failures (the operator reads partial_result to diagnose).
+        // with rows-of-failures (the caller reads partial_result to diagnose).
         resp.InnerSuccess.Should().BeTrue();
         resp.InnerMessage.Should().NotBeNull();
         // Body shape: { Mutated:0, Failed:N, PartialResult:[{Success:false, Reason:schema_mismatch ...}] }

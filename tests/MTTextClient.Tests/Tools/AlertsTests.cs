@@ -5,9 +5,8 @@ using Xunit;
 namespace MTTextClient.Tests.Tools;
 
 /// <summary>
-/// Alert read + subscribe pair tools. Alert CRUD (create / edit / delete)
-/// is missing from mt-text-client today; lands in Stage 6.3 of the unified
-/// plan (gap block M).
+/// Alert read + subscribe pair tools.  Full CRUD coverage is exercised by
+/// the alerts-crud Smoke and LiveTrade suites.
 /// </summary>
 [Collection(BenchCollection.Name)]
 public sealed class AlertsTests

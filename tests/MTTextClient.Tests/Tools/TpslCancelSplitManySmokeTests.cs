@@ -5,7 +5,7 @@ using Xunit;
 namespace MTTextClient.Tests.Tools;
 
 /// <summary>
-/// Stage 1.1 + 1.2 — Smoke coverage for the new TPSL bulk and panic tools.
+/// Smoke coverage for the TPSL bulk + panic and orders-close-by-tpsl tools.
 ///
 /// Each tool is exercised on bench_01 (BYBIT) with bogus IDs to drive the
 /// "no such TPSL" rejection path. The point: prove (a) the dispatcher
@@ -13,18 +13,17 @@ namespace MTTextClient.Tests.Tools;
 /// without confirm, (c) the underlying loop wrapper aggregates results
 /// rather than aborting on the first bad ID.
 ///
-/// Real fills are exercised in <see cref="LiveTrade.Stage1LiveTradeTests"/>
-/// (operator-invoked).
+/// Real fills are exercised in <see cref="LiveTrade.OrdersPlaceFillLiveTradeTests"/>.
 /// </summary>
 [Collection(BenchCollection.Name)]
 [Trait("Category", TraitCategories.Smoke)]
-public sealed class Stage1TpslTests
+public sealed class TpslCancelSplitManySmokeTests
 {
     private readonly McpFixture _mcp;
     private readonly BenchFixture _bench;
-    public Stage1TpslTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
+    public TpslCancelSplitManySmokeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
 
-    // ── 1.1 cancel-many / split-many ────────────────────────────────────────
+    // ── cancel-many / split-many ────────────────────────────────────────────
 
     [SkippableFact]
     public async Task mt_tpsl_cancel_many_without_confirm_is_rejected()
@@ -40,7 +39,7 @@ public sealed class Stage1TpslTests
         });
 
         resp.IsRpcError.Should().BeTrue(
-            because: "ConfirmGate (Stage 0.4) emits -32602 when a confirm-required tool is called without confirm");
+            because: "ConfirmGate emits -32602 when a confirm-required tool is called without confirm");
     }
 
     [SkippableFact]
@@ -80,7 +79,7 @@ public sealed class Stage1TpslTests
         resp.IsRpcError.Should().BeTrue();
     }
 
-    // ── 1.2 panic / panic-many ──────────────────────────────────────────────
+    // ── panic / panic-many ──────────────────────────────────────────────────
 
     [SkippableFact]
     public async Task mt_tpsl_panic_without_confirm_is_rejected()
@@ -139,7 +138,7 @@ public sealed class Stage1TpslTests
             because: "panic-many returns success=true with per-id rejection rows in Results[]");
     }
 
-    // ── 1.3 mt_orders_close_by_tpsl with order_type ─────────────────────────
+    // ── mt_orders_close_by_tpsl with order_type ─────────────────────────────
 
     [SkippableFact]
     public async Task mt_orders_close_by_tpsl_accepts_order_type_LIMIT()

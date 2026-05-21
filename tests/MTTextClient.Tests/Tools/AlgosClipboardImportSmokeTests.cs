@@ -10,9 +10,9 @@ using Xunit;
 namespace MTTextClient.Tests.Tools;
 
 /// <summary>
-/// Stage 4.1 — Smoke coverage for the new clipboard-based paste / import tools.
+/// Smoke coverage for the clipboard-based paste / import tools.
 /// Full cross-exchange paste lifecycle is exercised in
-/// <see cref="LiveTrade.Stage4ClipboardLiveTradeTests"/> (operator-invoked).
+/// <see cref="LiveTrade.AlgosClipboardPasteLiveTradeTests"/>.
 ///
 /// What these probes prove:
 ///   • ConfirmGate fires on paste / import-json when confirm is omitted.
@@ -24,14 +24,14 @@ namespace MTTextClient.Tests.Tools;
 /// </summary>
 [Collection(BenchCollection.Name)]
 [Trait("Category", TraitCategories.Smoke)]
-public sealed class Stage4ClipboardTests
+public sealed class AlgosClipboardImportSmokeTests
 {
-    // Target bench_02 explicitly (only consistently-alive bench under DEFECT-11).
+    // Target bench_02 explicitly (only consistently-alive bench in practice).
     private const string Profile = "bench_02";
 
     private readonly McpFixture _mcp;
     private readonly BenchFixture _bench;
-    public Stage4ClipboardTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
+    public AlgosClipboardImportSmokeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
 
     [SkippableFact]
     public async Task mt_algos_paste_from_clipboard_without_confirm_is_rejected()
@@ -46,7 +46,7 @@ public sealed class Stage4ClipboardTests
             // confirm omitted intentionally
         });
         resp.IsRpcError.Should().BeTrue(
-            because: "ConfirmGate (Stage 0.4) emits -32602 when a confirm-required tool is called without confirm");
+            because: "ConfirmGate emits -32602 when a confirm-required tool is called without confirm");
     }
 
     [SkippableFact]
@@ -75,7 +75,7 @@ public sealed class Stage4ClipboardTests
 
         // Forge a payload claiming a future schema version.  The importer must
         // reject this before any wire call (no destination mutation).
-        string bumpedPayload = BuildSamplePayload("stage4-v999-future");
+        string bumpedPayload = BuildSamplePayload("v999-future");
         var resp = await _mcp.CallTool("mt_algos_import_json", new
         {
             payload = bumpedPayload,
@@ -86,7 +86,7 @@ public sealed class Stage4ClipboardTests
             because: "the importer must refuse payloads that claim a schema_version it does not recognise");
         resp.InnerMessage.Should().NotBeNull();
         resp.InnerMessage!.Should().Contain("schema_version_mismatch",
-            because: "the structured error keyword tells operators/agents what failed");
+            because: "the structured error keyword tells callers what failed");
     }
 
     [SkippableFact]
@@ -205,7 +205,7 @@ public sealed class Stage4ClipboardTests
             ["exported_at"] = "2026-05-11T00:00:00Z",
             [AlgorithmClipboard.AlgorithmField] = new JObject
             {
-                ["name"] = "stage4_sample",
+                ["name"] = "algos_clipboard_sample",
                 ["signature"] = "SG",
                 ["description"] = "",
                 ["symbol"] = "BTCUSDT",

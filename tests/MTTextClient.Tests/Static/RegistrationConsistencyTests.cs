@@ -6,16 +6,14 @@ using Xunit;
 namespace MTTextClient.Tests.Static;
 
 /// <summary>
-/// Stage 0.3 / OV-2 (the registry refactor's audit fixture): every tool that
-/// appears in the registry must be dispatchable end-to-end, and every
-/// dispatched call must be answerable by the registry's schema. This is the
-/// "no orphan registrations" guarantee:
+/// The registry refactor's audit fixture: every tool that appears in the
+/// registry must be dispatchable end-to-end, and every dispatched call must
+/// be answerable by the registry's schema. This is the "no orphan
+/// registrations" guarantee:
 ///
 ///   • <b>Registry → dispatcher:</b> for each tool emitted by
 ///     <c>ToolRegistry.AllTools</c>, calling that tool must not return
-///     <c>"Unknown command"</c>. (Pre-Stage-0.1 PR #1 had four such
-///     orphans — MCP-001 — where the schema advertised tools the dispatcher
-///     didn't recognise.)
+///     <c>"Unknown command"</c>.
 ///   • <b>Dispatcher → registry:</b> covered by
 ///     <see cref="ToolCatalogStaticTests"/> in the form
 ///     <c>EveryBaselineTool_StillExistsInLiveCatalog</c>.
@@ -43,8 +41,8 @@ public sealed class RegistrationConsistencyTests
     public async Task EveryRegisteredTool_HasDispatcherEntry()
     {
         // Enumerate the live tools/list — that's exactly what ToolRegistry.AllTools
-        // emits after the Stage 0.3 refactor. Then probe each tool's dispatch
-        // path with a short per-call timeout. The only failure shape we care
+        // emits. Then probe each tool's dispatch path with a short per-call
+        // timeout. The only failure shape we care
         // about is the McpServer's "Unknown tool" sentinel string; any other
         // response (success, runtime failure, timeout) means routing exists.
         //

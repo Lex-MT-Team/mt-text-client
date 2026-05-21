@@ -1,9 +1,9 @@
-# AutoBuy Parity Audit (Stage 6.4)
+# AutoBuy Parity Audit
 
 The MCP tool surface for AutoBuy (DCA / recurring buy) operations must
 cover every action the vendor's MTShared library exposes via
 `AutoBuyRequestData.RequestActionType`.  This document is the audit
-record, and `Stage64AutoBuyParityStaticTests.cs` is the regression
+record, and `AutoBuyParityTests.cs` is the regression
 harness that fails if MTShared adds a new action without a
 corresponding MCP tool.
 
@@ -62,25 +62,24 @@ Every non-sentinel vendor action has client and MCP coverage.
 1. **Confirm gating is NOT applied** to `mt_autobuy_save`,
    `mt_autobuy_delete`, `mt_autobuy_start`, `mt_autobuy_stop`, or
    `mt_autobuy_refresh_pairs`.  These mutate per-profile DCA
-   configuration on the running MTCore.  An automation-driven operator can
+   configuration on the running MTCore.  An automation-driven caller can
    call them without an explicit destructive-intent acknowledgement.
-   This is intentional for the audit phase — Stage 6.4's mandate is
-   *documentation*, not new code — but is recorded here as a
-   follow-up workstream for Stage 6.4-followup.
+   This is intentional for the audit phase — the mandate here is
+   *documentation*, not new code — but is recorded as a follow-up.
 2. The `data` argument on save/delete/start/stop is a JSON string
    passed through verbatim.  There is no client-side schema
    validation; malformed JSON produces an MTCore-side rejection (the
    exact wording depends on which `AutoBuyRequest*Data` subclass the
    action expects: `AutoBuyRequestSaveData.autoBuys`,
-   `AutoBuyRequestDeleteData.autoBuyIds`, …).  Operators using these
+   `AutoBuyRequestDeleteData.autoBuyIds`, …).  Callers using these
    tools should consult the MTShared types directly.
-3. AutoBuy events are NOT delivered through `notification_push` (the
-   Stage 6.2 surface).  They flow on their own subscription wired in
+3. AutoBuy events are NOT delivered through `notification_push`.  They
+   flow on their own subscription wired in
    `CoreConnection.SubscribeAutoBuy`.
 
 ## Regression harness
 
-`Stage64AutoBuyParityStaticTests` (Static, in-process) loads the same
+`AutoBuyParityTests` (Static, in-process) loads the same
 `MTShared.dll` and enumerates `RequestActionType`.  It asserts:
 
 1. Every action other than `UNKNOWN` has a corresponding MCP tool
@@ -92,7 +91,7 @@ Every non-sentinel vendor action has client and MCP coverage.
 If MTShared adds a new enum value, (1) fails until a tool is added.
 If the client adds a new tool, (2) fails until the audit is updated.
 
-## Workstream tracker (Stage 6.4-followup)
+## Follow-up tracker
 
 - [ ] Add `confirm=true` requirement to `mt_autobuy_save`,
       `mt_autobuy_delete`, `mt_autobuy_start`, `mt_autobuy_stop`,
@@ -100,8 +99,8 @@ If the client adds a new tool, (2) fails until the audit is updated.
       ConfirmGate sense.
 - [ ] Type the `data` argument: explicit fields per action instead
       of pass-through JSON.
-- [ ] Hook AutoBuy notifications into the Stage 6.2 surface for
-      unified observability.
+- [ ] Hook AutoBuy notifications into the unified notification surface
+      for consistent observability.
 
-These are out of scope for Stage 6.4 (audit) but are the natural
+These are out of scope for the audit but are the natural
 next-iteration follow-ups.

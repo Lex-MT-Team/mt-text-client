@@ -7,7 +7,7 @@ using Xunit;
 namespace MTTextClient.Tests.LiveTrade;
 
 /// <summary>
-/// Stage 6.3 LiveTrade — full save → list → stop → delete round-trip
+/// Alerts CRUD LiveTrade — full save → list → stop → delete round-trip
 /// against bench_02 BINANCE.  The alert is created with an
 /// out-of-range ref price (1.0 USDT CROSSING DOWN on BTCUSDT FUTURES)
 /// so it cannot trigger on real price action; we then exercise the
@@ -16,18 +16,18 @@ namespace MTTextClient.Tests.LiveTrade;
 /// </summary>
 [Collection(BenchCollection.Name)]
 [Trait("Category", TraitCategories.LiveTrade)]
-public sealed class Stage63AlertsCrudLiveTradeTests
+public sealed class AlertsCrudLiveTradeTests
 {
     private const string Profile = "bench_02";
     private readonly McpFixture _mcp;
     private readonly BenchFixture _bench;
-    public Stage63AlertsCrudLiveTradeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
+    public AlertsCrudLiveTradeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
 
     [SkippableFact]
     public async Task Save_List_Stop_Delete_RestoresBaseline()
     {
         Skip.IfNot(EnvFlags.LiveTrades,
-            "MTC_LIVE_TRADES=1 not set — Stage 6.3 LiveTrade mutates alerts state.");
+            "MTC_LIVE_TRADES=1 not set — this LiveTrade mutates alerts state.");
         Skip.If(!EnvFlags.TestingEnv, "MTC_TESTING_ENV not set.");
         Skip.If(!_bench.IsBenchAvailable(Profile), $"Bench {Profile} unavailable.");
 
@@ -42,7 +42,7 @@ public sealed class Stage63AlertsCrudLiveTradeTests
         var listBefore = await _mcp.CallTool("mt_alerts_list", new { profile = Profile });
         int baselineCount = ExtractCountFromMarkdownTable(GetMessage(listBefore.ParsedBody));
 
-        string alertName = $"stage63-livetrade-{System.DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+        string alertName = $"alerts-crud-livetrade-{System.DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
 
         // 1) Save (create).
         var saveResp = await _mcp.CallTool("mt_alerts_save", new
@@ -93,7 +93,7 @@ public sealed class Stage63AlertsCrudLiveTradeTests
 
         await WriteArtifact(new
         {
-            Stage = "6.3",
+            Scenario = "AlertsCrud",
             Profile,
             AlertName = alertName,
             AssignedAlertId = alertId,
@@ -143,7 +143,7 @@ public sealed class Stage63AlertsCrudLiveTradeTests
     {
         string dir = Path.Combine(
             System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile),
-            "mt-test-artifacts", "stage6_3");
+            "mt-test-artifacts", "alerts-crud");
         Directory.CreateDirectory(dir);
         string fname = $"bench_02_{System.DateTime.UtcNow:yyyyMMdd-HHmmss}.json";
         await File.WriteAllTextAsync(

@@ -24,8 +24,6 @@ namespace MTTextClient.Commands;
 ///   reports [@profile] --market FUTURES
 ///   reports [@profile] --side BUY
 ///   reports [@profile] --mode REAL
-///
-/// Phase H: Added B6 (more filters), B7 (more fields), E1/E2 (null safety).
 /// </summary>
 public sealed class ReportsCommand : ICommand
 {
@@ -120,7 +118,7 @@ public sealed class ReportsCommand : ICommand
             return CommandResult.Fail($"Connection '{conn.Name}' is not connected.");
         }
 
-        // Phase K: Check for subcommands (comments, dates)
+        // Check for subcommands (comments, dates)
         if (cleanArgs.Count > 0)
         {
             string? firstArg = cleanArgs[0].ToLowerInvariant();
@@ -679,18 +677,17 @@ public sealed class ReportsCommand : ICommand
 
 
 
-    #region Phase K: Report Metadata
+    #region Report Metadata
 
     private static readonly RequestExecutor _executor = new();
 
     private CommandResult GetReportComments(CoreConnection conn)
     {
-        // MCP-003 / Stage 7.2: empty/cold Firebird returns silence; the
-        // RequestExecutor.ExecuteWithFallback overload centralises the
-        // null-on-timeout → empty-envelope translation that this site, the
-        // Dates handler below, and the ticker24 handler in ExchangeCommand
-        // all share.  Each call-site provides its own typed fallback so the
-        // shape callers expect is preserved.
+        // Empty/cold Firebird returns silence; the RequestExecutor.ExecuteWithFallback
+        // overload centralises the null-on-timeout → empty-envelope translation that
+        // this site, the Dates handler below, and the ticker24 handler in
+        // ExchangeCommand all share.  Each call-site provides its own typed fallback
+        // so the shape callers expect is preserved.
         ReportsFieldData data = _executor.ExecuteWithFallback(
             () => conn.RequestReportComments(),
             () => new ReportsFieldData { reportComments = new List<string>() });
@@ -708,7 +705,7 @@ public sealed class ReportsCommand : ICommand
 
     private CommandResult GetReportDates(CoreConnection conn)
     {
-        // MCP-003 / Stage 7.2: same pattern via RequestExecutor.
+        // Same pattern via RequestExecutor.
         ReportsFieldData data = _executor.ExecuteWithFallback(
             () => conn.RequestReportDates(),
             () => new ReportsFieldData { reportsDate = new List<long>() });

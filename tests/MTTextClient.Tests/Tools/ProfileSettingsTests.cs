@@ -5,9 +5,8 @@ using Xunit;
 namespace MTTextClient.Tests.Tools;
 
 /// <summary>
-/// Vault-stored profile-settings tools. MCP-010-ext is fixed in
-/// fix/known-defects-batch-1: schema now declares <c>confirm</c> as required,
-/// so a call without it is rejected at the RPC layer (-32602).
+/// Vault-stored profile-settings tools.  Schema declares <c>confirm</c> as
+/// required, so a call without it is rejected at the RPC layer (-32602).
 /// </summary>
 [Collection(McpCollection.Name)]
 public sealed class ProfileSettingsTests
@@ -34,6 +33,6 @@ public sealed class ProfileSettingsTests
             (resp.ParsedBody is { } b && b.TryGetProperty("success", out var s) &&
              s.ValueKind == System.Text.Json.JsonValueKind.False);
         rejected.Should().BeTrue(
-            because: "MCP-010-ext fix: profile_settings_update without confirm must be rejected");
+            because: "profile_settings_update without confirm must be rejected");
     }
 }

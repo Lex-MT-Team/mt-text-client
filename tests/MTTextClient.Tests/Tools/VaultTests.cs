@@ -6,12 +6,11 @@ namespace MTTextClient.Tests.Tools;
 
 /// <summary>
 /// Vault tools — covers list / store / get / delete against the dev-mode
-/// HashiCorp Vault on 127.0.0.1:8200.  Stage 6.6 adds get + delete and the
-/// docs/vault-bootstrap.md doc; with a real token configured (via
-/// MTC_VAULT_TOKEN or VAULT_TOKEN env var), the round-trip is fully
-/// exercised.  When no token is configured the tests skip cleanly — they
-/// document the bootstrap requirement instead of leaving the suite red on
-/// fresh checkouts.
+/// HashiCorp Vault on 127.0.0.1:8200.  See docs/vault-bootstrap.md.  With a
+/// real token configured (via MTC_VAULT_TOKEN or VAULT_TOKEN env var), the
+/// round-trip is fully exercised.  When no token is configured the tests
+/// skip cleanly — they document the bootstrap requirement instead of
+/// leaving the suite red on fresh checkouts.
 /// </summary>
 [Collection(McpCollection.Name)]
 public sealed class VaultTests
@@ -70,7 +69,7 @@ public sealed class VaultTests
         Skip.If(string.IsNullOrEmpty(token),
             "No MTC_VAULT_TOKEN/VAULT_TOKEN; see docs/vault-bootstrap.md.");
 
-        string sentinel = $"stage6-6-smoke-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+        string sentinel = $"vault-roundtrip-smoke-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
         string apiKey   = "sentinel-key-" + Guid.NewGuid().ToString("N").Substring(0, 8);
         string apiSec   = "sentinel-sec-" + Guid.NewGuid().ToString("N").Substring(0, 8);
 

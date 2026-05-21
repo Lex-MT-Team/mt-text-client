@@ -7,18 +7,17 @@ using Xunit;
 namespace MTTextClient.Tests.LiveTrade;
 
 /// <summary>
-/// Stage 3.1 LiveTrade — exercises the full <c>mt_autostops_*</c> CRUD lifecycle
-/// against the real bench_02 BINANCE profile (the only consistently-alive bench
-/// under DEFECT-11 / MTCORE-FREEZE).
+/// AutoStops lifecycle LiveTrade — exercises the full <c>mt_autostops_*</c>
+/// CRUD lifecycle against the real bench_02 BINANCE profile (the only
+/// consistently-alive bench in practice).
 ///
 /// <para>
 /// <b>POLICY</b> — gated by <c>MTC_LIVE_TRADES=1</c> AND
-/// <c>MTC_TESTING_ENV=1</c>.  The agent does not invoke it; the operator
-/// runs it explicitly via:
+/// <c>MTC_TESTING_ENV=1</c>.  Run it explicitly via:
 /// </para>
 /// <code>
 /// MTC_TESTING_ENV=1 MTC_LIVE_TRADES=1 \
-///     dotnet test -c Release --filter "Category=LiveTrade&amp;DisplayName~Stage3AutoStopsLifecycle"
+///     dotnet test -c Release --filter "Category=LiveTrade&amp;DisplayName~AutoStopsLifecycle"
 /// </code>
 /// <para>
 /// <b>CRUD CONTRACT</b> (must always pass): add → start → stop → start (the
@@ -31,25 +30,25 @@ namespace MTTextClient.Tests.LiveTrade;
 /// state to flip OFF (the documented MTCore behaviour after a trigger fires:
 /// the autostop disables itself).  If no trigger occurs within
 /// <see cref="TriggerPollSeconds"/> seconds we record the absence and proceed
-/// with the CRUD lifecycle — operator-conditioned account state may not show
-/// the necessary unrealised loss to fire a balance autostop.
+/// with the CRUD lifecycle — current account state may not show the necessary
+/// unrealised loss to fire a balance autostop.
 /// </para>
 /// <para>
 /// <b>NO CLEANUP OF POSITIONS</b> — every open BTCUSDT FUTURES position from
-/// Stage 1 and Stage 2 remains untouched.  Only the autostop filter we add is
-/// deleted at the end of the test; the position book is foundational seed data
-/// for Stage 7 reports tooling.
+/// earlier LiveTrade runs remains untouched.  Only the autostop filter we add
+/// is deleted at the end of the test; the position book is foundational seed
+/// data for reports tooling.
 /// </para>
 /// </summary>
 [Collection(BenchCollection.Name)]
 [Trait("Category", TraitCategories.LiveTrade)]
-// Supervisor P2: trigger observation is best-effort. The class-level default
-// declares "TriggerProven=false" so the evidence matrix can distinguish CRUD-
-// only proof from full-trigger-fire proof. The per-run JSON artifact carries
-// the actual observed boolean; this trait declares the CONTRACT (the test will
+// Trigger observation is best-effort. The class-level default declares
+// "TriggerProven=false" so the evidence matrix can distinguish CRUD-only
+// proof from full-trigger-fire proof. The per-run JSON artifact carries the
+// actual observed boolean; this trait declares the CONTRACT (the test will
 // never claim trigger was proven if it wasn't observed).
 [Trait("TriggerProven", "false")]
-public sealed class Stage3AutoStopsLifecycleLiveTradeTests
+public sealed class AutoStopsLifecycleLiveTradeTests
 {
     private const string Profile = "bench_02";
     private const string Exchange = "BINANCE";
@@ -57,24 +56,24 @@ public sealed class Stage3AutoStopsLifecycleLiveTradeTests
 
     private readonly McpFixture _mcp;
     private readonly BenchFixture _bench;
-    public Stage3AutoStopsLifecycleLiveTradeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
+    public AutoStopsLifecycleLiveTradeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
 
     [SkippableFact]
     public async Task Add_Start_Trigger_CheckRestart_Stop_Delete_FullLifecycle()
     {
         Skip.IfNot(EnvFlags.LiveTrades,
-            "MTC_LIVE_TRADES=1 not set — Stage 3 LiveTrade mutates autostop settings on bench_02.");
+            "MTC_LIVE_TRADES=1 not set — this LiveTrade mutates autostop settings on bench_02.");
         Skip.If(!EnvFlags.TestingEnv, "MTC_TESTING_ENV not set.");
         Skip.If(!_bench.IsBenchAvailable(Profile),
             $"Bench {Profile} ({Exchange}) not observed on UDP port; skipping.");
 
-        // Per-test subprocess isolation (Stage 1 pattern).
+        // Per-test subprocess isolation.
         await _mcp.RestartSubprocessAsync();
         bool connected = await _mcp.WaitForConnected(Profile, firstAttemptSeconds: 60);
         connected.Should().BeTrue(because: $"bench {Profile} must reach CONNECTED");
 
         // 0) Baseline filter count (the bench may already carry filters from
-        //    operator activity — capture the starting state so the post-test
+        //    earlier activity — capture the starting state so the post-test
         //    delete restores it exactly).
         var listBefore = await _mcp.CallTool("mt_autostops_list", new { profile = Profile });
         listBefore.InnerSuccess.Should().BeTrue(
@@ -192,15 +191,14 @@ public sealed class Stage3AutoStopsLifecycleLiveTradeTests
         finalCount.Should().Be(baselineCount,
             because: "the CRUD lifecycle must leave the autostop list at the same size it found");
 
-        // Supervisor P2 fix: replace the tautological trigger assertion with
-        // an explicit two-branch outcome.  Trigger observation is best-effort
-        // by design — current account state may not provide unrealised loss
-        // big enough to fire a balance autostop within the poll window — but
-        // the test must never claim trigger proof when it didn't observe one.
+        // Two-branch outcome.  Trigger observation is best-effort by design —
+        // current account state may not provide unrealised loss big enough to
+        // fire a balance autostop within the poll window — but the test must
+        // never claim trigger proof when it didn't observe one.
         //
         // Both branches PASS the test (CRUD lifecycle IS the hard contract),
         // but they emit different evidence and write distinct artifact rows.
-        await WriteStage3Artifact(observedTrigger, baselineCount, finalCount);
+        await WriteAutoStopsLifecycleArtifact(observedTrigger, baselineCount, finalCount);
         if (observedTrigger)
         {
             // PASS — trigger fired and check-and-restart succeeded.
@@ -216,11 +214,11 @@ public sealed class Stage3AutoStopsLifecycleLiveTradeTests
         }
     }
 
-    private async Task WriteStage3Artifact(bool triggerProven, int baselineCount, int finalCount)
+    private async Task WriteAutoStopsLifecycleArtifact(bool triggerProven, int baselineCount, int finalCount)
     {
         var record = new
         {
-            Stage = "Stage3",
+            Scenario = "AutoStopsLifecycle",
             Profile = Profile,
             Exchange = Exchange,
             TriggerProven = triggerProven,
@@ -235,7 +233,7 @@ public sealed class Stage3AutoStopsLifecycleLiveTradeTests
         };
         string dir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            "mt-test-artifacts", "stage3");
+            "mt-test-artifacts", "autostops-lifecycle");
         Directory.CreateDirectory(dir);
         string fname = $"{Profile}_{DateTime.UtcNow:yyyyMMdd-HHmmss}.json";
         await File.WriteAllTextAsync(

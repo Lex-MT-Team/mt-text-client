@@ -7,28 +7,29 @@ using Xunit;
 namespace MTTextClient.Tests.LiveTrade;
 
 /// <summary>
-/// Stage 6.9 LiveTrade — real-bench verification of mt_exchange_funding_rate
-/// and mt_exchange_leverage_brackets against bench_02 BINANCE FUTURES.
+/// Exchange funding rate + leverage brackets LiveTrade — real-bench
+/// verification of mt_exchange_funding_rate and mt_exchange_leverage_brackets
+/// against bench_02 BINANCE FUTURES.
 ///
 /// Both tools are read-only — no mutation, no rollback needed.  The artifact
 /// captures observed values (or the documented unavailable path for funding,
 /// and the structured "not_exposed_by_mtshared" notice for brackets) so the
-/// PoW doc can show the actual wire path that ran on live infrastructure.
+/// evidence doc can show the actual wire path that ran on live infrastructure.
 /// </summary>
 [Collection(BenchCollection.Name)]
 [Trait("Category", TraitCategories.LiveTrade)]
-public sealed class Stage69ExchangeFundingLeverageLiveTradeTests
+public sealed class ExchangeFundingLeverageLiveTradeTests
 {
     private const string Profile = "bench_02";
     private readonly McpFixture _mcp;
     private readonly BenchFixture _bench;
-    public Stage69ExchangeFundingLeverageLiveTradeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
+    public ExchangeFundingLeverageLiveTradeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
 
     [SkippableFact]
     public async Task FundingRate_And_LeverageBrackets_Exercise_Live_BenchO2_Binance()
     {
         Skip.IfNot(EnvFlags.LiveTrades,
-            "MTC_LIVE_TRADES=1 not set — Stage 6.9 LiveTrade exercises live bench wire path.");
+            "MTC_LIVE_TRADES=1 not set — this LiveTrade exercises live bench wire path.");
         Skip.If(!EnvFlags.TestingEnv, "MTC_TESTING_ENV not set.");
         Skip.If(!_bench.IsBenchAvailable(Profile), $"Bench {Profile} unavailable.");
 
@@ -86,7 +87,7 @@ public sealed class Stage69ExchangeFundingLeverageLiveTradeTests
         // ── 3) Artifact — captures both wire paths as actually observed.
         await WriteArtifact(new
         {
-            Stage = "6.9",
+            Scenario = "ExchangeFundingLeverage",
             Profile,
             Symbol = "btcusdt",
             MarketType = "FUTURES",
@@ -114,7 +115,7 @@ public sealed class Stage69ExchangeFundingLeverageLiveTradeTests
     {
         string dir = Path.Combine(
             System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile),
-            "mt-test-artifacts", "stage6_9");
+            "mt-test-artifacts", "exchange-funding-leverage");
         Directory.CreateDirectory(dir);
         string fname = $"bench_02_{System.DateTime.UtcNow:yyyyMMdd-HHmmss}.json";
         await File.WriteAllTextAsync(

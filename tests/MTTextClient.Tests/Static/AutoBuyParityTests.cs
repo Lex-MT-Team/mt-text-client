@@ -7,7 +7,7 @@ using Xunit;
 namespace MTTextClient.Tests.Static;
 
 /// <summary>
-/// Stage 6.4 — AutoBuy parity audit (Static).
+/// AutoBuy parity audit (Static).
 ///
 /// Reflects MTShared.dll to enumerate <c>AutoBuyRequestData.RequestActionType</c>
 /// and asserts that the MCP tool surface (`mt_autobuy_*`) covers every
@@ -20,10 +20,10 @@ namespace MTTextClient.Tests.Static;
 /// </summary>
 [Collection(McpCollection.Name)]
 [Trait("Category", TraitCategories.Static)]
-public sealed class Stage64AutoBuyParityStaticTests
+public sealed class AutoBuyParityTests
 {
     private readonly McpFixture _mcp;
-    public Stage64AutoBuyParityStaticTests(McpFixture mcp) => _mcp = mcp;
+    public AutoBuyParityTests(McpFixture mcp) => _mcp = mcp;
 
     /// <summary>
     /// Curated mapping from MTShared enum value → MCP tool that wires it.
@@ -71,9 +71,9 @@ public sealed class Stage64AutoBuyParityStaticTests
         foreach (var name in nonSentinel)
         {
             VendorActionToMcpTool.Should().ContainKey(name,
-                because: $"Stage 6.4 audit: vendor action '{name}' must be mapped to an MCP tool. " +
+                because: $"AutoBuy parity audit: vendor action '{name}' must be mapped to an MCP tool. " +
                          "If MTShared has just added this enum value, update " +
-                         "Stage64AutoBuyParityStaticTests.VendorActionToMcpTool and " +
+                         "AutoBuyParityTests.VendorActionToMcpTool and " +
                          "docs/autobuy-parity.md in the same change.");
         }
     }
@@ -95,7 +95,7 @@ public sealed class Stage64AutoBuyParityStaticTests
         foreach (var toolName in registryAutoBuyTools)
         {
             allowed.Should().Contain(toolName,
-                because: $"Stage 6.4 audit: tool '{toolName}' is in the registry but not mapped " +
+                because: $"AutoBuy parity audit: tool '{toolName}' is in the registry but not mapped " +
                          "to a vendor action and not declared in ClientExtraTools. " +
                          "Either map it to an MTShared.AutoBuyRequestData.RequestActionType value " +
                          "or add it to ClientExtraTools and update docs/autobuy-parity.md.");

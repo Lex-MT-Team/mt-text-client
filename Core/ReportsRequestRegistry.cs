@@ -5,15 +5,15 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 
 /// <summary>
-/// Stage 7.1 — request-id observability for the synchronous reports wire.
+/// Request-id observability for the synchronous reports wire.
 ///
 /// MTShared's SendReportListRequest is a blocking ~30 s RPC with no native
-/// cancel/status surface.  This registry sits above it, recording one entry
+/// cancel/status surface. This registry sits above it, recording one entry
 /// per <c>mt_reports_query</c> / <c>mt_reports_csv_inline</c> dispatch so the
 /// companion <c>mt_reports_cancel</c> and <c>mt_reports_status</c> tools
-/// can answer about completed requests.  Cancel cannot actually interrupt
-/// the wire on this build; it records intent so the agent observes that the
-/// gesture was accepted and noted.
+/// can answer about completed requests. Cancel cannot actually interrupt
+/// the wire on this build; it records intent so callers can observe that
+/// the gesture was accepted and noted.
 /// </summary>
 public sealed class ReportsRequestEntry
 {

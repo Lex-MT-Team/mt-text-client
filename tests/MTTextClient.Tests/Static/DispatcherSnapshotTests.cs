@@ -8,8 +8,8 @@ using SnapshotGen = MTTextClient.Tools.DispatcherSnapshotGenerator.Program;
 namespace MTTextClient.Tests.Static;
 
 /// <summary>
-/// Stage 0.3 / OV-2 — the dispatcher snapshot is the spine of "no silent
-/// CLI drift". The committed file at
+/// The dispatcher snapshot is the spine of "no silent CLI drift". The
+/// committed file at
 /// <c>tests/MTTextClient.Tests/_expected/commandlines.snapshot.json</c> is
 /// produced by <c>tools/DispatcherSnapshotGenerator</c>. This test re-runs
 /// the same rendering in-process and asserts byte-equality. Any change to

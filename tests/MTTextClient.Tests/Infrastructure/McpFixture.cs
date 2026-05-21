@@ -14,15 +14,15 @@ namespace MTTextClient.Tests.Infrastructure;
 /// Lifecycle: <see cref="InitializeAsync"/> on first use, <see cref="DisposeAsync"/>
 /// on collection teardown. xUnit handles both via <see cref="IAsyncLifetime"/>.
 ///
-/// Per OV-3: this fixture does NOT spawn a mock MTCore. If a Smoke test needs
-/// a connected core, the operator runs <c>~/mt-bench/scripts/start_all_cores.sh</c>
-/// out-of-band (or the testing-environment workflow does); Smoke tests that
+/// This fixture does NOT spawn a mock MTCore.  If a Smoke test needs a
+/// connected core, ensure a real MTCore is running on the configured bench
+/// UDP port (or the testing-environment workflow does); Smoke tests that
 /// require the bench gate themselves with <see cref="EnvFlags.TestingEnv"/>.
 ///
-/// Per the MCP-002 race observed in prior sessions, the first <c>mt_connect</c>
-/// after a fresh MTCore start sometimes silently stalls. Tests that require a
-/// connection use <see cref="WaitForConnected"/> which retries via reconnect-once
-/// rather than asserting first-attempt success.
+/// The first <c>mt_connect</c> after a fresh MTCore start sometimes
+/// silently stalls.  Tests that require a connection use
+/// <see cref="WaitForConnected"/> which retries via reconnect-once rather
+/// than asserting first-attempt success.
 /// </summary>
 public sealed class McpFixture : IAsyncLifetime
 {
@@ -78,8 +78,8 @@ public sealed class McpFixture : IAsyncLifetime
     /// best-effort: each bench gets up to <paramref name="perBenchBudgetSeconds"/>
     /// (default 60 s) to reach CONNECTED, then is marked degraded (false in the
     /// returned snapshot) and the warm-start moves on.  This avoids one slow /
-    /// frozen bench blocking the others — the typical DEFECT-MTCORE-FREEZE
-    /// failure mode where bench_01 BYBIT stops responding after its first place.
+    /// frozen bench blocking the others — the typical MTCore-freeze failure
+    /// mode where one bench stops responding after its first place.
     ///
     /// Only benches whose UDP port is currently bound get a connect — silent
     /// no-op for the rest.  Safe to call multiple times.
@@ -253,10 +253,10 @@ public sealed class McpFixture : IAsyncLifetime
     /// Connect to <paramref name="profile"/> and poll mt_status until the connection
     /// is reported as connected. Returns true on success, false on timeout.
     ///
-    /// Handles the MCP-002 race: if first connect doesn't complete in
+    /// If first connect doesn't complete in
     /// <paramref name="firstAttemptSeconds"/>, the caller may want to restart MTCore
     /// and retry. This helper does NOT restart MTCore; that's an out-of-band
-    /// operator action.
+    /// action.
     /// </summary>
     public async Task<bool> WaitForConnected(string profile, int firstAttemptSeconds = 30)
     {

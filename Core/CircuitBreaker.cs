@@ -4,7 +4,7 @@ using System.Threading;
 namespace MTTextClient.Core;
 
 /// <summary>
-/// MT-021: Per-CoreConnection circuit breaker.
+/// Per-CoreConnection circuit breaker.
 ///
 /// States:
 ///   Closed   → normal operation, calls pass through
@@ -47,7 +47,6 @@ public sealed class CircuitBreaker
     // Atomic state I/O — _state is exchanged via Interlocked on its int alias.
     // Plain reads/writes of an enum field are NOT guaranteed visible across
     // threads on every CLR runtime; Volatile.Read / Interlocked.Exchange are.
-    // EN review #6 / MCP-CB-001.
     private State StateAtomic =>
         (State)Volatile.Read(
             ref System.Runtime.CompilerServices.Unsafe.As<State, int>(ref _state));
@@ -115,7 +114,7 @@ public sealed class CircuitBreaker
         // Race-free transition into Open: only the thread that wins the CAS
         // from {Closed | HalfOpen} → Open is allowed to bump _totalTripped.
         // Concurrent failures from many threads will collapse into a single
-        // trip event instead of N spurious increments. EN review #6.
+        // trip event instead of N spurious increments.
         ref int stateRef = ref System.Runtime.CompilerServices.Unsafe.As<State, int>(ref _state);
 
         int wonFromClosed = Interlocked.CompareExchange(
@@ -136,7 +135,7 @@ public sealed class CircuitBreaker
         }
     }
 
-    /// <summary>Manually reset the circuit to Closed (for operator override).</summary>
+    /// <summary>Manually reset the circuit to Closed.</summary>
     public void Reset()
     {
         Interlocked.Exchange(ref _consecutiveFailures, 0);

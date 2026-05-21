@@ -6,9 +6,9 @@ using Xunit;
 namespace MTTextClient.Tests.Tools;
 
 /// <summary>
-/// Stage 6.9 — Smoke for mt_exchange_funding_rate + mt_exchange_leverage_brackets.
+/// Smoke for mt_exchange_funding_rate + mt_exchange_leverage_brackets.
 ///
-/// Discovery findings:
+/// Background:
 ///   • Funding rate fields live on <c>MTShared.LiveMarket.LiveMarketMetrics</c>
 ///     (LastFundingRate Single, LastFundingTime Int64, NextFundingRate Single,
 ///     NextFundingTime Int64).  Pushed via the existing live-markets subscription;
@@ -21,12 +21,12 @@ namespace MTTextClient.Tests.Tools;
 /// </summary>
 [Collection(BenchCollection.Name)]
 [Trait("Category", TraitCategories.Smoke)]
-public sealed class Stage69ExchangeFundingLeverageTests
+public sealed class ExchangeFundingLeverageSmokeTests
 {
     private const string Profile = "bench_02";
     private readonly McpFixture _mcp;
     private readonly BenchFixture _bench;
-    public Stage69ExchangeFundingLeverageTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
+    public ExchangeFundingLeverageSmokeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
 
     [SkippableFact]
     public async Task mt_exchange_funding_rate_returns_typed_fields_for_btcusdt()

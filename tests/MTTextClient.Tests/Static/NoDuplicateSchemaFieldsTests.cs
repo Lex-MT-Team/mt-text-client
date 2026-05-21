@@ -6,11 +6,11 @@ using Xunit;
 namespace MTTextClient.Tests.Static;
 
 /// <summary>
-/// Stage 0.3 / OV-2: every tool's <c>inputSchema.required</c> array must contain
-/// no duplicate entries. This catches the <c>mt_settings_set</c>-class bug:
-/// adding <c>confirm</c> to the required array twice (once by the migration,
-/// once by a hand-written entry) silently passes the regex name check but
-/// breaks JSON-Schema consumers.
+/// Every tool's <c>inputSchema.required</c> array must contain no duplicate
+/// entries. This catches the <c>mt_settings_set</c>-class bug: adding
+/// <c>confirm</c> to the required array twice (once by a migration, once by
+/// a hand-written entry) silently passes the regex name check but breaks
+/// JSON-Schema consumers.
 ///
 /// Source asserted against: live <c>tools/list</c> from <see cref="McpFixture.Tools"/>.
 /// This is identical to what the registry emits, so any duplicate from

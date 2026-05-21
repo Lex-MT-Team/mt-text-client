@@ -451,7 +451,7 @@ public sealed class CoreStatusCommand : ICommand
     }
 
     /// <summary>
-    /// MCP-009 mitigation: send a restart-class command and synchronously verify the Core comes
+    /// Send a restart-class command and synchronously verify the Core comes
     /// back within a reasonable window. Hooks <see cref="CoreConnection.OnCoreRestarted"/>
     /// (fired when MTCore reconnects with a new connectionId / serverStartTime) and falls back
     /// to LastSeen-based liveness if the event signal is missed.
@@ -459,9 +459,9 @@ public sealed class CoreStatusCommand : ICommand
     /// Outcomes:
     ///   ✅ Core came back              → CommandResult.Ok
     ///   ⚠ Core was reachable but no restart event observed → CommandResult.Ok with warning text
-    ///   ❌ Core never came back within timeout → CommandResult.Fail (this is the MCP-009 case:
-    ///        on macOS Rosetta the spawned core can crash; agents now see success:false instead
-    ///        of a misleading "command sent" success).
+    ///   ❌ Core never came back within timeout → CommandResult.Fail (on macOS Rosetta the
+    ///        spawned core can crash; agents now see success:false instead of a misleading
+    ///        "command sent" success).
     /// </summary>
     private CommandResult ExecuteRestartWithProbe(CoreConnection conn, string label, Action sendCommand)
     {
@@ -499,11 +499,11 @@ public sealed class CoreStatusCommand : ICommand
                     $"verify with 'core status'.");
             }
 
-            // Hard failure: this is the MCP-009 symptom (Mac Rosetta crash, etc.).
+            // Hard failure: the Mac Rosetta crash symptom (etc.).
             return CommandResult.Fail(
                 $"[{conn.Name}] Core {label} command sent but Core did NOT come back within {timeout.TotalSeconds:F0}s. " +
                 $"IsConnected={conn.IsConnected}, LastSeen={(health?.LastSeen.ToString("HH:mm:ss") ?? "n/a")}Z. " +
-                $"Likely the Core process crashed on restart (see MCP-009: Mac Rosetta x64 crash). " +
+                $"Likely the Core process crashed on restart (Mac Rosetta x64 crash class). " +
                 $"Inspect ~/.config/moontrader/logs/ for stack traces and try re-launching the Core manually.");
         }
         finally

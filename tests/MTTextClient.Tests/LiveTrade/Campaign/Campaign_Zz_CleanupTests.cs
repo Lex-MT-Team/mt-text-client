@@ -7,7 +7,7 @@ namespace MTTextClient.Tests.LiveTrade.Campaign;
 
 /// <summary>
 /// Campaign cleanup pass — removes the small amount of state the
-/// campaign deliberately left on bench_02 (per supervisor request):
+/// campaign deliberately left on bench_02:
 ///   • profile setting <c>Misc.CampaignJ.LastRun</c> from Campaign J
 ///   • any algorithm renamed by Campaign D (name prefix <c>campaignD_</c>)
 ///     restored to <c>"Shots Group"</c>
@@ -56,7 +56,7 @@ public sealed class Campaign_Zz_CleanupTests
 
         // 2) Restore renamed Campaign-D algos.  Pull the algo list and rename
         //    any with the campaignD_ prefix back to "Shots Group" (the original
-        //    name on Lex_002 BINANCE — the only auto-generated algo on the bench).
+        //    auto-generated name on the BINANCE bench).
         var algos = await _mcp.CallTool("mt_algos_list", new { profile = Profile });
         if (algos.ParsedBody is { } body &&
             body.TryGetProperty("data", out var data) &&

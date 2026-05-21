@@ -39,7 +39,7 @@ public sealed class AlgosCreateLiveTradeTests
         // identify the new algo — MTCore re-computes the name server-side from
         // the algorithm's `namingRule` parameter (e.g. for SHOTS:
         // `SG_##MTYPE##_##SIDE##_##DIST##_##BUFF##_tp##TP##_sl##SL##`), so the
-        // operator-supplied `new_name` doesn't survive the SAVE round-trip on
+        // caller-supplied `new_name` doesn't survive the SAVE round-trip on
         // every algo type.  ID-diff is the reliable identification path.
         var beforeIds = await ListAlgoIds();
         int before = beforeIds.Count;

@@ -52,13 +52,13 @@ public sealed class MarketDataTests
         sub.ParsedBody!.Value.TryGetProperty("success", out var ss).Should().BeTrue();
         ss.GetBoolean().Should().BeTrue();
         // The subscribe response message echoes the symbol — verify the channel
-        // identifier is round-tripped to the operator (no opaque ID is emitted).
+        // identifier is round-tripped to the caller (no opaque ID is emitted).
         sub.ParsedBody!.Value.TryGetProperty("message", out var smsg).Should().BeTrue();
         // The MCP server upper-cases the symbol before placing it in the response
         // text (real format: "Subscribed to depth for BTCUSDT (FUTURES) on bench_01.").
         // Use a case-insensitive contains check.
         (smsg.GetString() ?? "").ToUpperInvariant().Should().Contain("BTCUSDT",
-            because: "subscribe response should echo the symbol (uppercase) so the operator can correlate it");
+            because: "subscribe response should echo the symbol (uppercase) so the caller can correlate it");
 
         var unsub = await _mcp.CallTool("mt_marketdata_depth_unsubscribe", args);
         unsub.InnerSuccess.Should().BeTrue();

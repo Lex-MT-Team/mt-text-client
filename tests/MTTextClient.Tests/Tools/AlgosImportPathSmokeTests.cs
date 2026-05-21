@@ -7,18 +7,17 @@ using Xunit;
 namespace MTTextClient.Tests.Tools;
 
 /// <summary>
-/// Stage 6.8 — Smoke probes for the `path` argument on
-/// <c>mt_algos_import_json</c> and the new
-/// <c>mt_import_from_profile</c> survey tool.
+/// Smoke probes for the `path` argument on <c>mt_algos_import_json</c> and
+/// the <c>mt_import_from_profile</c> survey tool.
 /// </summary>
 [Collection(BenchCollection.Name)]
 [Trait("Category", TraitCategories.Smoke)]
-public sealed class Stage68ImportsPathTests
+public sealed class AlgosImportPathSmokeTests
 {
     private const string Profile = "bench_02";
     private readonly McpFixture _mcp;
     private readonly BenchFixture _bench;
-    public Stage68ImportsPathTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
+    public AlgosImportPathSmokeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
 
     [SkippableFact]
     public async Task mt_algos_import_json_path_arg_reports_path_not_found_for_missing_file()
@@ -29,19 +28,19 @@ public sealed class Stage68ImportsPathTests
 
         // Use an unmistakably-absent path; confirm=true to bypass the
         // ConfirmGate (the test exercises the path-resolution branch, not
-        // confirm).  The Stage 6.8 wrapper injects path_not_found into the
-        // payload, which AlgosCommand surfaces back as a JSON-parse failure
-        // carrying that marker.
+        // confirm).  The wrapper injects path_not_found into the payload,
+        // which AlgosCommand surfaces back as a JSON-parse failure carrying
+        // that marker.
         var resp = await _mcp.CallTool("mt_algos_import_json", new
         {
-            path = "/tmp/definitely-not-here-stage68.json",
+            path = "/tmp/definitely-not-here-algos-import.json",
             destination_profile = Profile,
             confirm = true,
         });
         resp.IsRpcError.Should().BeFalse();
         var msg = resp.InnerMessage ?? "";
-        msg.Should().Contain("/tmp/definitely-not-here-stage68.json",
-            because: "the wrapper must echo the failing path so operators can see what was checked");
+        msg.Should().Contain("/tmp/definitely-not-here-algos-import.json",
+            because: "the wrapper must echo the failing path so callers can see what was checked");
     }
 
     [SkippableFact]
@@ -55,8 +54,8 @@ public sealed class Stage68ImportsPathTests
         // call exercises the "file → payload → parse" wiring.  confirm=true
         // is required to pass the ConfirmGate; the payload is intentionally
         // malformed so no mutation can happen at the AlgosCommand layer.
-        string tmp = Path.Combine(Path.GetTempPath(), $"stage68-payload-{System.DateTimeOffset.UtcNow.ToUnixTimeSeconds()}.json");
-        await File.WriteAllTextAsync(tmp, "{\"_stage68_probe_marker\":\"file_was_loaded\"}");
+        string tmp = Path.Combine(Path.GetTempPath(), $"algos-import-payload-{System.DateTimeOffset.UtcNow.ToUnixTimeSeconds()}.json");
+        await File.WriteAllTextAsync(tmp, "{\"_algos_import_probe_marker\":\"file_was_loaded\"}");
         try
         {
             var resp = await _mcp.CallTool("mt_algos_import_json", new
@@ -94,7 +93,7 @@ public sealed class Stage68ImportsPathTests
         data.GetProperty("source_profile").GetString().Should().Be(Profile);
         data.GetProperty("destination_profile").GetString().Should().Be(Profile);
         data.GetProperty("mutation_supported").GetBoolean().Should().BeFalse(
-            because: "Stage 6.8 ships read-only survey; mutation is a follow-up");
+            because: "the survey is read-only; mutation is a follow-up");
         data.GetProperty("mutation_notice").GetString()
             .Should().Contain("import_from_profile_dry_run_only");
         data.TryGetProperty("entries", out _).Should().BeTrue();

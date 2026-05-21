@@ -6,8 +6,9 @@ using Xunit;
 namespace MTTextClient.Tests.LiveTrade;
 
 /// <summary>
-/// Stage 4.1 LiveTrade — exercises cross-profile / cross-exchange paste against
-/// real benches.  Three legs, each gated on its bench being CONNECTED:
+/// Algos clipboard-paste LiveTrade — exercises cross-profile / cross-exchange
+/// paste against real benches.  Three legs, each gated on its bench being
+/// CONNECTED:
 ///
 ///   <list type="bullet">
 ///   <item>Same-profile paste (bench_02 → bench_02).  Idempotency check —
@@ -19,27 +20,25 @@ namespace MTTextClient.Tests.LiveTrade;
 ///   <item>Cross-exchange paste with symbol-format mismatch
 ///   (bench_02 BINANCE → bench_04 OKX).  Must surface the structured
 ///   <c>symbol_mismatch</c> error with <c>suggested_symbol=BTC-USDT-SWAP</c>;
-///   the operator then retries with <c>override_symbol=BTC-USDT-SWAP</c> and
+///   the caller then retries with <c>override_symbol=BTC-USDT-SWAP</c> and
 ///   the paste succeeds.</item>
 ///   </list>
 ///
 /// <para><b>POLICY</b> — gated by <c>MTC_LIVE_TRADES=1</c> AND
-/// <c>MTC_TESTING_ENV=1</c>.  The agent does not invoke it; the operator
-/// runs it explicitly via:</para>
+/// <c>MTC_TESTING_ENV=1</c>.  Run it explicitly via:</para>
 /// <code>
 /// MTC_TESTING_ENV=1 MTC_LIVE_TRADES=1 \
-///     dotnet test -c Release --filter "Category=LiveTrade&amp;DisplayName~Stage4Clipboard"
+///     dotnet test -c Release --filter "Category=LiveTrade&amp;DisplayName~AlgosClipboardPaste"
 /// </code>
 ///
 /// <para><b>NO CLEANUP</b> — pasted algorithms remain on each destination
-/// profile.  This is deliberate: Stage 7 reports tooling will read the
-/// resulting algorithm catalog state.  Same-profile paste creates a
-/// duplicate-row pair (one of the documented edge cases the operator
-/// approves of in advance).</para>
+/// profile.  This is deliberate: reports tooling will read the resulting
+/// algorithm catalog state.  Same-profile paste creates a duplicate-row
+/// pair (one of the documented edge cases approved of in advance).</para>
 /// </summary>
 [Collection(BenchCollection.Name)]
 [Trait("Category", TraitCategories.LiveTrade)]
-public sealed class Stage4ClipboardLiveTradeTests
+public sealed class AlgosClipboardPasteLiveTradeTests
 {
     private const string SourceProfile = "bench_02";   // BINANCE
     private const string BybitProfile = "bench_01";   // BYBIT (same symbol format)
@@ -47,13 +46,13 @@ public sealed class Stage4ClipboardLiveTradeTests
 
     private readonly McpFixture _mcp;
     private readonly BenchFixture _bench;
-    public Stage4ClipboardLiveTradeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
+    public AlgosClipboardPasteLiveTradeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
 
     [SkippableFact]
     public async Task SameProfilePaste_bench02_to_bench02()
     {
         Skip.IfNot(EnvFlags.LiveTrades,
-            "MTC_LIVE_TRADES=1 not set — Stage 4 LiveTrade pastes real algorithm rows onto destination profiles.");
+            "MTC_LIVE_TRADES=1 not set — this LiveTrade pastes real algorithm rows onto destination profiles.");
         Skip.If(!EnvFlags.TestingEnv, "MTC_TESTING_ENV not set.");
         Skip.If(!_bench.IsBenchAvailable(SourceProfile),
             $"Bench {SourceProfile} not observed on UDP port; skipping.");
@@ -95,11 +94,11 @@ public sealed class Stage4ClipboardLiveTradeTests
     public async Task CrossExchangePaste_bench02_BINANCE_to_bench01_BYBIT_sameSymbolFormat()
     {
         Skip.IfNot(EnvFlags.LiveTrades,
-            "MTC_LIVE_TRADES=1 not set — Stage 4 LiveTrade pastes real algorithm rows onto destination profiles.");
+            "MTC_LIVE_TRADES=1 not set — this LiveTrade pastes real algorithm rows onto destination profiles.");
         Skip.If(!EnvFlags.TestingEnv, "MTC_TESTING_ENV not set.");
         Skip.If(!_bench.IsBenchAvailable(SourceProfile), $"Bench {SourceProfile} unavailable; skipping.");
         Skip.If(!_bench.IsBenchAvailable(BybitProfile),
-            $"Bench {BybitProfile} (BYBIT) unavailable — DEFECT-11 / MTCORE-FREEZE; skipping cross-exchange leg.");
+            $"Bench {BybitProfile} (BYBIT) unavailable; skipping cross-exchange leg.");
 
         await _mcp.RestartSubprocessAsync();
         (await _mcp.WaitForConnected(SourceProfile, 60)).Should().BeTrue();
@@ -138,10 +137,10 @@ public sealed class Stage4ClipboardLiveTradeTests
     public async Task CrossExchangePaste_bench02_BINANCE_to_bench04_OKX_symbolMismatchThenOverride()
     {
         Skip.IfNot(EnvFlags.LiveTrades,
-            "MTC_LIVE_TRADES=1 not set — Stage 4 LiveTrade pastes real algorithm rows onto destination profiles.");
+            "MTC_LIVE_TRADES=1 not set — this LiveTrade pastes real algorithm rows onto destination profiles.");
         Skip.If(!EnvFlags.TestingEnv, "MTC_TESTING_ENV not set.");
         Skip.If(!_bench.IsBenchAvailable(OkxProfile),
-            $"Bench {OkxProfile} (OKX) unavailable — DEFECT-11 / MTCORE-FREEZE; skipping cross-exchange leg.");
+            $"Bench {OkxProfile} (OKX) unavailable; skipping cross-exchange leg.");
 
         await _mcp.RestartSubprocessAsync();
         (await _mcp.WaitForConnected(OkxProfile, 60)).Should().BeTrue(
@@ -173,7 +172,7 @@ public sealed class Stage4ClipboardLiveTradeTests
 
         int countBefore = await CountAlgosAsync(OkxProfile);
 
-        // 2) Second attempt — operator applies suggested_symbol override.  Must
+        // 2) Second attempt — caller applies suggested_symbol override.  Must
         //    succeed against the live OKX bench and grow its algo list by 1.
         var pasteResp = await _mcp.CallTool("mt_algos_import_json", new
         {
@@ -196,13 +195,13 @@ public sealed class Stage4ClipboardLiveTradeTests
     {
         var p = new Newtonsoft.Json.Linq.JObject
         {
-            ["schema_version"] = "stage4-v1",
+            ["schema_version"] = "v1",
             ["exported_from_exchange"] = "BINANCE",
             ["exported_from_profile"] = "bench_02_forged",
             ["exported_at"] = "2026-05-11T22:00:00Z",
             ["algorithm"] = new Newtonsoft.Json.Linq.JObject
             {
-                ["name"] = $"stage4_xexchange_{System.DateTimeOffset.UtcNow.ToUnixTimeSeconds()}",
+                ["name"] = $"clipboard_xexchange_{System.DateTimeOffset.UtcNow.ToUnixTimeSeconds()}",
                 ["signature"] = "SG",
                 ["description"] = "",
                 ["symbol"] = symbol,

@@ -7,26 +7,26 @@ using Xunit;
 namespace MTTextClient.Tests.LiveTrade;
 
 /// <summary>
-/// Stage 6.7 LiveTrade — full add + list + delete round-trip on bench_02
-/// BINANCE.  Writes a structured JSON artifact recording the sentinel key,
-/// initial baseline count, post-add count, post-delete count.  No cleanup
-/// beyond the test's own delete (the only mutation introduced is the
-/// sentinel, and it's removed before the test ends).
+/// Profile-settings CRUD LiveTrade — full add + list + delete round-trip on
+/// bench_02 BINANCE.  Writes a structured JSON artifact recording the
+/// sentinel key, initial baseline count, post-add count, post-delete count.
+/// No cleanup beyond the test's own delete (the only mutation introduced is
+/// the sentinel, and it's removed before the test ends).
 /// </summary>
 [Collection(BenchCollection.Name)]
 [Trait("Category", TraitCategories.LiveTrade)]
-public sealed class Stage67ProfileSettingsLiveTradeTests
+public sealed class ProfileSettingsCrudLiveTradeTests
 {
     private const string Profile = "bench_02";
     private readonly McpFixture _mcp;
     private readonly BenchFixture _bench;
-    public Stage67ProfileSettingsLiveTradeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
+    public ProfileSettingsCrudLiveTradeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
 
     [SkippableFact]
     public async Task Add_List_Delete_RestoresBaseline()
     {
         Skip.IfNot(EnvFlags.LiveTrades,
-            "MTC_LIVE_TRADES=1 not set — Stage 6.7 LiveTrade mutates profile settings.");
+            "MTC_LIVE_TRADES=1 not set — this LiveTrade mutates profile settings.");
         Skip.If(!EnvFlags.TestingEnv, "MTC_TESTING_ENV not set.");
         Skip.If(!_bench.IsBenchAvailable(Profile), $"Bench {Profile} unavailable.");
 
@@ -39,7 +39,7 @@ public sealed class Stage67ProfileSettingsLiveTradeTests
         int baseCount = listBefore.ParsedBody!.Value.GetProperty("data").GetProperty("KeyCount").GetInt32();
 
         // 1) Add a sentinel.
-        string sentinel = $"Stage67.LiveTradeSentinel.{System.DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+        string sentinel = $"ProfileSettings.LiveTradeSentinel.{System.DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
         var addResp = await _mcp.CallTool("mt_profile_settings_update", new
         {
             profile_name = Profile,
@@ -80,7 +80,7 @@ public sealed class Stage67ProfileSettingsLiveTradeTests
         // 5) Artifact.
         await WriteArtifact(new
         {
-            Stage = "6.7",
+            Scenario = "ProfileSettingsCrud",
             Profile,
             Sentinel = sentinel,
             BaselineKeyCount = baseCount,
@@ -95,7 +95,7 @@ public sealed class Stage67ProfileSettingsLiveTradeTests
     {
         string dir = Path.Combine(
             System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile),
-            "mt-test-artifacts", "stage6_7");
+            "mt-test-artifacts", "profile-settings-crud");
         Directory.CreateDirectory(dir);
         string fname = $"bench_02_{System.DateTime.UtcNow:yyyyMMdd-HHmmss}.json";
         await File.WriteAllTextAsync(

@@ -9,17 +9,16 @@ namespace MTTextClient.Tests.Static;
 /// Asserts that every tool documented as destructive declares <c>confirm</c>
 /// in its <c>inputSchema.required</c>.
 ///
-/// Per OV-5: the confirm gate is an audit aid + minor injection-defense layer,
-/// not a security boundary. But declaring <c>confirm</c> as required at the
-/// schema level is what makes it actually visible to automation-driven operators —
-/// without that, an unsuspecting agent can omit it and either get a server-side
+/// The confirm gate is an audit aid + minor injection-defense layer, not a
+/// security boundary. But declaring <c>confirm</c> as required at the schema
+/// level is what makes it actually visible to automation-driven callers —
+/// without that, an unsuspecting caller can omit it and either get a server-side
 /// rejection (when the underlying command rejects without --confirm) or, worse,
-/// bypass the gate (when the command tolerates absence). MCP-010 / MCP-010-ext
-/// are concrete instances of the latter class of bug.
+/// bypass the gate (when the command tolerates absence).
 ///
 /// The list of confirm-required tools is curated below from the test matrix
-/// and the existing PRs. Iterations that add new destructive tools must add
-/// them to this list in the same PR.
+/// and the registry.  Iterations that add new destructive tools must add
+/// them to this list in the same change.
 /// </summary>
 [Collection(McpCollection.Name)]
 [Trait("Category", TraitCategories.Static)]
@@ -29,88 +28,86 @@ public sealed class ConfirmGateStaticTests
     public ConfirmGateStaticTests(McpFixture mcp) => _mcp = mcp;
 
     /// <summary>
-    /// Tools that MUST declare 'confirm' in inputSchema.required. Curated from
-    /// the test matrix, the merged PR catalogue (#2, #6), and runtime evidence
-    /// from prior sessions.
+    /// Tools that MUST declare 'confirm' in inputSchema.required.
     /// </summary>
     public static readonly string[] ConfirmRequiredTools = new[]
     {
-        // Algorithm lifecycle (PR #2 + #6)
+        // Algorithm lifecycle
         "mt_algos_delete",
         "mt_algos_delete_group",
 
-        // Order management (PR #2)
+        // Order management
         "mt_orders_reset_tpsl",
 
-        // Blacklist add/remove (PR #3 typed-storage fix)
+        // Blacklist add/remove
         "mt_blacklist_add",
         "mt_blacklist_remove",
 
-        // Bulk algo lifecycle (PR #6)
+        // Bulk algo lifecycle
         "mt_algos_start_all",
         "mt_algos_stop_all",
         "mt_fleet_disconnect",
 
-        // Settings mutation (fix/known-defects-batch-1: MCP-010-set)
+        // Settings mutation
         "mt_settings_set",
 
-        // Profile settings mutation (fix/known-defects-batch-1: MCP-010-ext)
+        // Profile settings mutation
         "mt_profile_settings_update",
 
-        // Stage 1.1 + 1.2 — TPSL bulk + panic operations.
+        // TPSL bulk + panic operations.
         // All four are destructive (cancel / split / market-close).
         "mt_tpsl_cancel_many",
         "mt_tpsl_split_many",
         "mt_tpsl_panic",
         "mt_tpsl_panic_many",
 
-        // Stage 2.1 — Active Order TP/SL/TS Update (mutates open position state).
+        // Active Order TP/SL/TS Update (mutates open position state).
         "mt_orders_update_tpsl",
 
-        // Stage 3.1 — AutoStops balance-filter CRUD (mutates risk-management config).
+        // AutoStops balance-filter CRUD (mutates risk-management config).
         "mt_autostops_add",
         "mt_autostops_edit",
         "mt_autostops_start",
         "mt_autostops_stop",
         "mt_autostops_delete",
 
-        // Stage 4.1 — algorithm paste/import (mutates destination profile's algo store).
+        // Algorithm paste/import (mutates destination profile's algo store).
         // copy-to-clipboard is read-only on the source so it is NOT confirm-gated.
         "mt_algos_paste_from_clipboard",
         "mt_algos_import_json",
 
-        // Stage 4.2 — bulk field-level edit across many algos.
+        // Bulk field-level edit across many algos.
         "mt_algos_bulk_edit",
 
-        // Post-Stage-5 — algorithm creation via clone-from-source.
+        // Algorithm creation via clone-from-source.
         "mt_algos_create",
 
-        // Stage 6.7 — profile_settings delete (list is read-only, not gated).
+        // profile_settings delete (list is read-only, not gated).
         "mt_profile_settings_delete",
 
-        // Stage 6.6 — vault profile delete (get is read-only, store/list pre-existing).
+        // Vault profile delete (get is read-only, store/list pre-existing).
         "mt_vault_delete_profile",
 
-        // Stage 6.3 — alerts CRUD (save is non-destructive create-or-update, list pre-existing).
+        // Alerts CRUD (save is non-destructive create-or-update, list pre-existing).
         "mt_alerts_delete",
         "mt_alerts_set_running",
 
-        // Watchdog placeholder (out of scope for current epic) — destructive
-        // even as a placeholder because rotating the watchdog auth token
-        // would sever active monitoring sessions when wired.  status:
-        // placeholder is recorded in the registry description.
+        // Watchdog placeholder — destructive even as a placeholder because
+        // rotating the watchdog auth token would sever active monitoring
+        // sessions when wired.  status: placeholder is recorded in the
+        // registry description.
         "mt_watchdog_token_update",
 
-        // Stage 5.1 — fleet margin-type campaign with mandatory dry_run.
+        // Fleet margin-type campaign with mandatory dry_run.
         "mt_fleet_set_margin_type",
 
-        // Stage 5.2 — profile-level whitelist CRUD (add/remove/bulk).  list is read-only.
+        // Profile-level whitelist CRUD (add/remove/bulk).  list is read-only.
         "mt_whitelist_add",
         "mt_whitelist_remove",
         "mt_whitelist_bulk_add",
         "mt_whitelist_bulk_remove",
 
-        // Stage 5.3 — local profiles.json / folders.json CRUD.  list tools are read-only.
+        // Local profiles.json / folders.json CRUD.  list tools are read-only.
         "mt_profiles_add",
         "mt_profiles_edit",
         "mt_profiles_delete",
@@ -149,7 +146,7 @@ public sealed class ConfirmGateStaticTests
             if (r.GetString() == "confirm") { hasConfirm = true; break; }
 
         hasConfirm.Should().BeTrue(
-            because: $"{toolName} is destructive; OV-5 mandates 'confirm' in inputSchema.required.");
+            because: $"{toolName} is destructive; 'confirm' must appear in inputSchema.required.");
     }
 
     /// <summary>
@@ -167,8 +164,8 @@ public sealed class ConfirmGateStaticTests
         if (ConfirmKnownGaps.Length > 0)
         {
             // Re-assert each row's broken state, identical to the previous
-            // [Theory] body. This branch only runs when the operator has
-            // re-introduced one or more gaps to the list.
+            // [Theory] body. This branch only runs when one or more gaps
+            // have been re-introduced to the list.
             foreach (var (toolName, bugId) in ConfirmKnownGaps)
             {
                 var tool = _mcp.Tools.FirstOrDefault(t => t.GetProperty("name").GetString() == toolName);
@@ -185,12 +182,9 @@ public sealed class ConfirmGateStaticTests
             }
             return;
         }
-        // List empty → every formerly-known gap has been fixed. PR1
-        // (fix/known-defects-batch-1 — MCP-010-set / MCP-010-ext) emptied
-        // the list by adding mt_settings_set + mt_profile_settings_update
-        // to ConfirmRequiredTools.
+        // List empty → every formerly-known gap has been fixed.
         ConfirmKnownGaps.Should().BeEmpty(
-            because: "no known schema-gate gaps remain after PR1 ports");
+            because: "no known schema-gate gaps remain");
     }
 
     public static IEnumerable<object[]> ConfirmRequiredToolsData() =>

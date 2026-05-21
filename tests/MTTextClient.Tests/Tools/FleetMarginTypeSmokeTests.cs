@@ -6,7 +6,7 @@ using Xunit;
 namespace MTTextClient.Tests.Tools;
 
 /// <summary>
-/// Stage 5.1 — Smoke coverage for <c>mt_fleet_set_margin_type</c>.  The tool's
+/// Smoke coverage for <c>mt_fleet_set_margin_type</c>.  The tool's
 /// safety contract is the mandatory dry-run: without confirm=true, the response
 /// is a per-profile preview and DOES NOT call <c>ModifyMarginType</c> on any
 /// bench.  We assert that here using a forced confirm-true call against an
@@ -14,12 +14,12 @@ namespace MTTextClient.Tests.Tools;
 /// </summary>
 [Collection(BenchCollection.Name)]
 [Trait("Category", TraitCategories.Smoke)]
-public sealed class Stage51FleetMarginTypeTests
+public sealed class FleetMarginTypeSmokeTests
 {
     private const string Profile = "bench_02";
     private readonly McpFixture _mcp;
     private readonly BenchFixture _bench;
-    public Stage51FleetMarginTypeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
+    public FleetMarginTypeSmokeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
 
     [SkippableFact]
     public async Task mt_fleet_set_margin_type_without_confirm_is_rejected_by_gate()
@@ -32,7 +32,7 @@ public sealed class Stage51FleetMarginTypeTests
         {
             symbol = "BTCUSDT",
             margin_type = "ISOLATED",
-            // confirm omitted intentionally — ConfirmGate (Stage 0.4) must fire.
+            // confirm omitted intentionally — ConfirmGate must fire.
         });
         resp.IsRpcError.Should().BeTrue(
             because: "ConfirmGate rejects margin-type campaigns called without confirm; dry_run preview is reachable only via confirm=true with no subsequent commit");

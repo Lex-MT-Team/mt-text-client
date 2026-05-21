@@ -5,12 +5,12 @@ using Xunit;
 namespace MTTextClient.Tests.Tools;
 
 /// <summary>
-/// Stage 3.1 — Smoke coverage for the new AutoStops balance-filter CRUD tools.
+/// Smoke coverage for the AutoStops balance-filter CRUD tools.
 /// Full add → start → trigger → check-and-restart lifecycle is exercised in
-/// <see cref="LiveTrade.Stage3AutoStopsLifecycleLiveTradeTests"/> (operator-invoked).
+/// <see cref="LiveTrade.AutoStopsLifecycleLiveTradeTests"/>.
 ///
 /// What these probes prove:
-///   • ConfirmGate fires when confirm is omitted (Stage 0.4 behaviour).
+///   • ConfirmGate fires when confirm is omitted.
 ///   • Schema validation: add rejects without max_loss; edit/delete reject
 ///     without index; the dispatcher routes cleanly (no "Unknown tool" /
 ///     "Unknown subcommand").
@@ -20,16 +20,16 @@ namespace MTTextClient.Tests.Tools;
 /// </summary>
 [Collection(BenchCollection.Name)]
 [Trait("Category", TraitCategories.Smoke)]
-public sealed class Stage3AutoStopsCrudTests
+public sealed class AutoStopsCrudSmokeTests
 {
-    // Target bench_02 explicitly: bench_01 / bench_04 are subject to DEFECT-11
-    // MTCORE-FREEZE on this build. bench_02 BINANCE is the only consistently
-    // alive bench in the dev environment.
+    // Target bench_02 explicitly: bench_01 / bench_04 are subject to
+    // freeze conditions on this build. bench_02 BINANCE is the only
+    // consistently alive bench in the dev environment.
     private const string Profile = "bench_02";
 
     private readonly McpFixture _mcp;
     private readonly BenchFixture _bench;
-    public Stage3AutoStopsCrudTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
+    public AutoStopsCrudSmokeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
 
     [SkippableFact]
     public async Task mt_autostops_add_without_confirm_is_rejected()
@@ -46,7 +46,7 @@ public sealed class Stage3AutoStopsCrudTests
         });
 
         resp.IsRpcError.Should().BeTrue(
-            because: "ConfirmGate (Stage 0.4) emits -32602 when a confirm-required tool is called without confirm");
+            because: "ConfirmGate emits -32602 when a confirm-required tool is called without confirm");
     }
 
     [SkippableFact]

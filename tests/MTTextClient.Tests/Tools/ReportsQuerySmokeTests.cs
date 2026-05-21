@@ -6,19 +6,19 @@ using Xunit;
 namespace MTTextClient.Tests.Tools;
 
 /// <summary>
-/// Stage 7.1 — Smoke probes for mt_reports_query / _csv_inline / _cancel / _status.
+/// Smoke probes for mt_reports_query / _csv_inline / _cancel / _status.
 /// Verifies the structured envelope shape and the request-id observability
 /// surface, independent of how many rows happen to exist on the bench at
 /// probe time.
 /// </summary>
 [Collection(BenchCollection.Name)]
 [Trait("Category", TraitCategories.Smoke)]
-public sealed class Stage71ReportsQueryTests
+public sealed class ReportsQuerySmokeTests
 {
     private const string Profile = "bench_02";
     private readonly McpFixture _mcp;
     private readonly BenchFixture _bench;
-    public Stage71ReportsQueryTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
+    public ReportsQuerySmokeTests(McpFixture mcp, BenchFixture bench) { _mcp = mcp; _bench = bench; }
 
     [SkippableFact]
     public async Task mt_reports_query_returns_structured_envelope_with_request_id()
@@ -84,7 +84,7 @@ public sealed class Stage71ReportsQueryTests
         Skip.If(!EnvFlags.TestingEnv, "MTC_TESTING_ENV not set.");
         var resp = await _mcp.CallTool("mt_reports_status", new
         {
-            request_id = "deadbeef-not-a-real-request-id-stage71",
+            request_id = "deadbeef-not-a-real-request-id-reports-query",
         });
         resp.IsRpcError.Should().BeFalse();
         resp.ParsedBody!.Value.GetProperty("status").GetString().Should().Be("not_found");

@@ -8,7 +8,7 @@ using MTTextClient.Core;
 namespace MTTextClient.Commands;
 
 /// <summary>
-/// Stage 5.3 — local CRUD over <c>~/.config/mt-textclient/profiles.json</c>.
+/// Local CRUD over <c>~/.config/mt-textclient/profiles.json</c>.
 /// Operates entirely on the on-disk profile registry (the list of bench
 /// connections this client knows about) — never sends a wire request to
 /// MTCore.  Useful for fleet setup automation.
@@ -24,7 +24,7 @@ namespace MTTextClient.Commands;
 public sealed class ProfilesCommand : ICommand
 {
     public string Name => "profiles";
-    public string Description => "Local profiles.json CRUD (Stage 5.3 — no wire calls)";
+    public string Description => "Local profiles.json CRUD (no wire calls)";
     public string Usage => "profiles <list|add|edit|delete|move|import-csv> [args] --confirm";
 
     public ProfilesCommand() { }

@@ -11,8 +11,8 @@ namespace MTTextClient.Tests.LiveTrade.Campaign;
 ///   clone_group, delete_group, group_by_name, tpsl_change, toggle_debug,
 ///   profiling.
 ///
-/// Strategy: discover an existing algo on bench_02 (Stage 1 / earlier
-/// campaigns seeded it).  If none present, mt_algos_create one disposable
+/// Strategy: discover an existing algo on bench_02 (earlier campaigns
+/// seeded it).  If none present, mt_algos_create one disposable
 /// SHOTS algo specifically for this campaign, then exercise every verb
 /// against that id.  Cleanup: deliberately none — leaves campaign-created
 /// algos in place per the bench-data-retention policy.

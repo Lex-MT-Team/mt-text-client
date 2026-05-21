@@ -6,7 +6,7 @@ using MTTextClient.Core;
 namespace MTTextClient.Commands;
 
 /// <summary>
-/// Stage 5.3 — local CRUD over the set of known folder names
+/// Local CRUD over the set of known folder names
 /// (<c>~/.config/mt-textclient/folders.json</c>).  Folders are a pure
 /// client-side concept used for display / dispatch grouping; never sent to
 /// MTCore.  A profile's <c>Folder</c> field references one of these names.
@@ -20,7 +20,7 @@ namespace MTTextClient.Commands;
 public sealed class FoldersCommand : ICommand
 {
     public string Name => "folders";
-    public string Description => "Local folders.json CRUD (Stage 5.3)";
+    public string Description => "Local folders.json CRUD";
     public string Usage => "folders <list|add|edit|delete> [args] --confirm";
 
     public FoldersCommand() { }
@@ -137,7 +137,7 @@ public sealed class FoldersCommand : ICommand
         if (removed == 0) return CommandResult.Fail($"not_found: folder '{name}' not in folders.json.");
 
         // Check for profiles referencing this folder (warn but do NOT silently
-        // delete; the operator must re-bind them via 'profiles move').
+        // delete; the caller must re-bind them via 'profiles move').
         var profiles = ProfileManager.LoadProfiles();
         int orphanCount = profiles.Count(p => string.Equals(p.Folder, name, StringComparison.OrdinalIgnoreCase));
         FolderStore.SaveFolders(known);

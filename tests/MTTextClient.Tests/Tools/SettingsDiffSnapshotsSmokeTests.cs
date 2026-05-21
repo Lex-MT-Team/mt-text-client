@@ -8,20 +8,20 @@ using Xunit;
 namespace MTTextClient.Tests.Tools;
 
 /// <summary>
-/// Stage 6 first-wave Smoke coverage:
-///   • 6.10 mt_settings_diff_snapshots — pure client-side diff of two
+/// Smoke coverage for:
+///   • mt_settings_diff_snapshots — pure client-side diff of two
 ///     snapshot JSON files (~/.mt-snapshots/).  No bench required.
-///   • 6.11 iceberg flag on mt_orders_place — schema audit + dispatcher
+///   • iceberg flag on mt_orders_place — schema audit + dispatcher
 ///     wiring (real iceberg execution lives in LiveTrade).
 /// </summary>
 [Collection(BenchCollection.Name)]
 [Trait("Category", TraitCategories.Smoke)]
-public sealed class Stage6FirstWaveTests
+public sealed class SettingsDiffSnapshotsSmokeTests
 {
     private readonly McpFixture _mcp;
-    public Stage6FirstWaveTests(McpFixture mcp) { _mcp = mcp; }
+    public SettingsDiffSnapshotsSmokeTests(McpFixture mcp) { _mcp = mcp; }
 
-    // ─── 6.10 ───────────────────────────────────────────────────────────────
+    // ─── mt_settings_diff_snapshots ─────────────────────────────────────────
 
     [SkippableFact]
     public async Task mt_settings_diff_snapshots_diffs_two_fixture_files()
@@ -29,7 +29,7 @@ public sealed class Stage6FirstWaveTests
         Skip.If(!EnvFlags.TestingEnv, "MTC_TESTING_ENV not set.");
 
         // Write two fixture snapshots in the temp dir.
-        string tmpDir = Path.Combine(Path.GetTempPath(), $"s610fixture_{System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}");
+        string tmpDir = Path.Combine(Path.GetTempPath(), $"settings_diff_fixture_{System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}");
         Directory.CreateDirectory(tmpDir);
         string pa = Path.Combine(tmpDir, "snapA.json");
         string pb = Path.Combine(tmpDir, "snapB.json");
@@ -110,7 +110,7 @@ public sealed class Stage6FirstWaveTests
         err.GetString().Should().Contain("snapshot_not_found");
     }
 
-    // ─── 6.11 ───────────────────────────────────────────────────────────────
+    // ─── iceberg param on mt_orders_place ───────────────────────────────────
 
     [Fact]
     [Trait("Category", TraitCategories.Static)]
@@ -120,11 +120,11 @@ public sealed class Stage6FirstWaveTests
         var tool = _mcp.Tools.First(t => t.GetProperty("name").GetString() == "mt_orders_place");
         var props = tool.GetProperty("inputSchema").GetProperty("properties");
         props.TryGetProperty("iceberg", out var icebergProp).Should().BeTrue(
-            because: "Stage 6.11 added the iceberg boolean parameter to mt_orders_place");
+            because: "the iceberg boolean parameter must remain in mt_orders_place");
         icebergProp.GetProperty("type").GetString().Should().Be("boolean");
         // Note: mt_orders_place's `confirm` isn't in inputSchema.required, so
         // ConfirmGate doesn't fire at the MCP layer — OrdersCommand.HandlePlace
         // enforces --confirm itself.  Real iceberg execution against a live
-        // venue lives outside this Smoke test (operator-driven LiveTrade).
+        // venue lives in the LiveTrade tier.
     }
 }

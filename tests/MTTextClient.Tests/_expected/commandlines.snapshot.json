@@ -87,7 +87,7 @@
   "mt_algos_paste_from_clipboard": "algos paste-from-clipboard @<destination_profile> --override-symbol <override_symbol> --force --confirm",
   "mt_algos_create": "algos create --signature <preset_name> --new-name new_name --overrides PG92ZXJyaWRlc19qc29uPg== --force --no-dry-run @<profile> --confirm",
   "mt_algos_bulk_edit": "algos bulk-edit --filter PGZpbHRlcl9qc29uPg== --mutation PG11dGF0aW9uX2pzb24+ @<profile> --confirm",
-  "mt_algos_import_json": "algos import-json @<destination_profile> --payload eyJzY2hlbWFfdmVyc2lvbiI6InN0YWdlNjgtcGF0aC1ub3QtZm91bmQ6PHBhdGg+In0= --override-symbol <override_symbol> --force --confirm",
+  "mt_algos_import_json": "algos import-json @<destination_profile> --payload eyJzY2hlbWFfdmVyc2lvbiI6InBhdGgtbm90LWZvdW5kOjxwYXRoPiJ9 --override-symbol <override_symbol> --force --confirm",
   "mt_settings_get": "settings get <key> @<profile>",
   "mt_settings_search": "settings search <query> @<profile>",
   "mt_settings_set": "settings set <key> <value> @<profile> --confirm",

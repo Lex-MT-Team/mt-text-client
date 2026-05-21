@@ -6,30 +6,19 @@ namespace MTTextClient.Core;
 /// <summary>
 /// Tool registry — single source of truth for all MCP tool schemas.
 ///
-/// Stage 0.3 / OV-2 (UnifiedDevelopmentPlan): the registry is the spine of
-/// automatic schema / docs / static-test iteration. <see cref="MCP.McpServer"/>'s
-/// <c>HandleToolsList</c> iterates <see cref="AllTools"/> to emit the MCP
-/// <c>tools/list</c> response. Static tests iterate the same enumeration
-/// directly — no subprocess needed, addressing the Stage 0.1 supervisor
-/// finding that "Static tests spawned an MCP subprocess".
+/// The registry is the spine of automatic schema / docs / static-test iteration.
+/// <see cref="MCP.McpServer"/>'s <c>HandleToolsList</c> iterates <see cref="AllTools"/>
+/// to emit the MCP <c>tools/list</c> response. Static tests iterate the same
+/// enumeration directly — no subprocess needed.
 ///
-/// This file is the verbatim relocation of the three previously-private
-/// methods <c>GetToolDefinitions</c>, <c>GetEventToolDefinitions</c>, and
-/// <c>GetInternalToolDefinitions</c> from <c>MCP/McpServer.cs</c>, plus the
-/// <see cref="Tool"/> and <see cref="Prop"/> JSON-object builders.
-/// Behavioural-equivalence guarantee: the registry-emitted <c>tools/list</c>
-/// must be byte-identical to the prior hand-rolled output. The locked
-/// 206-tool baseline in <c>tests/MTTextClient.Tests/_expected/tools.minimum.json</c>
-/// asserts the floor; <c>ToolCatalogStaticTests</c> asserts every baseline
-/// name and required-args set survives.
+/// The locked tool baseline in
+/// <c>tests/MTTextClient.Tests/_expected/tools.minimum.json</c> asserts the
+/// floor; <c>ToolCatalogStaticTests</c> asserts every baseline name and
+/// required-args set survives.
 ///
-/// Out of scope for this PR (deferred to follow-up registry iteration):
-///   • Dispatcher CLI-string templating (the <c>MapToolToCommand</c> switch
-///     and <c>Build*Command</c> helpers stay in <c>McpServer</c>).
-///   • Registry-driven README tool-table generator.
-///   • Typed <c>ToolDescriptor</c> records (currently the registry emits
-///     opaque <see cref="JObject"/>; a typed descriptor would enable
-///     stronger compile-time checks but doubles the migration cost).
+/// Dispatcher CLI-string templating (the <c>MapToolToCommand</c> switch and
+/// <c>Build*Command</c> helpers) stays in <c>McpServer</c>; the registry
+/// emits opaque <see cref="JObject"/> values.
 /// </summary>
 public static class ToolRegistry
 {
@@ -38,7 +27,7 @@ public static class ToolRegistry
     /// </summary>
     public static IEnumerable<JObject> AllTools()
     {
-        // ── MT-005: Event streaming tools ──
+        // ── Event streaming tools ──
         foreach (var t in GetEventToolDefinitions()) yield return t;
         foreach (var t in GetInternalToolDefinitions()) yield return t;
         // ── Connection ──
@@ -90,7 +79,7 @@ public static class ToolRegistry
             Prop("symbol", "string", "Symbol name (e.g. BTCUSDT)", required: true),
             Prop("profile", "string", "Target server profile"));
 
-        // ── Exchange Data (Phase K) ──
+        // ── Exchange Data ──
         yield return Tool("mt_exchange_ticker24",
             "Get 24h ticker price statistics for a symbol. Returns price change, high/low, volume, trade count. market_type FUTURES or SPOT (default: exchange-dependent).",
             Prop("symbol", "string", "Symbol (e.g. BTCUSDT)", required: true),
@@ -110,7 +99,7 @@ public static class ToolRegistry
             "Get recent trades for a symbol from the exchange.",
             Prop("symbol", "string", "Symbol (e.g. BTCUSDT)", required: true),
             Prop("profile", "string", "Target server profile"));
-        // Stage 6.9 — funding rate + leverage brackets (read-only from cached subscription state).
+        // Funding rate + leverage brackets (read-only from cached subscription state).
         yield return Tool("mt_exchange_funding_rate",
             "Get the funding-rate fields for a symbol (last funding rate/time, next funding rate/time, mark price, last price). " +
             "Read-only; no confirm. Returns whatever the symbol's live-markets cache currently holds, " +
@@ -149,16 +138,16 @@ public static class ToolRegistry
             Prop("confirm", "boolean", "Must be true to actually start all", required: true),
             Prop("profile", "string", "Target server profile"));
 
-        // MT-012: Algo verification — BUG-13 (Silent Init Failure) detection
+        // Algo verification — silent-init-failure detection
         yield return Tool("mt_algos_start_verified",
-            "Start an algorithm and verify it initialized successfully (MT-012 / BUG-13 mitigation). " +
+            "Start an algorithm and verify it initialized successfully. " +
             "Waits wait_secs seconds then checks isRunning, symbol, and marketType. " +
-            "Returns status: VERIFIED | BUG13_SUSPECTED | RUNNING_UNCONFIRMED | NOT_RUNNING.",
+            "Returns status: VERIFIED | INIT_FAILURE_SUSPECTED | RUNNING_UNCONFIRMED | NOT_RUNNING.",
             Prop("id",         "string", "Algorithm ID to start",                  required: true),
             Prop("wait_secs",  "string", "Seconds to wait for init (1-30, default 4)"),
             Prop("profile",    "string", "Target server profile"));
         yield return Tool("mt_algos_verify",
-            "Verify current state of a running algorithm — checks for BUG-13 pattern " +
+            "Verify current state of a running algorithm — checks for the silent-init-failure pattern " +
             "(isRunning=true but symbol/market unresolved). Does NOT start the algo.",
             Prop("id",      "string", "Algorithm ID to inspect", required: true),
             Prop("profile", "string", "Target server profile"));
@@ -167,7 +156,7 @@ public static class ToolRegistry
             Prop("confirm", "boolean", "Must be true to actually stop all", required: true),
             Prop("profile", "string", "Target server profile"));
 
-        // MT-008: Batch algo operations — start/stop/config across multiple servers
+        // Batch algo operations — start/stop/config across multiple servers
         yield return Tool("mt_algos_batch_start",
             "Start an algorithm (matched by name/signature/symbol pattern) across multiple servers in parallel. " +
             "Searches each server for algos matching the pattern and starts all matches. " +
@@ -233,18 +222,18 @@ public static class ToolRegistry
             "Export an algorithm as portable JSON for cross-server transfer",
             Prop("id", "string", "Algorithm ID", required: true),
             Prop("profile", "string", "Target server profile"));
-        // Stage 4.1 — file-backed clipboard for cross-profile / cross-exchange paste.
+        // File-backed clipboard for cross-profile / cross-exchange paste.
         yield return Tool("mt_algos_copy_to_clipboard",
-            "Stage 4.1 — serialise an algorithm to the schema-versioned clipboard file at " +
+            "Serialise an algorithm to the schema-versioned clipboard file at " +
             "~/mt-clipboard/algo-clipboard.json.  Read-only on the source; never mutates the bench. " +
             "Use mt_algos_paste_from_clipboard to apply on a destination.",
             Prop("id", "string", "Algorithm ID to copy", required: true),
             Prop("profile", "string", "Source server profile"));
         yield return Tool("mt_algos_paste_from_clipboard",
-            "Stage 4.1 — read the clipboard JSON, run cross-exchange pre-flight, and paste the algorithm onto the " +
+            "Read the clipboard JSON, run cross-exchange pre-flight, and paste the algorithm onto the " +
             "destination profile.  Without confirm=true, returns a DRY RUN preview listing every detected edge " +
             "case (symbol mismatch, market change, duplicate, blacklist conflict).  override_symbol / override_market " +
-            "let the operator force the paste past a known mismatch.  Schema-version-mismatched payloads are " +
+            "let the caller force the paste past a known mismatch.  Schema-version-mismatched payloads are " +
             "REJECTED before any wire call.",
             Prop("destination_profile", "string", "Destination server profile", required: true),
             Prop("override_symbol", "string", "Override the source symbol (use the suggested_symbol from a prior dry-run)"),
@@ -256,7 +245,7 @@ public static class ToolRegistry
             "user overrides on top.  Creation is clone-from-source: " +
             "either pin an explicit source_algo_id, or specify algo_type to auto-discover a matching algorithm " +
             "on the target profile (optionally filtered by preset_name=signature).  " +
-            "The source algorithm's argument template is cloned verbatim, with operator overrides applied on top — " +
+            "The source algorithm's argument template is cloned verbatim, with caller-supplied overrides applied on top — " +
             "so any new vendor fields flow through without an MCP-side update. " +
             "A small _mcp_metadata block is injected into the new algorithm's arguments " +
             "(schema_version, source_algo_id, source_profile, created_at_utc) and is observable via mt_algos_config. " +
@@ -275,7 +264,7 @@ public static class ToolRegistry
                 "Name for the new algorithm.  Default: '<source_name>_copy_<unix_ts>'."),
             Prop("overrides_json", "string",
                 "Optional JSON object of {paramKey: newValue} field overrides applied on top of the cloned template. " +
-                "Unknown keys are warned (unknown_override_fields) but accepted — operator may know about a new MT " +
+                "Unknown keys are warned (unknown_override_fields) but accepted — a caller may know about a new MT " +
                 "field before the MCP layer does."),
             Prop("force", "boolean", "Accept the duplicate_name warning and create a separate row anyway"),
             Prop("no_dry_run", "boolean", "When true, commit; when false/omitted, return a dry-run preview"),
@@ -283,7 +272,7 @@ public static class ToolRegistry
                 required: true));
 
         yield return Tool("mt_algos_bulk_edit",
-            "Stage 4.2 — fan a single field-level mutation across many algorithms in one call. " +
+            "Fan a single field-level mutation across many algorithms in one call. " +
             "Filter selects which algos (by ids, group_id, or all). Mutation is one of: " +
             "whitelist_add (array of symbols to append to each algo's whiteList parameter), " +
             "whitelist_remove (array of symbols to drop), or set (an object of {paramKey: newValue} pairs). " +
@@ -296,11 +285,11 @@ public static class ToolRegistry
             Prop("confirm", "boolean", "Must be true to actually apply (false/omitted → dry-run preview)", required: true),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_algos_import_json",
-            "Stage 4.1 — direct inline JSON paste (automation-friendly form; avoids the clipboard-file hop). " +
-            "Same edge-case pre-flight as mt_algos_paste_from_clipboard.  Stage 6.8: added 'path' argument — " +
-            "when path is provided, the payload is read from that file instead of taken from the 'payload' arg.",
-            Prop("payload", "string", "JSON payload matching schema_version=stage4-v1 (omit when path is provided)"),
-            Prop("path", "string", "Path to a JSON file containing the payload (Stage 6.8). Overrides payload."),
+            "Direct inline JSON paste (automation-friendly form; avoids the clipboard-file hop). " +
+            "Same edge-case pre-flight as mt_algos_paste_from_clipboard. The 'path' argument: when path is provided, " +
+            "the payload is read from that file instead of taken from the 'payload' arg.",
+            Prop("payload", "string", "JSON payload matching schema_version=v1 (omit when path is provided)"),
+            Prop("path", "string", "Path to a JSON file containing the payload. Overrides payload."),
             Prop("destination_profile", "string", "Destination server profile", required: true),
             Prop("override_symbol", "string", "Override the embedded symbol"),
             Prop("override_market", "string", "Override the embedded market type"),
@@ -338,15 +327,15 @@ public static class ToolRegistry
             Prop("delta", "string", "Numeric delta (e.g. 1.0 or -0.5)", required: true),
             Prop("confirm", "boolean", "Must be true to actually modify and save"),
             Prop("profile", "string", "Target server profile"));
-        // Stage 6.8 — cross-profile algorithm import survey.  This is a
+        // Cross-profile algorithm import survey.  This is a
         // structured "what would be imported" preview, not a bulk-mutation
         // tool.  Surfaces every algorithm on the source profile that would
         // be a candidate for copy to destination, including any duplicates
-        // (by name) already present on the destination so the operator can
+        // (by name) already present on the destination so the caller can
         // make an informed decision before driving mt_algos_copy in a loop
         // (or feeding the listed payloads into mt_algos_import_json).
         yield return Tool("mt_import_from_profile",
-            "Stage 6.8: Survey what would be imported from source_profile to destination_profile. " +
+            "Survey what would be imported from source_profile to destination_profile. " +
             "Returns one entry per source algorithm with its name, group, symbol, market, and a " +
             "duplicate_on_destination flag.  Read-only — no mutation.  Use mt_algos_copy per-id or " +
             "mt_algos_paste_from_clipboard / mt_algos_import_json to actually transfer.",
@@ -377,7 +366,7 @@ public static class ToolRegistry
             Prop("confirm", "boolean", "Must be true to actually close all"),
             Prop("profile", "string", "Target server profile"));
 
-        // ── Order Operations (Phase K) ──
+        // ── Order Operations ──
         yield return Tool("mt_orders_place",
             "Place a new order (market or limit). Requires confirm=true. " +
             "If price is omitted, places a MARKET order. If price is set, places a LIMIT order. " +
@@ -403,7 +392,7 @@ public static class ToolRegistry
             Prop("emulated", "boolean", "Place as emulated/paper order (held client-side, isEmulationOn=true). Coexists with real orders on the same connection."),
             Prop("iceberg", "boolean",
                 "Submit as an iceberg order. The flag is a simple on/off toggle; there is no separate " +
-                "visible-quantity field. Whether the venue honours iceberg is venue-specific — the operator " +
+                "visible-quantity field. Whether the venue honours iceberg is venue-specific — the caller " +
                 "is responsible for ensuring the destination exchange supports iceberg on this symbol/market."),
             Prop("confirm", "boolean", "Must be true to actually place"),
             Prop("profile", "string", "Target server profile"));
@@ -530,20 +519,18 @@ public static class ToolRegistry
             "Disconnect from ALL servers at once (requires confirm=true). Fleet-wide operation.",
             Prop("confirm", "boolean", "Must be true to actually disconnect all", required: true));
 
-        // MT-004
         yield return Tool("mt_fleet_batch_connect",
             "Connect to a specific set of named profiles in parallel (max 10 concurrent). " +
             "Unlike mt_fleet_connect (which connects ALL configured profiles), this accepts an " +
             "explicit list — suited for targeted fleet orchestration by automation clients.",
             Prop("profiles", "array", "Array of profile names to connect to", required: true));
 
-        // MT-003
         yield return Tool("mt_connection_health",
             "Connection pool health report — per-profile latency, error count, reconnect history, " +
             "and backoff state. Use this to diagnose unstable connections and route around degraded servers.");
 
 
-        // MT-007: Server tagging — fleet orchestration labels per connection
+        // Server tagging — fleet orchestration labels per connection
         yield return Tool("mt_connection_tag",
             "Set a fleet orchestration tag (key/value) on a named connection. " +
             "Tags are in-memory labels like role=coordinator, strategy=scalper, group=us-east. " +
@@ -555,7 +542,7 @@ public static class ToolRegistry
             "List fleet orchestration tags for a connection or all connections. " +
             "Returns a map of key→value labels set via mt_connection_tag.",
             Prop("profile", "string", "Connection profile name (optional — omit for all connections)"));
-        // ── Monitor (Phase G) — real-time core monitoring via UDP ──
+        // ── Monitor — real-time core monitoring via UDP ──
         yield return Tool("mt_monitor_start",
             "Start real-time core monitoring. Collects CPU, memory, threads, latency snapshots " +
             "via UDP CoreStatusSubscription. Works with remote cores — no filesystem access needed.",
@@ -592,11 +579,11 @@ public static class ToolRegistry
             Prop("ids", "string", "Comma-separated algorithm IDs (optional — omit for all)"),
             Prop("profile", "string", "Target server profile"));
 
-        // Stage 3.1 — AutoStops balance-filter CRUD.  The filter list is stored
+        // AutoStops balance-filter CRUD.  The filter list is stored
         // as JSON in the AutoStopAlgorithm.Balance.Filters profile setting; these
         // tools mutate that blob via UpdateProfileSettings.
         yield return Tool("mt_autostops_add",
-            "Append a new balance auto-stop filter (Stage 3.1).  Created disabled — call mt_autostops_start to activate. " +
+            "Append a new balance auto-stop filter. Created disabled — call mt_autostops_start to activate. " +
             "max_loss is the lower bound of the value range (e.g. -0.1 USDT) and value_max its upper bound. " +
             "filter_type ∈ {GLOBAL_BY_SYMBOL, ALGO_SYMBOLS, ALGO_TOTAL, CUSTOM}; " +
             "source_type ∈ {VALUE, PRICE_DELTA_SUM, PROFIT_FACTOR}; market ∈ {SPOT, MARGIN, FUTURES, DELIVERY}.",
@@ -613,7 +600,7 @@ public static class ToolRegistry
             Prop("confirm", "boolean", "Must be true to proceed", required: true),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_autostops_edit",
-            "Mutate an existing balance auto-stop filter at the given index (Stage 3.1). " +
+            "Mutate an existing balance auto-stop filter at the given index. " +
             "Every other field is optional — only the ones you pass are updated.",
             Prop("index", "string", "Zero-based filter index (use mt_autostops_list to discover)", required: true),
             Prop("max_loss", "string", "New lower bound"),
@@ -638,12 +625,12 @@ public static class ToolRegistry
             Prop("confirm", "boolean", "Must be true to proceed", required: true),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_autostops_stop",
-            "Disable a balance auto-stop filter (Stage 3.1). If index is omitted, the master switch is flipped to false.",
+            "Disable a balance auto-stop filter. If index is omitted, the master switch is flipped to false.",
             Prop("index", "string", "Zero-based filter index (optional — omit to flip master switch)"),
             Prop("confirm", "boolean", "Must be true to proceed", required: true),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_autostops_delete",
-            "Remove a balance auto-stop filter at the given index (Stage 3.1).",
+            "Remove a balance auto-stop filter at the given index.",
             Prop("index", "string", "Zero-based filter index", required: true),
             Prop("confirm", "boolean", "Must be true to proceed", required: true),
             Prop("profile", "string", "Target server profile"));
@@ -673,8 +660,8 @@ public static class ToolRegistry
             Prop("confirm", "boolean", "Must be true to proceed", required: true),
             Prop("profile", "string", "Target server profile"));
 
-        // Stage 5.2 — profile-level WhiteList typed CRUD.  Distinct from each
-        // algo's per-algo whiteList (Stage 4.2's bulk-edit target).  Storage
+        // Profile-level WhiteList typed CRUD.  Distinct from each
+        // algo's per-algo whiteList (mt_algos_bulk_edit's target).  Storage
         // shape mirrors BlackList: WhiteList.Symbols is a JArray of typed
         // entries {MarketType, QuoteAsset, Symbol, TimeFilter}; WhiteList.Quotes
         // omits the Symbol field.
@@ -682,10 +669,10 @@ public static class ToolRegistry
             "List profile-level WhiteList contents: WhiteList.Symbols (typed entries: market/quote/symbol), " +
             "WhiteList.Quotes (typed entries: market/quote), WhiteList.Only toggle. This is the PROFILE-level " +
             "whitelist (which pairs the profile is allowed to trade), distinct from per-algo whiteList that " +
-            "Stage 4.2's mt_algos_bulk_edit mutates.",
+            "mt_algos_bulk_edit mutates.",
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_whitelist_add",
-            "Add ONE typed whitelist entry (Stage 5.2). type=symbol needs market+quote+symbol; type=quote needs market+quote. " +
+            "Add ONE typed whitelist entry. type=symbol needs market+quote+symbol; type=quote needs market+quote. " +
             "If the entry is already present the call is a no-op (already_present warning).  For type=symbol the tool " +
             "also warns when the value isn't in the destination's ExchangeInfoStore pair cache (not_tradable).",
             Prop("type", "string", "symbol or quote", required: true),
@@ -695,7 +682,7 @@ public static class ToolRegistry
             Prop("confirm", "boolean", "Must be true to proceed", required: true),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_whitelist_remove",
-            "Remove ONE typed whitelist entry (Stage 5.2).  Removing a value that isn't present surfaces a " +
+            "Remove ONE typed whitelist entry. Removing a value that isn't present surfaces a " +
             "structured 'not_found' error.",
             Prop("type", "string", "symbol or quote", required: true),
             Prop("market", "string", "Market type", required: true),
@@ -704,7 +691,7 @@ public static class ToolRegistry
             Prop("confirm", "boolean", "Must be true to proceed", required: true),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_whitelist_bulk_add",
-            "Add MANY whitelist entries in one call (Stage 5.2).  For type=symbol, the (market, quote) prefix is " +
+            "Add MANY whitelist entries in one call. For type=symbol, the (market, quote) prefix is " +
             "constant and 'symbols' is a comma-separated list; for type=quote, 'quotes' is a comma-separated list " +
             "of quote assets under the given market. Items already present surface as already_present warnings; " +
             "for type=symbol any item not resolvable on the exchange surfaces as not_tradable (item still lands; " +
@@ -717,7 +704,7 @@ public static class ToolRegistry
             Prop("confirm", "boolean", "Must be true to proceed", required: true),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_whitelist_bulk_remove",
-            "Remove MANY whitelist entries in one call (Stage 5.2).  Items not present surface as not_found warnings; " +
+            "Remove MANY whitelist entries in one call. Items not present surface as not_found warnings; " +
             "an all-not-found call fails with a structured error.",
             Prop("type", "string", "symbol or quote", required: true),
             Prop("market", "string", "Market type", required: true),
@@ -797,10 +784,10 @@ public static class ToolRegistry
             "Delete a stored report set by name.",
             Prop("name", "string", "Name of the stored report set to delete", required: true));
 
-        // Stage 7.1 — automation-friendly rich-filter reports with structured rows,
+        // Automation-friendly rich-filter reports with structured rows,
         // inline CSV, and request-id observability for the synchronous wire.
         yield return Tool("mt_reports_query",
-            "Stage 7.1: Run a trade-report query and return structured JSON rows. " +
+            "Run a trade-report query and return structured JSON rows. " +
             "Each row carries id, open/close prices, qty, USDT-denominated profit/commission/total, " +
             "symbol, market_type, order side, closed_by, and timestamps.  The same rich filters " +
             "as mt_reports_trades are supported.  This is the structured-client variant — " +
@@ -819,7 +806,7 @@ public static class ToolRegistry
             Prop("max_rows",          "integer", "Cap rows in the response (default: 200, max: 5000)"),
             Prop("profile",           "string",  "Target server profile"));
         yield return Tool("mt_reports_csv_inline",
-            "Stage 7.1: Same filters as mt_reports_query but returns a CSV string in the response body " +
+            "Same filters as mt_reports_query but returns a CSV string in the response body " +
             "(no file written).  Useful when the agent wants to feed CSV directly into another tool " +
             "without round-tripping through the filesystem.",
             Prop("period",            "string",  "today | 24h | 7d | 30d | 90d (default 24h)"),
@@ -841,7 +828,7 @@ public static class ToolRegistry
             "acknowledges and records the cancellation intent so the caller can observe it.",
             Prop("request_id", "string", "request_id returned by a previous mt_reports_query or _csv_inline call", required: true));
         yield return Tool("mt_reports_status",
-            "Stage 7.1: Look up a query by request_id and return its status, filter " +
+            "Look up a query by request_id and return its status, filter " +
             "summary, latency, row_count, and end state.  Returns a structured 'not_found' " +
             "envelope when the request_id is unknown.",
             Prop("request_id", "string", "request_id to look up", required: true));
@@ -860,10 +847,10 @@ public static class ToolRegistry
             "Query trade reports across ALL connected servers with per-server P&L breakdown. " +
             "Shows trades, PnL, fees, win rate, volume per server with fleet totals.",
             Prop("period", "string", "Time period: today, 7d, 30d (default: 24h)"));
-        // Stage 5.1 — fleet margin-type campaign.  Mandatory dry-run by
+        // Fleet margin-type campaign.  Mandatory dry-run by
         // default; confirm=true commits.
         yield return Tool("mt_fleet_set_margin_type",
-            "Stage 5.1 — apply a CROSS/ISOLATED margin-type change to <symbol> across the entire fleet " +
+            "Apply a CROSS/ISOLATED margin-type change to <symbol> across the entire fleet " +
             "(or a filtered subset).  WITHOUT confirm=true the response is a DRY RUN preview: per-profile " +
             "current_margin (where observable), proposed_margin, would_change flag, and any skip_reason " +
             "(disconnected, symbol_not_in_pair_cache).  Touches venue-side state on commit and is only reversible " +
@@ -891,11 +878,11 @@ public static class ToolRegistry
             "Clear cached notification history for a connection.",
             Prop("profile", "string", "Target server profile"));
 
-        // Stage 6.2 — typed notification-config introspection (read-only).
+        // Typed notification-config introspection (read-only).
         // MTShared's NotificationSettingsEditor mutation surface is NOT wired
         // through CoreConnection on this build (it needs a ProfileManager +
         // per-profile CommonProfileSettings).  These four tools surface the
-        // typed catalog so operators can introspect what notifications exist,
+        // typed catalog so callers can introspect what notifications exist,
         // their groups, defaults, and target channels.  The capabilities tool
         // also reports the mutation gap honestly.
         yield return Tool("mt_notifications_config_groups",
@@ -1010,12 +997,12 @@ public static class ToolRegistry
             "Unsubscribe from alert history updates.",
             Prop("profile", "string", "Target server profile"));
 
-        // Stage 6.3 — Alerts CRUD (save / delete / set-running).
+        // Alerts CRUD (save / delete / set-running).
         // Mutation requires a real subtype payload (AlertRequestSaveData /
         // DeleteData / StartData / StopData).  These tools build the
         // structured object from typed args and send via SendAlertsRequest.
         yield return Tool("mt_alerts_save",
-            "Stage 6.3: Create or update a single price alert. " +
+            "Create or update a single price alert. " +
             "When alert_id is omitted (or 0), a new alert is created; non-zero alert_id updates that alert.",
             Prop("name",            "string",  "Display name (e.g. 'BTC drops to 70k')",                    required: true),
             Prop("symbol",          "string",  "Symbol (e.g. 'btcusdt')",                                    required: true),
@@ -1028,13 +1015,13 @@ public static class ToolRegistry
             Prop("repeat_type",     "string",  "ONLY_ONCE | EVERY_TIME (default ONLY_ONCE)"),
             Prop("profile",         "string",  "Target server profile"));
         yield return Tool("mt_alerts_delete",
-            "Stage 6.3: Delete alert(s) by id, or delete ALL alerts on the profile. Requires confirm=true.",
+            "Delete alert(s) by id, or delete ALL alerts on the profile. Requires confirm=true.",
             Prop("alert_ids",       "string",  "Comma-separated alert id list (ignored when apply_to_all=true)"),
             Prop("apply_to_all",    "boolean", "Delete every alert on the profile"),
             Prop("confirm",         "boolean", "Must be true to actually delete",                            required: true),
             Prop("profile",         "string",  "Target server profile"));
         yield return Tool("mt_alerts_set_running",
-            "Stage 6.3: Start (running=true) or stop (running=false) alert(s). Requires confirm=true.",
+            "Start (running=true) or stop (running=false) alert(s). Requires confirm=true.",
             Prop("running",         "boolean", "true → START, false → STOP",                                 required: true),
             Prop("alert_ids",       "string",  "Comma-separated alert id list (ignored when apply_to_all=true)"),
             Prop("apply_to_all",    "boolean", "Apply to every alert on the profile"),
@@ -1224,7 +1211,7 @@ public static class ToolRegistry
             "Get profile-level settings (all server configuration key-values).",
             Prop("profile_name", "string", "Profile name (empty for current)"),
             Prop("profile", "string", "Target server profile"));
-        // Stage 6.7 — list keys + bulk delete by key.
+        // List keys + bulk delete by key.
         yield return Tool("mt_profile_settings_list",
             "List the KEYS of the connected profile's settings (read-only). " +
             "Enumerates the keys of the CURRENT profile on the connection — the underlying call " +
@@ -1251,7 +1238,7 @@ public static class ToolRegistry
             Prop("confirm", "boolean", "Must be true to actually update", required: true),
             Prop("profile", "string", "Target server profile"));
 
-        // Stage 5.3 — local profiles.json / folders.json CRUD.  All tools
+        // Local profiles.json / folders.json CRUD.  All tools
         // operate on the on-disk config; no wire calls to MTCore.
         yield return Tool("mt_profiles_list",
             "List every profile in ~/.config/mt-textclient/profiles.json with its folder + connection data.");
@@ -1364,18 +1351,15 @@ public static class ToolRegistry
     }
     private static IEnumerable<JObject> GetInternalToolDefinitions()
     {
-        // MT-006
         yield return Tool("mt_metrics_get",
             "Get Prometheus-compatible metrics for tool calls, errors, events, and connections");
 
-        // MT-011
         yield return Tool("mt_rate_status",
-            "MT-011: Return sliding-window rate limit status per category (orders/market/account). " +
+            "Return sliding-window rate limit status per category (orders/market/account). " +
             "Shows limit, used, and remaining capacity within the current window.");
 
-        // HK-001
         yield return Tool("mt_vault_store_profile",
-            "HK-001: Store an exchange API profile (api_key + api_secret) in HashiCorp Vault. " +
+            "Store an exchange API profile (api_key + api_secret) in HashiCorp Vault. " +
             "Credentials are stored securely and never written to disk.",
             Prop("name",        "string", "Profile name (e.g. bybit_main)",   required: true),
             Prop("api_key",     "string", "Exchange API key",                  required: true),
@@ -1383,25 +1367,24 @@ public static class ToolRegistry
             Prop("vault_addr",  "string", "Vault address (default: dev server)"),
             Prop("vault_token", "string", "Vault token (default: dev token)"));
         yield return Tool("mt_vault_list_profiles",
-            "HK-001: List all API profiles stored in HashiCorp Vault.",
+            "List all API profiles stored in HashiCorp Vault.",
             Prop("vault_addr",  "string", "Vault address (default: dev server)"),
             Prop("vault_token", "string", "Vault token (default: dev token)"));
-        // Stage 6.6 — read + delete for HK-001 vault credentials.
+        // Read + delete for vault credentials.
         yield return Tool("mt_vault_get_profile",
-            "Stage 6.6: Retrieve a stored API profile from HashiCorp Vault. " +
+            "Retrieve a stored API profile from HashiCorp Vault. " +
             "Returns api_key, api_secret, and the stored_at timestamp.",
             Prop("name",        "string", "Profile name to fetch", required: true),
             Prop("vault_addr",  "string", "Vault address (default: dev server)"),
             Prop("vault_token", "string", "Vault token (default: dev token)"));
         yield return Tool("mt_vault_delete_profile",
-            "Stage 6.6: Permanently delete an API profile from HashiCorp Vault " +
+            "Permanently delete an API profile from HashiCorp Vault " +
             "(KV v2 destroy-all-versions). Requires confirm=true.",
             Prop("name",        "string", "Profile name to delete",                                       required: true),
             Prop("confirm",     "boolean", "Must be true to actually delete (confirm gate enforced)",     required: true),
             Prop("vault_addr",  "string", "Vault address (default: dev server)"),
             Prop("vault_token", "string", "Vault token (default: dev token)"));
 
-        // MT-009
         yield return Tool("mt_config_snapshot",
             "Snapshot all settings + algo list for a profile to a timestamped JSON file",
             Prop("profile", "string", "Target server profile"));
@@ -1411,30 +1394,27 @@ public static class ToolRegistry
             Prop("confirm", "boolean", "Must be true to actually apply"),
             Prop("profile", "string", "Target server profile"));
 
-        // MT-010
         yield return Tool("mt_settings_diff",
             "Diff settings between two profiles — shows added, removed, changed keys",
             Prop("profile_a", "string", "First server profile", required: true),
             Prop("profile_b", "string", "Second server profile", required: true));
-        // Stage 6.10 — snapshot-to-snapshot diff (pure client-side).
+        // Snapshot-to-snapshot diff (pure client-side).
         yield return Tool("mt_settings_diff_snapshots",
-            "Stage 6.10 — diff two snapshot files written by mt_config_snapshot.  Pure client-side; no MTCore " +
+            "Diff two snapshot files written by mt_config_snapshot.  Pure client-side; no MTCore " +
             "wire calls.  Each snapshot path may be absolute or a bare filename under ~/.mt-snapshots/.  " +
             "Reports added/removed/changed keys in the snapshot's settings block + the two snapshots' " +
             "captured_at timestamps and profile names.",
             Prop("snapshot_a", "string", "Path or filename of first snapshot", required: true),
             Prop("snapshot_b", "string", "Path or filename of second snapshot", required: true));
 
-        // MT-023
         yield return Tool("mt_core_shutdown",
-            "MT-023: Send a service command to MTCore (shutdown or restart). Requires confirm=true.",
+            "Send a service command to MTCore (shutdown or restart). Requires confirm=true.",
             Prop("command",  "string",  "Command: shutdown | restart | restart_update | restart_clear_orders | restart_clear_archive (default: shutdown)"),
             Prop("confirm",  "boolean", "Must be true to proceed",  required: true),
             Prop("profile",  "string",  "Target server profile (default: first active)"));
 
-        // MT-024
         yield return Tool("mt_algos_tpsl_change",
-            "MT-024: Send a TP/SL algorithm change request to MT-Core (fire-and-forget).",
+            "Send a TP/SL algorithm change request to MT-Core (fire-and-forget).",
             Prop("tp_enabled",       "boolean", "Enable take profit"),
             Prop("tp_pct",           "number",  "Take profit percentage"),
             Prop("sl_enabled",       "boolean", "Enable stop loss"),
@@ -1444,7 +1424,7 @@ public static class ToolRegistry
             Prop("profile",          "string",  "Target server profile"));
 
         yield return Tool("mt_algos_profiling",
-            "MT-024: Request algorithm profiling data from MT-Core. Result is delivered asynchronously via mt_events_poll.",
+            "Request algorithm profiling data from MT-Core. Result is delivered asynchronously via mt_events_poll.",
             Prop("symbol",   "string",  "Trading symbol (e.g. BTCUSDT)", required: true),
             Prop("algo_id",  "integer", "Algorithm ID (0 = all algos for symbol)"),
             Prop("market",   "string",  "Market type: FUTURES | INVERSE | SPOT (default: FUTURES)"),
@@ -1464,12 +1444,12 @@ public static class ToolRegistry
     private static IEnumerable<JObject> GetEventToolDefinitions()
     {
         yield return Tool("mt_events_poll",
-            "MT-005: Poll buffered events (algo state changes, connection events, errors). " +
+            "Poll buffered events (algo state changes, connection events, errors). " +
             "Returns events since 'since_seq' (or last N if omitted). Use 'current_seq' from response as next 'since_seq'.",
             Prop("since_seq", "integer", "Return events with seq > since_seq (0 = last N events)"),
             Prop("n",         "integer", "Max events to return when since_seq=0 (default: 50)"));
         yield return Tool("mt_events_status",
-            "MT-005: Show event stream status — current sequence number, SSE server port, URLs.",
+            "Show event stream status — current sequence number, SSE server port, URLs.",
             /* no fields */ Prop("_", "string", "unused", required: false));
         yield return Tool("mt_config_import_algos",
             "Import algorithms from algorithms.config JSON (native MTCore format). Bypasses V2 text parsing.",
@@ -1499,9 +1479,8 @@ public static class ToolRegistry
         // Position Close/Reset by TPSL
         yield return Tool("mt_orders_close_by_tpsl",
             "Close a position using TPSL mechanism (requires --confirm). " +
-            "Stage 1.3: order_type (MARKET|LIMIT) selects whether the closing leg is filled at " +
-            "market (default) or as a LIMIT order at the last price. Semantic-first naming per CD-6 — " +
-            "we do not mirror v423's controller swap.",
+            "The order_type argument (MARKET|LIMIT) selects whether the closing leg is filled at " +
+            "market (default) or as a LIMIT order at the last price.",
             Prop("symbol", "string", "Trading pair symbol", required: true),
             Prop("market", "string", "Market type: FUTURES, SPOT"),
             Prop("side", "string", "Position side: LONG, SHORT, BOTH"),
@@ -1516,7 +1495,7 @@ public static class ToolRegistry
             Prop("profile", "string", "Target server profile"),
             Prop("confirm", "boolean", "Safety confirmation", required: true));
 
-        // Stage 2.1 — Active Order TP/SL/TS Update
+        // Active Order TP/SL/TS Update
         // Wires the MTShared SendOrderTPSLUpdateRequest wire method. Operates on
         // an already-placed order / open position identified by (symbol, side,
         // market, position_side).  Sets Take-Profit % and Stop-Loss % (each
@@ -1557,7 +1536,7 @@ public static class ToolRegistry
             Prop("profile", "string", "Target server profile"),
             Prop("confirm", "boolean", "Safety confirmation", required: true));
 
-        // Stage 1.1 — TPSL bulk operations
+        // TPSL bulk operations
         yield return Tool("mt_tpsl_cancel_many",
             "Cancel multiple TPSL positions by ID. Loops the existing single-item cancel wire " +
             "method; per-ID results are returned in the response so a single bad ID doesn't abort " +
@@ -1572,7 +1551,7 @@ public static class ToolRegistry
             Prop("profile", "string", "Target server profile"),
             Prop("confirm", "boolean", "Safety confirmation", required: true));
 
-        // Stage 1.2 — TPSL panic close
+        // TPSL panic close
         yield return Tool("mt_tpsl_panic",
             "Immediately MARKET-close the position underlying the named TPSL. Looks the TPSL up " +
             "in the local store (requires an active TPSL subscription) and routes through " +

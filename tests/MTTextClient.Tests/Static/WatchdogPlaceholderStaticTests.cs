@@ -14,7 +14,7 @@ namespace MTTextClient.Tests.Static;
 /// can find them by grepping for the <c>status: placeholder</c> marker,
 /// and so the tools cannot silently disappear from the catalog or shed
 /// the marker (which would imply real implementation without the doc /
-/// LiveTrade pairing required by the operator's process).
+/// LiveTrade pairing required to ship them).
 ///
 /// See <c>docs/watchdog-integration.md</c> for the type inventory.
 /// </summary>

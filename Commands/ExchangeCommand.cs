@@ -81,7 +81,7 @@ public sealed class ExchangeCommand : ICommand
             "ticker24" or "ticker" => Ticker24(conn, subArgs),
             "klines" or "candles" => Klines(conn, subArgs),
             "trades" or "recent-trades" => Trades(conn, subArgs),
-            // Stage 6.9 — funding rate + leverage brackets (read-only).
+            // Funding rate + leverage brackets (read-only).
             "funding-rate" => FundingRate(conn, subArgs),
             "leverage-brackets" => LeverageBrackets(conn, subArgs),
             _ => CommandResult.Fail($"Unknown subcommand: {subCmd}. {Usage}")
@@ -359,7 +359,7 @@ public sealed class ExchangeCommand : ICommand
 
     #endregion
 
-    #region Phase K: New Market Data Commands
+    #region New Market Data Commands
 
     private CommandResult Ticker24(CoreConnection conn, string[] args)
     {
@@ -383,10 +383,9 @@ public sealed class ExchangeCommand : ICommand
             marketType = pairInfo.MarketType;
         }
 
-        // MCP-003 / Stage 7.2: ticker24 over a cold/empty exchange-info cache
-        // can return null silently.  RequestExecutor.ExecuteWithFallback
-        // centralises the empty-envelope recipe shared with ReportsCommand's
-        // GetReportComments / GetReportDates handlers.
+        // Ticker24 over a cold/empty exchange-info cache can return null silently.
+        // RequestExecutor.ExecuteWithFallback centralises the empty-envelope recipe
+        // shared with ReportsCommand's GetReportComments / GetReportDates handlers.
         MTShared.Network.TickerPrice24ListData result = _executor.ExecuteWithFallback(
             () => conn.RequestTicker24(marketType, symbol),
             () => new MTShared.Network.TickerPrice24ListData
@@ -653,10 +652,10 @@ public sealed class ExchangeCommand : ICommand
         return result;
     }
 
-    // ── Stage 6.9 — funding rate + leverage brackets (read-only) ────────────
+    // ── Funding rate + leverage brackets (read-only) ────────────
 
     /// <summary>
-    /// Stage 6.9 — return the funding-rate fields cached on this symbol's
+    /// Return the funding-rate fields cached on this symbol's
     /// LiveMarketMetrics.  Discovery findings:
     ///   • There is NO standalone <c>SendFundingRateRequest</c> wire method.
     ///   • Funding fields live on <c>MTShared.LiveMarket.LiveMarketMetrics</c>:
@@ -730,7 +729,7 @@ public sealed class ExchangeCommand : ICommand
     }
 
     /// <summary>
-    /// Stage 6.9 — return whatever leverage information is locally available.
+    /// Return whatever leverage information is locally available.
     ///
     /// <para>Discovery findings:</para>
     /// <list type="bullet">
@@ -786,7 +785,7 @@ public sealed class ExchangeCommand : ICommand
                 ObservedPositionLeverage = observedLeverage,
                 BracketsExposedByMtShared = false,
                 Notice = "leverage_brackets_not_exposed_by_mtshared: MTShared has no LeverageBracket* type. " +
-                         "The Stage 6.9 plan's request is partially fulfilled — current per-symbol leverage is readable " +
+                         "The request is partially fulfilled — current per-symbol leverage is readable " +
                          "from open positions, but the full bracket tier table (notional-range → max-leverage map) " +
                          "is not modelled by the vendor library on this build. Future work: extend CoreConnection " +
                          "with a read wrapper for LeverageInfoUpdateData (3 dictionaries: leverages, maxLeverages, riskLimits).",

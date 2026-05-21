@@ -7,10 +7,8 @@ namespace MTTextClient.Tests.Tools;
 /// <summary>
 /// TP/SL family. <c>list</c>, <c>subscribe</c>, <c>unsubscribe</c> are
 /// non-destructive Smoke. <c>cancel</c> / <c>split</c> / <c>join</c> mutate
-/// live TPSL state and are LiveTrade.
-///
-/// Bulk variants (<c>cancel_list</c>, <c>split_list</c>, <c>panic</c>) and
-/// per-attribute <c>update_settings</c> land in Stage 1 of the unified plan.
+/// live TPSL state and are LiveTrade.  Bulk variants live in
+/// <see cref="TpslCancelSplitManySmokeTests"/>.
 /// </summary>
 [Collection(BenchCollection.Name)]
 public sealed class TpslTests
@@ -68,8 +66,8 @@ public sealed class TpslTests
         Skip.If(!EnvFlags.TestingEnv || !_bench.BenchAvailable, _bench.PreflightMessage);
         await _mcp.WaitForConnected(EnvFlags.DefaultBenchProfile);
 
-        // fix/known-defects-batch-1: tpsl_ids is now an array of string in the
-        // schema. Two numeric-but-nonexistent IDs should round-trip through the
+        // tpsl_ids is an array of string in the schema. Two
+        // numeric-but-nonexistent IDs should round-trip through the
         // dispatcher (space-joined), pass the parser ("Need at least 2 IDs"),
         // and reach the server which then reports "ID(s) not found".
         var resp = await _mcp.CallTool("mt_tpsl_join", new
