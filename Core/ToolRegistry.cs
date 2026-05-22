@@ -374,7 +374,12 @@ public static class ToolRegistry
             "for SPOT/one-way leave position_side unset or BOTH. " +
             "market (FUTURES|SPOT) lets callers force the venue when a symbol exists in both — without it the " +
             "server picks whichever pair-cache entry comes back first (BTCUSDT on Binance hits SPOT, which on " +
-            "this build refuses orders while SPOT UDS is offline).",
+            "this build refuses orders while SPOT UDS is offline). " +
+            "TPSL on placement: set tp_percent and/or sl_percent (with optional tp_type/sl_type/trailing_stop/" +
+            "trailing_spread) to attach take-profit and stop-loss settings to the new order at placement time. " +
+            "This is the safe pattern — orders placed without TPSL are not recorded in the reports DB " +
+            "even after they close. Use mt_orders_update_tpsl only to MODIFY an existing order's TPSL, " +
+            "not to attach it to a new one. See docs/TPSL_SAFETY_GUIDE.md.",
             Prop("symbol", "string", "Symbol (e.g. BTCUSDT)", required: true),
             Prop("side", "string", "Order side: BUY or SELL", required: true),
             Prop("qty", "string", "Order quantity", required: true),
@@ -394,6 +399,26 @@ public static class ToolRegistry
                 "Submit as an iceberg order. The flag is a simple on/off toggle; there is no separate " +
                 "visible-quantity field. Whether the venue honours iceberg is venue-specific — the caller " +
                 "is responsible for ensuring the destination exchange supports iceberg on this symbol/market."),
+            Prop("tp_percent", "string",
+                "Take-profit distance from entry as a percent (e.g. \"0.3\" = +0.3%). " +
+                "When set, populates OrderRequestData.takeProfitSettings.{isOn=true, percentage, orderType} " +
+                "so MTCore tracks the round-trip through TPSL bookkeeping and reports records it on close."),
+            Prop("tp_type", "string",
+                "Take-profit exit order type: LIMIT (default) or MARKET. Maps to takeProfitSettings.orderType. " +
+                "Ignored when tp_percent is unset."),
+            Prop("sl_percent", "string",
+                "Stop-loss distance from entry as a percent (e.g. \"0.5\" = -0.5%). " +
+                "When set, populates OrderRequestData.stopLossSettings.{isOn=true, percentage, orderType} " +
+                "so MTCore tracks the round-trip through TPSL bookkeeping."),
+            Prop("sl_type", "string",
+                "Stop-loss exit order type: MARKET (default) or LIMIT. Maps to stopLossSettings.orderType. " +
+                "Ignored when sl_percent is unset."),
+            Prop("trailing_stop", "boolean",
+                "Enable trailing stop-loss. Requires sl_percent (trigger level) and trailing_spread. " +
+                "Maps to stopLossSettings.tralingIsOn."),
+            Prop("trailing_spread", "string",
+                "Trailing distance as a percent (e.g. \"0.2\" = 0.2% trailing). Maps to " +
+                "stopLossSettings.trailingSpread. Ignored when trailing_stop is false."),
             Prop("confirm", "boolean", "Must be true to actually place"),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_orders_move",

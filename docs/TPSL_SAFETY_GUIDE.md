@@ -11,13 +11,19 @@
 ## TL;DR
 
 ```
-1. Place order              mt_orders_place
-2. Attach TPSL immediately  mt_orders_update_tpsl   ← critical
-3. Subscribe to TPSL feed   mt_tpsl_subscribe       ← once per session
-4. Close via TPSL pathway   mt_orders_close_by_tpsl ← NOT mt_orders_close
+1. Place order WITH TPSL inline   mt_orders_place tp_percent=… sl_percent=…  ← preferred
+2. Subscribe to TPSL feed         mt_tpsl_subscribe         ← once per session
+3. Close via TPSL pathway         mt_orders_close_by_tpsl   ← NOT mt_orders_close
 ```
 
-Skip step 2 or 4, and the trade exists on the exchange but not in MTCore's
+The new-order request (`OrderRequestData`) carries `takeProfitSettings`
+and `stopLossSettings` natively. Setting them at placement time is the
+correct vendor pattern — MTCore tracks the trade through TPSL bookkeeping
+from the first wire byte. `mt_orders_update_tpsl` is for **modifying** an
+existing order's TPSL (moving the TP percent, switching trailing on),
+not for attaching it after the fact.
+
+Skip step 1 or 3, and the trade exists on the exchange but not in MTCore's
 reports DB. Operators inspecting `mt_reports_trades` will see "no rows"
 even though the position cycled through OPEN → CLOSED.
 
@@ -51,7 +57,7 @@ Visible symptoms when the rule is followed:
 
 ## Step-by-step
 
-### Step 1 — Place the entry order
+### Step 1 — Place the entry order **with TPSL inline**
 
 ```bash
 mt_orders_place \
@@ -62,8 +68,23 @@ mt_orders_place \
   type=LIMIT \
   market=FUTURES \
   position_side=BOTH \
+  tp_percent=0.3 \
+  tp_type=LIMIT \
+  sl_percent=0.5 \
+  sl_type=MARKET \
   confirm=true \
   profile=bench_01
+```
+
+The TPSL params populate `OrderRequestData.takeProfitSettings` and
+`stopLossSettings` on the wire request itself. MTCore activates its
+TPSL bookkeeping path from the first byte — there is no race between
+placement and a separate update call.
+
+Optional trailing stop:
+
+```bash
+mt_orders_place ... sl_percent=0.5 trailing_stop=true trailing_spread=0.2 ...
 ```
 
 Notes:
@@ -77,36 +98,27 @@ Notes:
   ~2 seconds later. If the position appears, the order filled via
   WebSocket.
 
-### Step 2 — Attach TPSL **immediately**
+### When to use `mt_orders_update_tpsl` instead
 
-```bash
-mt_orders_update_tpsl \
-  symbol=BTCUSDT \
-  side=BUY \
-  market=FUTURES \
-  position_side=BOTH \
-  take_profit_percent=0.3 \
-  stop_loss_percent=0.5 \
-  confirm=true \
-  profile=bench_01
-```
+`mt_orders_update_tpsl` is for **modifying** TPSL on an already-placed
+order — e.g. moving the take-profit from +0.3% to +0.5% mid-trade, or
+switching trailing on after entry. Do NOT use it as a substitute for
+the inline params at placement; that creates a window where the order
+is alive without TPSL, and on some builds the update wire call's ack
+is unreliable.
 
-Without this step, the position is "naked" — no take-profit, no stop-loss,
-and the eventual close (whatever path) will NOT be recorded as a
-completed trade in reports.
-
-### Step 3 — Subscribe to the TPSL feed (once per session)
+### Step 2 — Subscribe to the TPSL feed (once per session)
 
 ```bash
 mt_tpsl_subscribe profile=bench_01
-mt_tpsl_list      profile=bench_01   # should show the TPSL just attached
+mt_tpsl_list      profile=bench_01   # should show the TPSL attached at placement
 ```
 
 `mt_tpsl_list` returns "No TPSL data. Use 'tpsl subscribe' first." until
 you explicitly subscribe. The subscribe is a one-shot per profile per
 process — no need to re-subscribe before every list.
 
-### Step 4 — Close via the TPSL pathway
+### Step 3 — Close via the TPSL pathway
 
 Two valid close paths exist, both go through MTCore's TPSL bookkeeping:
 

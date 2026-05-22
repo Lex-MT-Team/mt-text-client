@@ -1760,7 +1760,60 @@ public sealed class McpServer
                 parts.Add($"--client-order-id {safe}");
         }
 
+        // TPSL inline params — attached to OrderRequestData.takeProfitSettings /
+        // stopLossSettings on placement. The safe pattern: place + TPSL in one
+        // wire call. See docs/TPSL_SAFETY_GUIDE.md.
+        string? tpPercent = arguments["tp_percent"]?.Value<string>();
+        if (!string.IsNullOrWhiteSpace(tpPercent))
+        {
+            parts.Add($"--tp-percent {SanitizeNumeric(tpPercent)}");
+            string? tpType = arguments["tp_type"]?.Value<string>();
+            if (!string.IsNullOrWhiteSpace(tpType))
+            {
+                string norm = tpType.Trim().ToUpperInvariant();
+                if (norm == "LIMIT" || norm == "MARKET")
+                    parts.Add($"--tp-type {norm}");
+            }
+        }
+        string? slPercent = arguments["sl_percent"]?.Value<string>();
+        if (!string.IsNullOrWhiteSpace(slPercent))
+        {
+            parts.Add($"--sl-percent {SanitizeNumeric(slPercent)}");
+            string? slType = arguments["sl_type"]?.Value<string>();
+            if (!string.IsNullOrWhiteSpace(slType))
+            {
+                string norm = slType.Trim().ToUpperInvariant();
+                if (norm == "LIMIT" || norm == "MARKET")
+                    parts.Add($"--sl-type {norm}");
+            }
+            bool trailing = arguments["trailing_stop"]?.Value<bool>() ?? false;
+            if (trailing)
+            {
+                parts.Add("--trailing-stop");
+                string? trailSpread = arguments["trailing_spread"]?.Value<string>();
+                if (!string.IsNullOrWhiteSpace(trailSpread))
+                    parts.Add($"--trailing-spread {SanitizeNumeric(trailSpread)}");
+            }
+        }
+
         return string.Join(" ", parts) + profileSuffix + confirm;
+    }
+
+    /// <summary>Strip non-numeric characters so the CLI fragment can't be
+    /// hijacked through whitespace or shell metacharacters embedded in a
+    /// numeric MCP argument. Allows digits, '.', and a single leading '-'.</summary>
+    private static string SanitizeNumeric(string s)
+    {
+        var sb = new System.Text.StringBuilder();
+        bool sawDot = false;
+        for (int i = 0; i < s.Length && sb.Length < 16; i++)
+        {
+            char c = s[i];
+            if (char.IsDigit(c)) sb.Append(c);
+            else if (c == '.' && !sawDot) { sb.Append(c); sawDot = true; }
+            else if (c == '-' && sb.Length == 0) sb.Append(c);
+        }
+        return sb.Length == 0 ? "0" : sb.ToString();
     }
     #endregion
 

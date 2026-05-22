@@ -102,7 +102,7 @@
   "mt_orders_cancel_all": "orders cancel-all <symbol> @<profile> --confirm",
   "mt_orders_close": "orders close <symbol> <percentage> @<profile> --confirm",
   "mt_orders_close_all": "orders close-all @<profile> --confirm",
-  "mt_orders_place": "orders place <symbol> <side> <qty> <price> --type <type> --reduce-only --position-side <position_side> --emulated --iceberg --client-order-id client_order_id @<profile> --confirm",
+  "mt_orders_place": "orders place <symbol> <side> <qty> <price> --type <type> --reduce-only --position-side <position_side> --emulated --iceberg --client-order-id client_order_id --tp-percent 0 --sl-percent 0 --trailing-stop --trailing-spread 0 @<profile> --confirm",
   "mt_orders_move": "orders move <client_order_id> <new_price> @<profile> --confirm",
   "mt_orders_set_leverage": "orders set-leverage <symbol> <leverage> @<profile> --confirm",
   "mt_orders_set_margin_type": "orders set-margin-type <symbol> <margin_type> @<profile> --confirm",
