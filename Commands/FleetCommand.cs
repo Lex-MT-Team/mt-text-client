@@ -1356,15 +1356,32 @@ private CommandResult HandleBatchConfig(string[] args)
         double totalPnl = 0;
         double totalFees = 0;
 
-        foreach (CoreConnection c in connections)
+        // Fan out per-server RequestReports calls in parallel — each call is
+        // capped at 5s in CoreConnection, so a 30-profile sweep needs ~6s
+        // instead of ~150s sequential. Capture results keyed by connection
+        // index so the table row order matches the input order.
+        var fetched = new ReportListData?[connections.Count];
+        var parallelOpts = new System.Threading.Tasks.ParallelOptions
         {
+            MaxDegreeOfParallelism = 8,
+        };
+        System.Threading.Tasks.Parallel.For(0, connections.Count, parallelOpts, i =>
+        {
+            CoreConnection c = connections[i];
+            if (!c.IsConnected) { return; }
+            fetched[i] = c.RequestReports(unixFrom, unixTo);
+        });
+
+        for (int i = 0; i < connections.Count; i++)
+        {
+            CoreConnection c = connections[i];
             if (!c.IsConnected)
             {
                 table.AddRow(c.Name, "—", "—", "—", "—", "—");
                 continue;
             }
 
-            ReportListData? reportList = c.RequestReports(unixFrom, unixTo);
+            ReportListData? reportList = fetched[i];
             if (reportList?.reports == null || reportList.reports.Count == 0)
             {
                 table.AddRow(c.Name, "0", "$0.00", "$0.00", "—", "$0");

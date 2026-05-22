@@ -59,6 +59,14 @@ public sealed class CoreConnection : IDisposable
     // order so the dispatcher can resolve them as the notifications arrive.
     private readonly System.Collections.Concurrent.ConcurrentQueue<TaskCompletionSource<NotificationMessageData?>> _pendingAlgoRequests = new();
     private readonly System.Collections.Concurrent.ConcurrentQueue<TaskCompletionSource<NotificationMessageData?>> _pendingAlgoListRequests = new();
+    // ReportListRequest responses on MTCore 0.7.23902 sometimes never trigger
+    // the inline send callback (profile-specific — observed on freshly initialised
+    // BYBIT bench profile). A ReportsUpdateNotificationData is pushed on the
+    // notification channel instead. The notification carries no report payload
+    // (only descriptor/profileName/creationTime), so the dispatcher signals an
+    // empty ReportListData and the caller treats it as "MTCore acknowledged but
+    // returned no rows" — the same outcome as a genuine empty result.
+    private readonly System.Collections.Concurrent.ConcurrentQueue<TaskCompletionSource<ReportListData?>> _pendingReportRequests = new();
     private int _alertsSubscriptionId;
     private int _alertHistorySubscriptionId;
     private readonly ConcurrentDictionary<string, int> _tradeSubscriptionIds = new ConcurrentDictionary<string, int>();
@@ -759,7 +767,7 @@ public sealed class CoreConnection : IDisposable
         List<MarketType>? marketTypes = null,
         List<OrderSideType>? orderSideTypes = null,
         TradeModeType tradeModeType = TradeModeType.UNKNOWN,
-        int timeoutMs = 30_000)
+        int timeoutMs = 5_000)
     {
         if (_udpClient == null)
         {
@@ -797,8 +805,25 @@ public sealed class CoreConnection : IDisposable
             request.orderSideTypes = orderSideTypes;
         }
 
-        return SendAndWait<ReportListData>(
-            cb => _udpClient.SendReportListRequest(request, cb), timeoutMs);
+        if (!_notificationCallbackRegistered)
+        {
+            return SendAndWait<ReportListData>(
+                cb => _udpClient.SendReportListRequest(request, cb), timeoutMs);
+        }
+
+        // Race two paths and take whichever lands first:
+        //   (a) inline send callback — fires on profiles where MTCore still
+        //       honours the legacy callback for SendReportListRequest;
+        //   (b) ReportsUpdateNotificationData on the notification channel —
+        //       fires on profiles that switched to push-only; carries no
+        //       payload, so we synthesise an empty ReportListData.
+        var tcs = new TaskCompletionSource<ReportListData?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _pendingReportRequests.Enqueue(tcs);
+        using var cts = new CancellationTokenSource(timeoutMs);
+        using var reg = cts.Token.Register(
+            static state => ((TaskCompletionSource<ReportListData?>)state!).TrySetResult(null), tcs);
+        _udpClient.SendReportListRequest(request, data => tcs.TrySetResult(data));
+        return tcs.Task.GetAwaiter().GetResult();
     }
 
 
@@ -1237,6 +1262,18 @@ public sealed class CoreConnection : IDisposable
                         tcs.TrySetResult(BuildNotificationResponse(data, message));
                     }
                 }
+                else if (typeName == "ReportsUpdate")
+                {
+                    // ReportsUpdateNotificationData carries no report payload,
+                    // so the pending report-request TCS is signalled with an
+                    // empty ReportListData. Callers that expected non-empty
+                    // results should fall back to mt_reports_dates / live
+                    // execution streams (mt_account_executions).
+                    if (_pendingReportRequests.TryDequeue(out var rTcs))
+                    {
+                        rTcs.TrySetResult(BuildEmptyReportListResponse());
+                    }
+                }
             },
             _notificationSubscriptionId);
 
@@ -1256,6 +1293,24 @@ public sealed class CoreConnection : IDisposable
         return new NotificationMessageData
         {
             msgString = message,
+        };
+    }
+
+    /// <summary>Synthesise an empty ReportListData for the ReportsUpdate push path.
+    /// The notification carries no payload, so callers see an empty result and a
+    /// fallback message can point them at alternative tools that surface trade
+    /// data live (mt_reports_dates, mt_account_executions).</summary>
+    private static ReportListData BuildEmptyReportListResponse()
+    {
+        return new ReportListData
+        {
+            reports = new System.Collections.Generic.List<ReportData>(),
+            deletedCount = 0,
+            total = 0,
+            orderCount = 0,
+            isStream = false,
+            streamTotal = 0,
+            streamItem = 0,
         };
     }
 

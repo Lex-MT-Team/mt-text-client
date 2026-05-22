@@ -2102,7 +2102,13 @@ public sealed class McpServer
             Core.ReportsRequestRegistry.Error(entry.RequestId, "wire_returned_null");
             return new JObject
             {
-                ["error"] = "reports_query_failed: wire returned null (timeout or no_connection)",
+                ["error"] = "reports_query_failed: MTCore did not respond on this profile. " +
+                            "Some MTCore builds (observed on freshly-initialised BYBIT bench) drop " +
+                            "ReportListRequest without firing a callback or push notification. " +
+                            "Fall back to: mt_reports_dates (lists available dates), " +
+                            "mt_account_executions (live fill stream), or mt_marketdata_trades_subscribe " +
+                            "for symbol-level trade history. Phase 4 (real-order placement) will populate " +
+                            "this profile's Firebird DB so future ReportListRequest calls succeed.",
                 ["request_id"] = entry.RequestId,
             };
         }
