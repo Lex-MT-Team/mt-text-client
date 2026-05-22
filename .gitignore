@@ -29,3 +29,12 @@ TestResults/
 
 # Local worktree/agent scaffolding — never committed.
 .claude/
+
+# Per-developer MCP server config (Claude Code project-scoped).
+# Each contributor opts in to their own toolchain (codegraph, etc.).
+.mcp.json
+
+# Local code-intelligence index — machine-specific SQLite graph.
+# Other Claude Code instances may point at this directory via the
+# codegraph projectPath argument to read it cross-project.
+.codegraph/
