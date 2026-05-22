@@ -31,10 +31,19 @@ public sealed class AccountStore
     // ── Orders ───────────────────────────────────────────────
     // Key: clientOrderId
     private readonly ConcurrentDictionary<string, OrderSnapshot> _orders = new();
+    // Raw OrderData kept alongside the snapshot. Wire-level mutators
+    // (UpdateOrderTPSL, MoveOrder, …) need the full vendor object — the
+    // server identifies the target order by the full identity tuple
+    // (clientOrderId + parentClientOrderId + orderSettings + qty + price),
+    // not just the clientOrderId. Returned by GetOrderRaw for those paths.
+    private readonly ConcurrentDictionary<string, OrderData> _ordersRaw = new();
 
     // ── Positions ────────────────────────────────────────────
     // Key: "{symbol}:{positionSide}" (e.g. "BTCUSDT:BOTH")
     private readonly ConcurrentDictionary<string, PositionSnapshot> _positions = new();
+    // Raw PositionData kept alongside. ClosePositionByTPSL / ResetTPSL /
+    // ChangePositionMargin echo the full vendor object back to the server.
+    private readonly ConcurrentDictionary<string, PositionData> _positionsRaw = new();
 
     // ── Account Info ─────────────────────────────────────────
     private volatile AccountInfoSnapshot? _accountInfo;
@@ -258,6 +267,7 @@ public sealed class AccountStore
         foreach (string key in keysToRemove)
         {
             _orders.TryRemove(key, out _);
+            _ordersRaw.TryRemove(key, out _);
         }
 
         foreach (KeyValuePair<string, OrderData> kvp in listData.orders)
@@ -289,6 +299,7 @@ public sealed class AccountStore
     private void UpdateOrder(OrderData order)
     {
         string? key = order.clientOrderId ?? order.orderId ?? Guid.NewGuid().ToString();
+        _ordersRaw[key] = order;
         _orders[key] = new OrderSnapshot
         {
             ClientOrderId = order.clientOrderId ?? "",
@@ -396,6 +407,7 @@ public sealed class AccountStore
 
         // Full snapshot — rebuild
         _positions.Clear();
+        _positionsRaw.Clear();
 
         foreach (KeyValuePair<string, ConcurrentDictionary<PositionSide, PositionData>> symbolKvp in listData.positions)
         {
@@ -418,6 +430,7 @@ public sealed class AccountStore
     private void UpdatePosition(PositionData pos)
     {
         string? key = $"{pos.symbol ?? "?"}:{pos.positionSide}";
+        _positionsRaw[key] = pos;
         _positions[key] = new PositionSnapshot
         {
             Symbol = pos.symbol ?? "",
@@ -515,6 +528,40 @@ public sealed class AccountStore
         }
         list.Sort((a, b) => b.CreationTime.CompareTo(a.CreationTime));
         return list;
+    }
+
+    /// <summary>Get the raw vendor OrderData for a clientOrderId, or null
+    /// if not in cache. Wire-level mutators (UpdateOrderTPSL, MoveOrder) need
+    /// the full vendor object — the server identifies the target order by
+    /// the full identity tuple, not just the clientOrderId, so a minimal
+    /// stub built from MCP arguments is silently rejected.</summary>
+    public OrderData? GetOrderRaw(string clientOrderId)
+    {
+        if (string.IsNullOrEmpty(clientOrderId)) { return null; }
+        _ordersRaw.TryGetValue(clientOrderId, out OrderData? raw);
+        return raw;
+    }
+
+    /// <summary>Get the raw vendor PositionData for a symbol + side, or null
+    /// if not in cache. ClosePositionByTPSL / ResetTPSL / ChangePositionMargin
+    /// need the full vendor object echoed back.</summary>
+    public PositionData? GetPositionRaw(string symbol, PositionSide positionSide)
+    {
+        if (string.IsNullOrEmpty(symbol)) { return null; }
+        string key = $"{symbol}:{positionSide}";
+        _positionsRaw.TryGetValue(key, out PositionData? raw);
+        if (raw != null) { return raw; }
+        // Case-insensitive fallback for symbols stored lowercase (BYBIT) or
+        // mixed-case (other venues).
+        foreach (KeyValuePair<string, PositionData> kvp in _positionsRaw)
+        {
+            if (string.Equals(kvp.Value.symbol, symbol, StringComparison.OrdinalIgnoreCase)
+                && kvp.Value.positionSide == positionSide)
+            {
+                return kvp.Value;
+            }
+        }
+        return null;
     }
 
     /// <summary>Get orders for a specific symbol.</summary>
@@ -615,7 +662,9 @@ public sealed class AccountStore
     {
         _balances.Clear();
         _orders.Clear();
+        _ordersRaw.Clear();
         _positions.Clear();
+        _positionsRaw.Clear();
         _recentExecutions.Clear();
         _accountInfo = null;
     }

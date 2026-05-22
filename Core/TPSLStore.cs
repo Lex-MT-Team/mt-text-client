@@ -16,6 +16,11 @@ namespace MTTextClient.Core;
 public sealed class TPSLStore
 {
     private readonly ConcurrentDictionary<long, TPSLPositionSnapshot> _positions = new();
+    // Raw vendor TPSLInfoData kept alongside the snapshot. Wire mutators
+    // (SendCancelTPSLRequest, SendPanicSellRequest(TPSLInfoData), SendJoinRequest,
+    // SendSplitRequest) need the full vendor object — the server binds by the
+    // full identity tuple, not just the id, so a minimal stub fails silently.
+    private readonly ConcurrentDictionary<long, TPSLInfoData> _positionsRaw = new();
     private volatile bool _hasData;
 
     public bool HasData => _hasData;
@@ -38,6 +43,7 @@ public sealed class TPSLStore
         if (!data.isUpdate)
         {
             _positions.Clear();
+            _positionsRaw.Clear();
         }
 
         if (data.infoData != null)
@@ -47,6 +53,7 @@ public sealed class TPSLStore
                 TPSLInfoData info = data.infoData[i];
                 TPSLPositionSnapshot snapshot = CreateSnapshot(info);
                 _positions[info.id] = snapshot;
+                _positionsRaw[info.id] = info;
                 OnPositionUpdated?.Invoke(snapshot);
             }
         }
@@ -68,9 +75,18 @@ public sealed class TPSLStore
         return snapshot;
     }
 
+    /// <summary>Get the raw vendor TPSLInfoData by id, or null if not in
+    /// cache. Wire mutators echo the full object back to the server.</summary>
+    public TPSLInfoData? GetRawById(long id)
+    {
+        _positionsRaw.TryGetValue(id, out TPSLInfoData? raw);
+        return raw;
+    }
+
     public void Clear()
     {
         _positions.Clear();
+        _positionsRaw.Clear();
         _hasData = false;
     }
 

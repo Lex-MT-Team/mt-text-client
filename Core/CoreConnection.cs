@@ -1204,6 +1204,28 @@ public sealed class CoreConnection : IDisposable
     }
 
     /// <summary>
+    /// Panic sell a single TPSL position (the per-TPSL overload). Echoes
+    /// the full cached TPSLInfoData. Responds via PanicSellNotificationData
+    /// (isTPSL=true). The server binds by the full identity tuple, not the
+    /// id alone — passing a stub fails silently.
+    /// </summary>
+    public NotificationMessageData? PanicSellTpsl(long tpslId, int timeoutMs = 10_000)
+    {
+        if (_udpClient == null) { return null; }
+        TPSLInfoData? cached = TPSLStore.GetRawById(tpslId);
+        TPSLInfoData msgData = cached ?? new TPSLInfoData { id = tpslId };
+        msgData.requestExchangeType = Profile.Exchange;
+        return SendAndAwaitNotification<PanicSellNotificationData>(
+            send: () => _udpClient.SendPanicSellRequest(msgData, NetworkMessagePriority.HIGH),
+            build: n => new NotificationMessageData
+            {
+                notificationCode = n.success ? NotificationCode.OK : NotificationCode.ERROR,
+                msgString = n.message ?? string.Empty,
+            },
+            timeoutMs: timeoutMs);
+    }
+
+    /// <summary>
     /// Add or reduce margin on an isolated-margin position.
     /// Responds via MarginChangeNotificationData.
     /// </summary>
@@ -1327,7 +1349,10 @@ public sealed class CoreConnection : IDisposable
     }
 
     /// <summary>
-    /// Cancel a TPSL position by ID.
+    /// Cancel a TPSL position by ID. The server binds the target by the
+    /// full identity tuple carried in TPSLInfoData, not just the id —
+    /// the request must echo the full cached vendor object. An id-only
+    /// stub is silently rejected.
     /// </summary>
     public NotificationMessageData? CancelTPSL(long tpslId, int timeoutMs = 10_000)
     {
@@ -1336,12 +1361,12 @@ public sealed class CoreConnection : IDisposable
             return null;
         }
 
-        // Build TPSLInfoData with just the ID set
-        var msgData = new TPSLInfoData
-        {
-            id = tpslId,
-            requestExchangeType = Profile.Exchange
-        };
+        // Echo the full TPSLInfoData from the local cache; fall back to an
+        // id-only stub if the TPSL feed hasn't populated yet so callers
+        // still get a structured response instead of a hard null.
+        TPSLInfoData? cached = TPSLStore.GetRawById(tpslId);
+        TPSLInfoData msgData = cached ?? new TPSLInfoData { id = tpslId };
+        msgData.requestExchangeType = Profile.Exchange;
 
         return SendAndAwaitNotification<TPSLCancelNotificationData>(
             send: () => _udpClient.SendCancelTPSLRequest(msgData, NetworkMessagePriority.HIGH),
