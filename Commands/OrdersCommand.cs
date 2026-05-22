@@ -1470,10 +1470,17 @@ public sealed class OrdersCommand : ICommand
             }
         }
 
-        PositionData posData = new PositionData();
-        posData.marketType = marketType;
-        posData.symbol = symbol;
-        posData.positionSide = posSide;
+        // Echo the full cached PositionData. The server identifies the
+        // target by the full position state (amount, entry price, margin,
+        // liquidation price, …), not by symbol+side alone — a minimal stub
+        // is silently rejected with an empty error response.
+        PositionData? posData = conn.AccountStore.GetPositionRaw(symbol, posSide);
+        if (posData == null)
+        {
+            return CommandResult.Fail(
+                $"[{conn.Name}] No open position for {symbol} ({posSide}) in the local cache. " +
+                "Run `account positions` first to populate the cache, then retry.");
+        }
 
         NotificationMessageData? result = conn.ClosePositionByTPSL(
             conn.Profile.Exchange, posData, orderType);
@@ -1521,10 +1528,15 @@ public sealed class OrdersCommand : ICommand
             }
         }
 
-        PositionData posData = new PositionData();
-        posData.marketType = marketType;
-        posData.symbol = symbol;
-        posData.positionSide = posSide;
+        // Echo the cached PositionData with its full identity tuple; an
+        // amount/entry/margin stub is silently rejected by the server.
+        PositionData? posData = conn.AccountStore.GetPositionRaw(symbol, posSide);
+        if (posData == null)
+        {
+            return CommandResult.Fail(
+                $"[{conn.Name}] No open position for {symbol} ({posSide}) in the local cache. " +
+                "Run `account positions` first to populate it, then retry.");
+        }
 
         TakeProfitSettings tpSettings = new TakeProfitSettings();
         StopLossSettings slSettings = new StopLossSettings();
@@ -1629,10 +1641,53 @@ public sealed class OrdersCommand : ICommand
                 "orders update-tpsl: at least one of --tp / --sl must be > 0 (otherwise there's nothing to update).");
         }
 
-        // The MTShared wire expects an OrderRequestData carrying the new TP/SL
-        // settings.  TakeProfitSettings / StopLossSettings.isOn = true arms the
-        // leg; isOn = false leaves it disabled.  Field types in MTShared are
-        // `float` for percentage / trailingSpread.
+        // The server identifies the target order by the full identity
+        // tuple in OrderRequestData (clientOrderId + parentClientOrderId +
+        // orderSettings + qty + price + stopPrice). A sparse request
+        // built only from MCP arguments is silently rejected — the cached
+        // OrderData must be echoed back with only the TP/SL settings
+        // mutated. Look up the order by clientOrderId, or fall back to a
+        // unique symbol+side match in the active orders list.
+        OrderData? cachedOrder = null;
+        if (!string.IsNullOrEmpty(clientOrderId))
+        {
+            cachedOrder = conn.AccountStore.GetOrderRaw(clientOrderId!);
+        }
+        if (cachedOrder == null)
+        {
+            // No clientOrderId or stale id — try a symbol+side match in
+            // the active orders. If exactly one matches, use it.
+            var candidates = new List<OrderSnapshot>();
+            foreach (OrderSnapshot snap in conn.AccountStore.GetOrders(activeOnly: true))
+            {
+                if (string.Equals(snap.Symbol, symbol, StringComparison.OrdinalIgnoreCase)
+                    && snap.Side == side
+                    && (!hasPositionSideOverride || snap.PositionSide == positionSide))
+                {
+                    candidates.Add(snap);
+                }
+            }
+            if (candidates.Count == 1)
+            {
+                cachedOrder = conn.AccountStore.GetOrderRaw(candidates[0].ClientOrderId);
+            }
+            else if (candidates.Count > 1)
+            {
+                return CommandResult.Fail(
+                    $"[{conn.Name}] {candidates.Count} active orders match {symbol} {side}. " +
+                    "Pass --client-order-id <id> to disambiguate.");
+            }
+        }
+        if (cachedOrder == null)
+        {
+            return CommandResult.Fail(
+                $"[{conn.Name}] No active order found for {symbol} {side} in the local cache. " +
+                "Run `account orders` first to populate it, then retry with --client-order-id <id>.");
+        }
+
+        // TakeProfitSettings / StopLossSettings.isOn = true arms the leg;
+        // isOn = false leaves it disabled. Percentage / trailingSpread are
+        // `float` in MTShared.
         var tp = new TakeProfitSettings
         {
             isOn = tpPercent > 0m,
@@ -1646,21 +1701,23 @@ public sealed class OrdersCommand : ICommand
             trailingSpread = (float)trailSpread,
         };
 
+        // Echo the cached OrderData back with mutated TP/SL settings.
         var orderRequest = new OrderRequestData
         {
-            exchangeType = conn.Profile.Exchange,
-            marketType = marketType,
-            symbol = symbol,
-            orderSideType = side,
-            positionSide = positionSide,
-            takeProfitSettings = tp,
-            stopLossSettings = sl,
-            orderSettings = new OrderSettings(),
+            exchangeType         = conn.Profile.Exchange,
+            marketType           = cachedOrder.marketType,
+            symbol               = cachedOrder.symbol,
+            orderSideType        = cachedOrder.side,
+            positionSide         = hasPositionSideOverride ? positionSide : cachedOrder.positionSide,
+            qty                  = cachedOrder.qty,
+            price                = cachedOrder.price,
+            stopPrice            = cachedOrder.stopPrice,
+            clientOrderId        = cachedOrder.clientOrderId,
+            parentClientOrderId  = cachedOrder.parentClientOrderId,
+            orderSettings        = cachedOrder.orderSettings,
+            takeProfitSettings   = tp,
+            stopLossSettings     = sl,
         };
-        if (!string.IsNullOrEmpty(clientOrderId))
-        {
-            orderRequest.clientOrderId = clientOrderId;
-        }
 
         NotificationMessageData? notification = conn.UpdateOrderTPSL(orderRequest);
         if (notification == null)

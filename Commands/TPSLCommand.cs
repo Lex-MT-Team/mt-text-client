@@ -446,33 +446,20 @@ public sealed class TPSLCommand : ICommand
     /// </summary>
     private static (bool Success, string NotificationCode, string Message) PanicSingle(CoreConnection conn, long tpslId)
     {
-        TPSLPositionSnapshot? snap = conn.TPSLStore?.GetById(tpslId);
-        if (snap == null)
+        if (conn.TPSLStore?.GetById(tpslId) == null)
         {
             return (false, "NOT_FOUND",
                 "TPSL not found in store. Run 'tpsl subscribe' first, then 'tpsl list' to confirm IDs.");
         }
-        // TPSLPositionSnapshot.Side is OrderSideType (BUY / SELL); PositionData
-        // wants PositionSide (LONG / SHORT / BOTH). Map: BUY-side TPSL belongs
-        // to a LONG position; SELL-side to SHORT. BOTH covers the one-way /
-        // SPOT case where no separate hedge side is tracked.
-        PositionSide mapped = snap.Side switch
-        {
-            OrderSideType.BUY  => PositionSide.LONG,
-            OrderSideType.SELL => PositionSide.SHORT,
-            _                  => PositionSide.BOTH,
-        };
-        var posData = new PositionData
-        {
-            symbol = snap.Symbol,
-            marketType = snap.MarketType,
-            positionSide = mapped,
-        };
-        NotificationMessageData? result = conn.ClosePositionByTPSL(
-            conn.Profile.Exchange, posData, OrderType.MARKET);
+        // The TPSL-overload of panic-sell is the canonical wire path here —
+        // echoes the full cached TPSLInfoData (looked up inside PanicSellTpsl)
+        // so the server can bind by the full identity tuple. Closing through
+        // ClosePositionByTPSL with a sparse PositionData stub was the prior
+        // approach and was silently rejected.
+        NotificationMessageData? result = conn.PanicSellTpsl(tpslId);
         if (result == null)
         {
-            return (false, "TIMEOUT", "no response from close-position-by-tpsl");
+            return (false, "TIMEOUT", "no response from tpsl panic");
         }
         return (result.IsOk, result.notificationCode.ToString(), result.msgString ?? "");
     }
