@@ -194,6 +194,14 @@ public sealed class AlgosCommand : ICommand
         IReadOnlyList<AlgorithmData>? algos = conn.AlgoStore.GetAll();
         if (algos.Count == 0)
         {
+            // Long-lived subscribe doesn't always push an initial snapshot;
+            // open a transient subscribe to force one. Same pattern as the
+            // UDS-backed account reads.
+            conn.ForceRefreshAlgos();
+            algos = conn.AlgoStore.GetAll();
+        }
+        if (algos.Count == 0)
+        {
             return CommandResult.Ok($"[{conn.Name}] No algorithms loaded yet.");
         }
 
@@ -438,6 +446,9 @@ public sealed class AlgosCommand : ICommand
                 {
                     request.name = typeName;
                 }
+                // Match canonical client behaviour: mark the algo as in-progress
+                // before issuing START so the server sees the intended state.
+                request.isProcessing = true;
             }
 
             NotificationMessageData? notification = conn.SendAlgorithmRequest(request);
@@ -496,6 +507,11 @@ public sealed class AlgosCommand : ICommand
 
         var request = new AlgorithmData(algo) { actionType = saveType };
 
+        // Match canonical client behaviour: bump the schema version on every
+        // save so the server marks the persisted record as current. Without
+        // this, older-version records can be silently skipped on reload.
+        request.version = 9;
+
         // BUG FIX: Ensure proper algorithm type name for SAVE_START.
         // Core's SaveAlgorithm uses config.name to start the algo after saving.
         if (saveType == AlgorithmData.ActionType.SAVE_START)
@@ -505,6 +521,8 @@ public sealed class AlgosCommand : ICommand
             {
                 request.name = typeName;
             }
+            // Also flag in-progress for the start half of the save+start flow.
+            request.isProcessing = true;
         }
 
         NotificationMessageData? notification = conn.SendAlgorithmRequest(request);
@@ -759,6 +777,11 @@ public sealed class AlgosCommand : ICommand
         }
 
         IReadOnlyList<AlgorithmGroupData>? groups = conn.AlgoStore.GetAllGroups();
+        if (groups.Count == 0)
+        {
+            conn.ForceRefreshAlgos();
+            groups = conn.AlgoStore.GetAllGroups();
+        }
         if (groups.Count == 0)
         {
             return CommandResult.Ok($"[{conn.Name}] No algorithm groups loaded.");
