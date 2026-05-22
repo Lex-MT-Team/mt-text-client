@@ -52,21 +52,12 @@ public sealed class CoreConnection : IDisposable
     // sentinel can't be used to decide whether notifications are active.
     // Track the registered state on a separate flag.
     private bool _notificationCallbackRegistered;
-    // Algorithm requests in MTCore 0.7.23902 no longer deliver their response
-    // through the inline send callback — the response arrives as an
-    // AlgorithmUpdateNotificationData / AlgorithmListUpdateNotificationData on
-    // the notification subscription. Pending TCS instances are queued in FIFO
-    // order so the dispatcher can resolve them as the notifications arrive.
-    private readonly System.Collections.Concurrent.ConcurrentQueue<TaskCompletionSource<NotificationMessageData?>> _pendingAlgoRequests = new();
-    private readonly System.Collections.Concurrent.ConcurrentQueue<TaskCompletionSource<NotificationMessageData?>> _pendingAlgoListRequests = new();
-    // ReportListRequest responses on MTCore 0.7.23902 sometimes never trigger
-    // the inline send callback (profile-specific — observed on freshly initialised
-    // BYBIT bench profile). A ReportsUpdateNotificationData is pushed on the
-    // notification channel instead. The notification carries no report payload
-    // (only descriptor/profileName/creationTime), so the dispatcher signals an
-    // empty ReportListData and the caller treats it as "MTCore acknowledged but
-    // returned no rows" — the same outcome as a genuine empty result.
-    private readonly System.Collections.Concurrent.ConcurrentQueue<TaskCompletionSource<ReportListData?>> _pendingReportRequests = new();
+    // Note: the previous _pendingAlgoRequests / _pendingAlgoListRequests /
+    // _pendingReportRequests FIFO queues + their SubscribeNotifications
+    // dispatcher branches were a pre-wire-migration approximation. The
+    // canonical pattern (see SendAndAwaitNotification) opens a transient
+    // SendNotificationSubscribe per request with a typed handler, so the
+    // long-lived dispatcher no longer needs to fan responses out by FIFO.
     private int _alertsSubscriptionId;
     private int _alertHistorySubscriptionId;
     private readonly ConcurrentDictionary<string, int> _tradeSubscriptionIds = new ConcurrentDictionary<string, int>();
@@ -876,25 +867,12 @@ public sealed class CoreConnection : IDisposable
             request.orderSideTypes = orderSideTypes;
         }
 
-        if (!_notificationCallbackRegistered)
-        {
-            return SendAndWait<ReportListData>(
-                cb => _udpClient.SendReportListRequest(request, cb), timeoutMs);
-        }
-
-        // Race two paths and take whichever lands first:
-        //   (a) inline send callback — fires on profiles where MTCore still
-        //       honours the legacy callback for SendReportListRequest;
-        //   (b) ReportsUpdateNotificationData on the notification channel —
-        //       fires on profiles that switched to push-only; carries no
-        //       payload, so we synthesise an empty ReportListData.
-        var tcs = new TaskCompletionSource<ReportListData?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _pendingReportRequests.Enqueue(tcs);
-        using var cts = new CancellationTokenSource(timeoutMs);
-        using var reg = cts.Token.Register(
-            static state => ((TaskCompletionSource<ReportListData?>)state!).TrySetResult(null), tcs);
-        _udpClient.SendReportListRequest(request, data => tcs.TrySetResult(data));
-        return tcs.Task.GetAwaiter().GetResult();
+        // SendReportListRequest is one of the few methods MTCore 0.7.23902
+        // still delivers via inline callback (typed Action<ReportListData>),
+        // not via the notification push channel. Keep the legacy SendAndWait
+        // path here.
+        return SendAndWait<ReportListData>(
+            cb => _udpClient.SendReportListRequest(request, cb), timeoutMs);
     }
 
 
@@ -1341,6 +1319,10 @@ public sealed class CoreConnection : IDisposable
             return;
         }
 
+        // Long-lived passive subscription — only used to populate
+        // NotificationStore for the mt_notifications_list tool. Per-request
+        // wire dispatching is handled by transient subscriptions inside
+        // SendAndAwaitNotification, mirroring the vendor BotClient pattern.
         _notificationSubscriptionId = _udpClient.SendNotificationSubscribe(
             Profile.Exchange,
             (AbstractNotificationData data) =>
@@ -1348,79 +1330,16 @@ public sealed class CoreConnection : IDisposable
                 string typeName = data.GetType().Name.Replace("NotificationData", "");
                 string message = data.notificationDescriptor.Id ?? "";
                 string profileName = data.profileName ?? Profile.Name;
-
                 var entry = new NotificationEntry(profileName, typeName, message, "", data.creationTime);
-
                 NotificationStore.Add(entry);
-
-                // MTCore 0.7.23902 delivers algorithm-request results on this
-                // notification channel: when an Algorithm{Update,ListUpdate}-
-                // NotificationData arrives, signal the next pending TCS that
-                // was queued by SendAlgorithmRequest / SendAlgorithmListRequest.
-                if (typeName == "AlgorithmListUpdate")
-                {
-                    if (_pendingAlgoListRequests.TryDequeue(out var tcs))
-                    {
-                        tcs.TrySetResult(BuildNotificationResponse(data, message));
-                    }
-                }
-                else if (typeName == "AlgorithmUpdate")
-                {
-                    if (_pendingAlgoRequests.TryDequeue(out var tcs))
-                    {
-                        tcs.TrySetResult(BuildNotificationResponse(data, message));
-                    }
-                }
-                else if (typeName == "ReportsUpdate")
-                {
-                    // ReportsUpdateNotificationData carries no report payload,
-                    // so the pending report-request TCS is signalled with an
-                    // empty ReportListData. Callers that expected non-empty
-                    // results should fall back to mt_reports_dates / live
-                    // execution streams (mt_account_executions).
-                    if (_pendingReportRequests.TryDequeue(out var rTcs))
-                    {
-                        rTcs.TrySetResult(BuildEmptyReportListResponse());
-                    }
-                }
             },
             _notificationSubscriptionId);
 
-        // SendNotificationSubscribe returns 0 on MTCore 0.7.23902 even when the
-        // callback registers correctly. Record the registered state on a
-        // separate flag so the algorithm-request fast path knows to enqueue.
+        // SendNotificationSubscribe returns 0 on some MTCore builds even when
+        // the callback registers correctly. Record the registered state on a
+        // separate flag for diagnostics; the per-request path no longer
+        // depends on it.
         _notificationCallbackRegistered = true;
-    }
-
-    /// <summary>Synthesise a NotificationMessageData-shaped response from an
-    /// arbitrary AbstractNotificationData. NotificationMessageData and the
-    /// Algorithm*UpdateNotificationData subclasses are sibling types under
-    /// AbstractNotificationData (not parent/child), so the value can't be
-    /// downcast — a new NMD instance is constructed instead.</summary>
-    private static NotificationMessageData BuildNotificationResponse(AbstractNotificationData data, string message)
-    {
-        return new NotificationMessageData
-        {
-            msgString = message,
-        };
-    }
-
-    /// <summary>Synthesise an empty ReportListData for the ReportsUpdate push path.
-    /// The notification carries no payload, so callers see an empty result and a
-    /// fallback message can point them at alternative tools that surface trade
-    /// data live (mt_reports_dates, mt_account_executions).</summary>
-    private static ReportListData BuildEmptyReportListResponse()
-    {
-        return new ReportListData
-        {
-            reports = new System.Collections.Generic.List<ReportData>(),
-            deletedCount = 0,
-            total = 0,
-            orderCount = 0,
-            isStream = false,
-            streamTotal = 0,
-            streamItem = 0,
-        };
     }
 
     public void UnsubscribeNotifications()
