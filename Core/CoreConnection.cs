@@ -674,6 +674,45 @@ public sealed class CoreConnection : IDisposable
         return gotData;
     }
 
+    /// <summary>Force-refresh the algorithms cache by opening a transient
+    /// SendAlgorithmsSubscribe and feeding any drops back through AlgoStore.
+    /// The long-lived subscribe established at connect time does not always
+    /// receive an initial snapshot — typically only event-driven updates —
+    /// so the AlgoStore stays empty on quiet profiles. This forces a fresh
+    /// snapshot pull.</summary>
+    public bool ForceRefreshAlgos(int timeoutMs = 5_000)
+    {
+        if (_udpClient == null) { return false; }
+        int subId = -1;
+        var done = new System.Threading.ManualResetEventSlim(false);
+        int dropsReceived = 0;
+        try
+        {
+            subId = _udpClient.SendAlgorithmsSubscribe(
+                (NetworkMessageType msgType, NetworkData data) =>
+                {
+                    AlgoStore.ProcessData(msgType, data);
+                    System.Threading.Interlocked.Increment(ref dropsReceived);
+                    done.Set();
+                });
+            if (done.Wait(timeoutMs))
+            {
+                // Grace window for the rest of the snapshot to arrive.
+                System.Threading.Thread.Sleep(500);
+            }
+            return dropsReceived > 0;
+        }
+        finally
+        {
+            if (subId != -1 && _udpClient != null)
+            {
+                try { _udpClient.SendAlgorithmsUnsubscribe(ref subId); }
+                catch { /* best-effort */ }
+            }
+            done.Dispose();
+        }
+    }
+
     #region Algorithm Lifecycle Requests
 
     /// <summary>
