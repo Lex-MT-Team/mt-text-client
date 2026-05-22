@@ -160,42 +160,17 @@ mt_reports_trades    profile=bench_01      # expect: 1 row, with entry+exit
 mt_reports_dates     profile=bench_01      # expect: date of the trade
 ```
 
-If `mt_reports_trades` still returns the timeout-fallback message even
-after a known TPSL close, the bench MTCore may have the
-[`ReportRequestData` wire schema mismatch](#known-wire-issues) — the row
-exists in Firebird but the request itself is rejected at deserialization.
+If `mt_reports_trades` still returns the empty-fallback message even
+after a TPSL-driven close, double-check:
+1. The position was actually closed (`mt_account_positions` returns "No open positions").
+2. The close went through a TPSL pathway (TAKE_PROFIT / STOP_LOSS / `mt_orders_close_by_tpsl`), not `mt_orders_close`.
+3. `mt_reports_dates` returns at least one date — if so, Firebird has data and the issue is the period filter; try `period=24h` or omit filters.
 
-## Known wire issues that compound this
+## Venue-specific notes
 
-These vendor-side gaps make the "without TPSL no reports" rule appear
-to also apply WITH TPSL on some profiles. Mitigate by knowing the
-combinations:
-
-1. **`ReportRequestData` deserialization fails** on some MTCore builds
-   (visible in MTCore logs as
-   `NetworkData.LogDeserializeError ... Unable to read beyond the end of the stream`).
-   The wire library shipped with the client is older than the build
-   running in MTCore. Reports tools return the operator-friendly
-   fallback message until the vendor DLL is refreshed.
-
-2. **`BybitExchange.GetTickerPrice24: NotImplementedException`** —
-   vendor did not implement the one-shot ticker24 call for BYBIT.
-   Use `mt_marketdata_ticker_subscribe + mt_marketdata_ticker` (live
-   feed) or `mt_exchange_pair_detail` (snapshot) for current price.
-
-3. **`BybitExchange.GetPositionModeType: NotImplementedException`** —
-   `mt_orders_get_position_mode` returns "Waiting..." indefinitely on
-   BYBIT profiles. Read `AccountInfo.PositionMode` instead (note: this
-   cached value can be stale).
-
-4. **Market-wide ticker subscription delivers no data on freshly
-   restarted BYBIT profiles**. Per-symbol subscriptions
-   (`mt_marketdata_trades_subscribe BTCUSDT`) deliver fine. Subscribing
-   trades for the symbols you trade BEFORE placing an order also
-   primes MTCore's internal USDT-notional estimator — without it, some
-   profiles emit
-   `BybitExchange.PlaceOrder: Could not estimate order value in USDT`
-   and silently reject orders.
+- **BYBIT — `mt_orders_get_position_mode` returns "Waiting..."**. The vendor exchange driver does not implement `GetPositionModeType` for BYBIT. Read `AccountInfo.PositionMode` from `mt_account_info` instead; if the cached value is stale (HEDGE reported but venue is ONE_WAY), override at placement with `position_side=BOTH`.
+- **BYBIT — one-shot `mt_exchange_ticker24` returns no data**. The vendor's BYBIT driver does not implement `GetTickerPrice24`. Use `mt_exchange_pair_detail` (snapshot price + lot/tick metadata) or the per-symbol stream `mt_marketdata_trades_subscribe BTCUSDT → mt_marketdata_trades`.
+- **Per-symbol trade subscriptions prime the USDT notional estimator**. Some MTCore builds reject order placement with `Could not estimate order value in USDT` when the trade feed hasn't been subscribed for the target symbol. Subscribe to trades for the symbol you're about to trade ~2 seconds before placing.
 
 ## Tool reference
 

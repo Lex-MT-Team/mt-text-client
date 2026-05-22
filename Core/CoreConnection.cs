@@ -52,21 +52,12 @@ public sealed class CoreConnection : IDisposable
     // sentinel can't be used to decide whether notifications are active.
     // Track the registered state on a separate flag.
     private bool _notificationCallbackRegistered;
-    // Algorithm requests in MTCore 0.7.23902 no longer deliver their response
-    // through the inline send callback — the response arrives as an
-    // AlgorithmUpdateNotificationData / AlgorithmListUpdateNotificationData on
-    // the notification subscription. Pending TCS instances are queued in FIFO
-    // order so the dispatcher can resolve them as the notifications arrive.
-    private readonly System.Collections.Concurrent.ConcurrentQueue<TaskCompletionSource<NotificationMessageData?>> _pendingAlgoRequests = new();
-    private readonly System.Collections.Concurrent.ConcurrentQueue<TaskCompletionSource<NotificationMessageData?>> _pendingAlgoListRequests = new();
-    // ReportListRequest responses on MTCore 0.7.23902 sometimes never trigger
-    // the inline send callback (profile-specific — observed on freshly initialised
-    // BYBIT bench profile). A ReportsUpdateNotificationData is pushed on the
-    // notification channel instead. The notification carries no report payload
-    // (only descriptor/profileName/creationTime), so the dispatcher signals an
-    // empty ReportListData and the caller treats it as "MTCore acknowledged but
-    // returned no rows" — the same outcome as a genuine empty result.
-    private readonly System.Collections.Concurrent.ConcurrentQueue<TaskCompletionSource<ReportListData?>> _pendingReportRequests = new();
+    // Note: the previous _pendingAlgoRequests / _pendingAlgoListRequests /
+    // _pendingReportRequests FIFO queues + their SubscribeNotifications
+    // dispatcher branches were a pre-wire-migration approximation. The
+    // canonical pattern (see SendAndAwaitNotification) opens a transient
+    // SendNotificationSubscribe per request with a typed handler, so the
+    // long-lived dispatcher no longer needs to fan responses out by FIFO.
     private int _alertsSubscriptionId;
     private int _alertHistorySubscriptionId;
     private readonly ConcurrentDictionary<string, int> _tradeSubscriptionIds = new ConcurrentDictionary<string, int>();
@@ -488,67 +479,236 @@ public sealed class CoreConnection : IDisposable
         return tcs.Task.GetAwaiter().GetResult();
     }
 
+    // ── Canonical push-model request helper ─────────────────────────────
+    //
+    // Mirrors MTBotClient.Client.ServicesController.SendToCore. The MTCore
+    // 0.7.23902 wire protocol stopped invoking the inline send callback for
+    // most Send*Request methods — responses arrive on the notification
+    // channel as typed *NotificationData subclasses instead. The pattern:
+    //
+    //   1. Subscribe a transient SendNotificationSubscribe with a handler
+    //      that matches on the expected response type via an `is` check.
+    //   2. Fire the send action (we still pass a no-op callback because our
+    //      committed lib/MTShared.dll signature requires one; the actual
+    //      response arrives on the notification channel).
+    //   3. Block on a BlockingCollection until the handler pushes a result
+    //      or the timeout sentinel fires.
+    //   4. Unsubscribe in finally{} so we don't leak per-request handlers.
+    //
+    // The official BotClient uses a 3-minute wait; we keep a per-call
+    // timeoutMs (default 10s) so REPL/tests don't hang.
+    //
+    // Usage:
+    //   var resp = SendAndAwaitNotification<OrderPlaceNotificationData>(
+    //       send: () => _udpClient.SendPlaceOrderRequest(orderReq, _ => { }),
+    //       build: n => new NotificationMessageData {
+    //           notificationCode = n.success ? NotificationCode.OK : NotificationCode.ERROR,
+    //           msgString = n.message ?? string.Empty,
+    //       },
+    //       timeoutMs: 10_000);
+    //
+    private NotificationMessageData? SendAndAwaitNotification<TNotification>(
+        Action send,
+        Func<TNotification, NotificationMessageData> build,
+        int timeoutMs = 10_000)
+        where TNotification : AbstractNotificationData
+    {
+        if (_udpClient == null) { return null; }
+
+        if (timeoutMs > 0)
+        {
+            if (!Circuit.AllowCall()) { return null; }
+            if (!RateLimit.ConsumeBlocking(500))
+            {
+                Circuit.RecordFailure();
+                return null;
+            }
+        }
+
+        var wait = new System.Collections.Concurrent.BlockingCollection<NotificationMessageData>(boundedCapacity: 8);
+        int subId = -1;
+        try
+        {
+            subId = _udpClient.SendNotificationSubscribe(
+                Profile.Exchange,
+                (AbstractNotificationData data) =>
+                {
+                    if (data is TNotification typed)
+                    {
+                        try { wait.TryAdd(build(typed)); }
+                        catch { /* collection disposed in finally — drop */ }
+                    }
+                },
+                -1);
+
+            send();
+
+            // Use Take(timeout) — BlockingCollection itself supports TryTake
+            // with a TimeSpan, but Take(CancellationToken) is the idiom used
+            // in the BotClient reference. Either is fine; we use TryTake for
+            // simplicity (no extra cts allocation).
+            if (wait.TryTake(out var result, timeoutMs))
+            {
+                if (timeoutMs > 0) { Circuit.RecordSuccess(); }
+                return result;
+            }
+            if (timeoutMs > 0) { Circuit.RecordFailure(); }
+            return null;
+        }
+        finally
+        {
+            if (subId != -1 && _udpClient != null)
+            {
+                try { _udpClient.SendNotificationUnsubscribe(ref subId, Profile.Exchange); }
+                catch { /* unsubscribe is best-effort */ }
+            }
+            wait.Dispose();
+        }
+    }
+
+    // ── Transient UDS read ──────────────────────────────────────────────
+    //
+    // The long-lived UDS subscription (set up at Subscribe()) only delivers
+    // OrderListData / BalanceListData / etc. when MTCore decides to push them
+    // — typically on order events, not at subscribe time. On a fresh profile
+    // with no recent orders, the AccountStore stays empty even though the
+    // subscription is healthy.
+    //
+    // ReadFreshUDSData opens a TRANSIENT SendUDSSubscribe, waits for any
+    // data drops of type T (per MarketType), takes them, then unsubscribes.
+    // Mirrors MTBotClient.Client.ServicesController.GetOrdersListData /
+    // GetPostitionsListData — the official pattern documented in
+    // internal vendor wire-pattern reference notes.
+    //
+    // The data is fed back through AccountStore.ProcessData so subsequent
+    // reads from the long-lived store see the snapshot.
+    private bool ReadFreshUDSData<T>(NetworkMessageType msgType, int timeoutMs = 5_000)
+        where T : NetworkData
+    {
+        if (_udpClient == null) { return false; }
+
+        var collected = new List<T>();
+        var done = new System.Threading.ManualResetEventSlim(false);
+        int subId = -1;
+        try
+        {
+            subId = _udpClient.SendUDSSubscribe(
+                Profile.Exchange,
+                (NetworkMessageType _, NetworkData data) =>
+                {
+                    if (data is T typed)
+                    {
+                        lock (collected) { collected.Add(typed); }
+                        // Don't break early — multiple market types may arrive.
+                        done.Set();
+                    }
+                },
+                -1,
+                NetworkMessagePriority.HIGH);
+
+            // Wait for first drop; once we have one, give a small grace
+            // window for any remaining markets to arrive.
+            if (done.Wait(timeoutMs))
+            {
+                System.Threading.Thread.Sleep(250);
+            }
+
+            lock (collected)
+            {
+                foreach (var item in collected)
+                {
+                    AccountStore.ProcessData(msgType, item);
+                }
+                return collected.Count > 0;
+            }
+        }
+        finally
+        {
+            if (subId != -1 && _udpClient != null)
+            {
+                try { _udpClient.SendUDSUnsubscribe(ref subId, Profile.Exchange, NetworkMessagePriority.HIGH); }
+                catch { /* best-effort */ }
+            }
+            done.Dispose();
+        }
+    }
+
+    /// <summary>Force-refresh the orders cache by opening a transient UDS
+    /// subscribe and feeding any received OrderListData back into AccountStore.
+    /// Use when the long-lived store hasn't been populated (no events since
+    /// connect). Always marks LastOrderUpdate after the call completes so
+    /// callers can distinguish "queried, no orders" from "never queried".
+    /// Returns true if at least one OrderListData drop arrived.</summary>
+    public bool ForceRefreshOrders(int timeoutMs = 5_000)
+    {
+        bool gotData = ReadFreshUDSData<OrderListData>(NetworkMessageType.UDS_ORDER_LIST_RESULT, timeoutMs);
+        // Even when no OrderListData drop arrived (genuine empty state — MTCore
+        // doesn't send empty confirmations on this build), record that we
+        // queried successfully so HandleOrders shows "No active orders" instead
+        // of "No order data received yet" on subsequent calls.
+        if (AccountStore.LastOrderUpdate == default)
+        {
+            AccountStore.LastOrderUpdate = DateTime.UtcNow;
+        }
+        return gotData;
+    }
+
+    /// <summary>Force-refresh positions + balances via a transient UDS read.
+    /// AccountInfoData arrives on the same UDS channel and carries both
+    /// position list and balance dictionary. Always marks Last{Position,Balance}Update
+    /// after the call so callers can distinguish "queried, empty" from "never queried".</summary>
+    public bool ForceRefreshAccount(int timeoutMs = 5_000)
+    {
+        bool gotData = ReadFreshUDSData<AccountInfoData>(NetworkMessageType.UDS_ACCOUNT_INFO_RESULT, timeoutMs);
+        if (AccountStore.LastPositionUpdate == default) { AccountStore.LastPositionUpdate = DateTime.UtcNow; }
+        if (AccountStore.LastBalanceUpdate == default)  { AccountStore.LastBalanceUpdate  = DateTime.UtcNow; }
+        return gotData;
+    }
+
+    /// <summary>Force-refresh standalone balance list (some venues push
+    /// BalanceListData separately from AccountInfoData).</summary>
+    public bool ForceRefreshBalances(int timeoutMs = 5_000)
+    {
+        bool gotData = ReadFreshUDSData<BalanceListData>(NetworkMessageType.UDS_BALANCE_LIST_RESULT, timeoutMs);
+        if (AccountStore.LastBalanceUpdate == default) { AccountStore.LastBalanceUpdate = DateTime.UtcNow; }
+        return gotData;
+    }
+
     #region Algorithm Lifecycle Requests
 
     /// <summary>
     /// Send an algorithm request (START, STOP, SAVE, DELETE, TOGGLE_DEBUG, etc.).
-    /// The AlgorithmData.actionType must be set before calling.
-    /// Returns a task that completes with the NotificationMessageData response.
+    /// MTCore responds with AlgorithmUpdateNotificationData on the notification
+    /// channel. See internal vendor wire-pattern reference notes.
     /// </summary>
     public NotificationMessageData? SendAlgorithmRequest(AlgorithmData algoData, int timeoutMs = 30_000)
     {
-        if (_udpClient == null)
-        {
-            return null;
-        }
-
-        if (!_notificationCallbackRegistered)
-        {
-            // Fallback to the inline-callback path when notifications haven't
-            // been subscribed. Kept for safety; with the default Subscribe()
-            // flow the new-style path below is the one that fires.
-            return SendAndWait<NotificationMessageData>(
-                cb => _udpClient.SendAlgorithmRequest(algoData, cb), timeoutMs);
-        }
-
-        // MTCore 0.7.23902: the inline send-callback is no longer invoked.
-        // Enqueue a TCS, fire the request, and block until the notification
-        // dispatcher signals it with the next AlgorithmUpdateNotificationData.
-        var tcs = new TaskCompletionSource<NotificationMessageData?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _pendingAlgoRequests.Enqueue(tcs);
-        using var cts = new CancellationTokenSource(timeoutMs);
-        using var reg = cts.Token.Register(
-            static state => ((TaskCompletionSource<NotificationMessageData?>)state!).TrySetResult(null), tcs);
-        _udpClient.SendAlgorithmRequest(algoData, _ => { });
-        return tcs.Task.GetAwaiter().GetResult();
+        if (_udpClient == null) { return null; }
+        return SendAndAwaitNotification<AlgorithmUpdateNotificationData>(
+            send: () => _udpClient.SendAlgorithmRequest(algoData),
+            build: n => new NotificationMessageData
+            {
+                notificationCode = n.success ? NotificationCode.OK : NotificationCode.ERROR,
+                msgString = n.message ?? string.Empty,
+            },
+            timeoutMs: timeoutMs);
     }
 
     /// <summary>
     /// Send an algorithm list request (START_ALL, STOP_ALL, SAVE_GROUP, DELETE_GROUP, CLONE_GROUP).
-    /// Returns a task that completes with the NotificationMessageData response.
+    /// MTCore responds with AlgorithmListUpdateNotificationData.
     /// </summary>
     public NotificationMessageData? SendAlgorithmListRequest(AlgorithmListData listData, int timeoutMs = 30_000)
     {
-        if (_udpClient == null)
-        {
-            return null;
-        }
-
-        if (!_notificationCallbackRegistered)
-        {
-            return SendAndWait<NotificationMessageData>(
-                cb => _udpClient.SendAlgorithmListRequest(listData, cb), timeoutMs);
-        }
-
-        // Same pattern as SendAlgorithmRequest — response arrives on the
-        // notification channel as AlgorithmListUpdateNotificationData.
-        var tcs = new TaskCompletionSource<NotificationMessageData?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _pendingAlgoListRequests.Enqueue(tcs);
-        using var cts = new CancellationTokenSource(timeoutMs);
-        using var reg = cts.Token.Register(
-            static state => ((TaskCompletionSource<NotificationMessageData?>)state!).TrySetResult(null), tcs);
-        _udpClient.SendAlgorithmListRequest(listData, _ => { });
-        return tcs.Task.GetAwaiter().GetResult();
+        if (_udpClient == null) { return null; }
+        return SendAndAwaitNotification<AlgorithmListUpdateNotificationData>(
+            send: () => _udpClient.SendAlgorithmListRequest(listData),
+            build: n => new NotificationMessageData
+            {
+                notificationCode = n.success ? NotificationCode.OK : NotificationCode.ERROR,
+                msgString = n.message ?? string.Empty,
+            },
+            timeoutMs: timeoutMs);
     }
 
     /// <summary>
@@ -630,124 +790,134 @@ public sealed class CoreConnection : IDisposable
     #region Order & Position Management
 
     /// <summary>
-    /// Place an order via Core.
+    /// Place an order via Core. MTCore responds via OrderPlaceNotificationData.
     /// </summary>
     public NotificationMessageData? PlaceOrder(OrderRequestData orderRequest, int timeoutMs = 10_000)
     {
-        if (_udpClient == null)
-        {
-            return null;
-        }
-
-        return SendAndWait<NotificationMessageData>(
-            cb => _udpClient.SendPlaceOrderRequest(orderRequest, cb), timeoutMs);
+        if (_udpClient == null) { return null; }
+        return SendAndAwaitNotification<OrderPlaceNotificationData>(
+            send: () => _udpClient.SendPlaceOrderRequest(orderRequest, NetworkMessagePriority.HIGH),
+            build: n => new NotificationMessageData
+            {
+                notificationCode = n.success ? NotificationCode.OK : NotificationCode.ERROR,
+                msgString = n.message ?? string.Empty,
+            },
+            timeoutMs: timeoutMs);
     }
 
     /// <summary>
-    /// Move (modify price of) an existing order.
+    /// Move (modify price of) an existing order. Responds via OrderMoveNotificationData.
     /// </summary>
     public NotificationMessageData? MoveOrder(
         ExchangeType exchangeType, MarketType marketType,
         string clientOrderId, double newPrice, int timeoutMs = 10_000)
     {
-        if (_udpClient == null)
-        {
-            return null;
-        }
-
-        return SendAndWait<NotificationMessageData>(
-            cb => _udpClient.SendMoveOrderRequest(exchangeType, marketType, clientOrderId, newPrice, default, cb),
-            timeoutMs);
+        if (_udpClient == null) { return null; }
+        OrderSettings empty = default;
+        return SendAndAwaitNotification<OrderMoveNotificationData>(
+            send: () => _udpClient.SendMoveOrderRequest(exchangeType, marketType, clientOrderId, newPrice, ref empty, NetworkMessagePriority.HIGH),
+            build: n => new NotificationMessageData
+            {
+                notificationCode = n.success ? NotificationCode.OK : NotificationCode.ERROR,
+                msgString = n.message ?? string.Empty,
+            },
+            timeoutMs: timeoutMs);
     }
 
     /// <summary>
-    /// Cancel a specific order by clientOrderId.
+    /// Cancel a specific order by clientOrderId. Responds via OrderCancelNotificationData.
     /// </summary>
     public NotificationMessageData? CancelOrder(
         ExchangeType exchangeType, MarketType marketType,
         string symbol, string clientOrderId, int timeoutMs = 10_000)
     {
-        if (_udpClient == null)
-        {
-            return null;
-        }
-
-        return SendAndWait<NotificationMessageData>(
-            cb => _udpClient.SendCancelOrderRequest(exchangeType, marketType, symbol, clientOrderId, cb),
-            timeoutMs);
+        if (_udpClient == null) { return null; }
+        return SendAndAwaitNotification<OrderCancelNotificationData>(
+            send: () => _udpClient.SendCancelOrderRequest(exchangeType, marketType, symbol, clientOrderId, NetworkMessagePriority.HIGH),
+            build: n => new NotificationMessageData
+            {
+                notificationCode = n.success ? NotificationCode.OK : NotificationCode.ERROR,
+                msgString = n.message ?? string.Empty,
+            },
+            timeoutMs: timeoutMs);
     }
 
     /// <summary>
-    /// Cancel all orders (or all for a specific symbol).
+    /// Cancel all orders (or all for a specific symbol). Responds via OrderCancelListNotificationData.
     /// </summary>
     public NotificationMessageData? CancelAllOrders(
         ExchangeType exchangeType, MarketType marketType, string? symbol = null, int timeoutMs = 10_000)
     {
-        if (_udpClient == null)
-        {
-            return null;
-        }
-
-        return SendAndWait<NotificationMessageData>(
-            cb => _udpClient.SendCancelOrderListRequest(
+        if (_udpClient == null) { return null; }
+        return SendAndAwaitNotification<OrderCancelListNotificationData>(
+            send: () => _udpClient.SendCancelOrderListRequest(
                 exchangeType,
                 cancelAll: string.IsNullOrEmpty(symbol),
                 new OrderListData(),
                 symbol ?? "",
                 marketType,
-                cb),
-            timeoutMs);
+                NetworkMessagePriority.HIGH),
+            build: n => new NotificationMessageData
+            {
+                notificationCode = n.success ? NotificationCode.OK : NotificationCode.ERROR,
+                msgString = n.message ?? string.Empty,
+            },
+            timeoutMs: timeoutMs);
     }
 
     /// <summary>
     /// Close a position (market or limit) by percentage (1.0 = 100%).
+    /// Responds via ClosePositionNotificationData.
     /// </summary>
     public NotificationMessageData? ClosePosition(
         ExchangeType exchangeType, PositionData positionData,
         OrderType orderType, double percentage = 1.0, int timeoutMs = 10_000)
     {
-        if (_udpClient == null)
-        {
-            return null;
-        }
-
-        return SendAndWait<NotificationMessageData>(
-            cb => _udpClient.SendClosePositionRequest(exchangeType, positionData, orderType, percentage, cb),
-            timeoutMs);
+        if (_udpClient == null) { return null; }
+        return SendAndAwaitNotification<ClosePositionNotificationData>(
+            send: () => _udpClient.SendClosePositionRequest(exchangeType, positionData, orderType, percentage, NetworkMessagePriority.HIGH),
+            build: n => new NotificationMessageData
+            {
+                notificationCode = n.success ? NotificationCode.OK : NotificationCode.ERROR,
+                msgString = n.message ?? string.Empty,
+            },
+            timeoutMs: timeoutMs);
     }
 
     /// <summary>
-    /// Close position using TP/SL order.
+    /// Close position using TP/SL order. Responds via ClosePositionNotificationData.
     /// </summary>
     public NotificationMessageData? ClosePositionByTPSL(
         ExchangeType exchangeType, PositionData positionData,
         OrderType orderType, int timeoutMs = 10_000)
     {
-        if (_udpClient == null)
-        {
-            return null;
-        }
-
-        return SendAndWait<NotificationMessageData>(
-            cb => _udpClient.SendClosePositionByTPSLRequest(exchangeType, positionData, orderType, cb),
-            timeoutMs);
+        if (_udpClient == null) { return null; }
+        return SendAndAwaitNotification<ClosePositionNotificationData>(
+            send: () => _udpClient.SendClosePositionByTPSLRequest(exchangeType, positionData, orderType, NetworkMessagePriority.HIGH),
+            build: n => new NotificationMessageData
+            {
+                notificationCode = n.success ? NotificationCode.OK : NotificationCode.ERROR,
+                msgString = n.message ?? string.Empty,
+            },
+            timeoutMs: timeoutMs);
     }
 
     /// <summary>
-    /// Reset TP/SL on an existing position.
+    /// Reset TP/SL on an existing position. Responds via ResetTPSLNotificationData.
     /// </summary>
     public NotificationMessageData? ResetTPSL(
         ExchangeType exchangeType, PositionData positionData,
         TakeProfitSettings tpSettings, StopLossSettings slSettings, int timeoutMs = 10_000)
     {
-        if (_udpClient == null)
-        {
-            return null;
-        }
-
-        return SendAndWait<NotificationMessageData>(
-            cb => _udpClient.SendResetTPSLRequest(exchangeType, positionData, tpSettings, slSettings, cb),
-            timeoutMs);
+        if (_udpClient == null) { return null; }
+        return SendAndAwaitNotification<ResetTPSLNotificationData>(
+            send: () => _udpClient.SendResetTPSLRequest(exchangeType, positionData, tpSettings, slSettings, NetworkMessagePriority.HIGH),
+            build: n => new NotificationMessageData
+            {
+                notificationCode = n.success ? NotificationCode.OK : NotificationCode.ERROR,
+                msgString = n.message ?? string.Empty,
+            },
+            timeoutMs: timeoutMs);
     }
 
     #endregion
@@ -805,25 +975,12 @@ public sealed class CoreConnection : IDisposable
             request.orderSideTypes = orderSideTypes;
         }
 
-        if (!_notificationCallbackRegistered)
-        {
-            return SendAndWait<ReportListData>(
-                cb => _udpClient.SendReportListRequest(request, cb), timeoutMs);
-        }
-
-        // Race two paths and take whichever lands first:
-        //   (a) inline send callback — fires on profiles where MTCore still
-        //       honours the legacy callback for SendReportListRequest;
-        //   (b) ReportsUpdateNotificationData on the notification channel —
-        //       fires on profiles that switched to push-only; carries no
-        //       payload, so we synthesise an empty ReportListData.
-        var tcs = new TaskCompletionSource<ReportListData?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _pendingReportRequests.Enqueue(tcs);
-        using var cts = new CancellationTokenSource(timeoutMs);
-        using var reg = cts.Token.Register(
-            static state => ((TaskCompletionSource<ReportListData?>)state!).TrySetResult(null), tcs);
-        _udpClient.SendReportListRequest(request, data => tcs.TrySetResult(data));
-        return tcs.Task.GetAwaiter().GetResult();
+        // SendReportListRequest is one of the few methods MTCore 0.7.23902
+        // still delivers via inline callback (typed Action<ReportListData>),
+        // not via the notification push channel. Keep the legacy SendAndWait
+        // path here.
+        return SendAndWait<ReportListData>(
+            cb => _udpClient.SendReportListRequest(request, cb), timeoutMs);
     }
 
 
@@ -878,8 +1035,14 @@ public sealed class CoreConnection : IDisposable
             marketType   = marketType,
             symbol       = symbol
         };
-        return SendAndWait<NotificationMessageData>(
-            cb => _udpClient.SendGetPositionModeType(request, cb), timeoutMs);
+        return SendAndAwaitNotification<GetPositionModeTypeNotificationData>(
+            send: () => _udpClient.SendGetPositionModeType(request),
+            build: n => new NotificationMessageData
+            {
+                notificationCode = n.success ? NotificationCode.OK : NotificationCode.ERROR,
+                msgString = n.message ?? string.Empty,
+            },
+            timeoutMs: timeoutMs);
     }
 
     /// <summary>
@@ -955,8 +1118,14 @@ public sealed class CoreConnection : IDisposable
             symbol           = symbol,
             positionModeType = mode
         };
-        return SendAndWait<NotificationMessageData>(
-            cb => _udpClient.SendSetPositionModeType(request, cb), timeoutMs);
+        return SendAndAwaitNotification<SetPositionModeTypeNotificationData>(
+            send: () => _udpClient.SendSetPositionModeType(request),
+            build: n => new NotificationMessageData
+            {
+                notificationCode = n.success ? NotificationCode.OK : NotificationCode.ERROR,
+                msgString = n.message ?? string.Empty,
+            },
+            timeoutMs: timeoutMs);
     }
 
     /// <summary>
@@ -978,8 +1147,14 @@ public sealed class CoreConnection : IDisposable
             newLeverage  = leverage,
             leverageType = LeverageType.CROSS
         };
-        return SendAndWait<NotificationMessageData>(
-            cb => _udpClient.SendModifyLeverageRequest(request, cb), timeoutMs);
+        return SendAndAwaitNotification<ModifyLeverageNotificationData>(
+            send: () => _udpClient.SendModifyLeverageRequest(request),
+            build: n => new NotificationMessageData
+            {
+                notificationCode = n.success ? NotificationCode.OK : NotificationCode.ERROR,
+                msgString = n.message ?? string.Empty,
+            },
+            timeoutMs: timeoutMs);
     }
 
     /// <summary>
@@ -1000,38 +1175,43 @@ public sealed class CoreConnection : IDisposable
             symbol       = symbol,
             marginType   = marginType
         };
-        return SendAndWait<NotificationMessageData>(
-            cb => _udpClient.SendModifyMarginTypeRequest(request, cb), timeoutMs);
+        return SendAndAwaitNotification<ModifyMarginTypeNotificationData>(
+            send: () => _udpClient.SendModifyMarginTypeRequest(request),
+            build: n => new NotificationMessageData
+            {
+                notificationCode = n.success ? NotificationCode.OK : NotificationCode.ERROR,
+                msgString = n.message ?? string.Empty,
+            },
+            timeoutMs: timeoutMs);
     }
 
     /// <summary>
     /// Panic sell — emergency market-close all positions for an asset.
+    /// Responds via PanicSellNotificationData.
     /// </summary>
     public NotificationMessageData? PanicSell(
         MarketType marketType, string asset, bool activate = true, int timeoutMs = 10_000)
     {
-        if (_udpClient == null)
-        {
-            return null;
-        }
-
-        return SendAndWait<NotificationMessageData>(
-            cb => _udpClient.SendPanicSellRequest(Profile.Exchange, marketType, asset, activate, cb),
-            timeoutMs);
+        if (_udpClient == null) { return null; }
+        return SendAndAwaitNotification<PanicSellNotificationData>(
+            send: () => _udpClient.SendPanicSellRequest(Profile.Exchange, marketType, asset, activate, NetworkMessagePriority.HIGH),
+            build: n => new NotificationMessageData
+            {
+                notificationCode = n.success ? NotificationCode.OK : NotificationCode.ERROR,
+                msgString = n.message ?? string.Empty,
+            },
+            timeoutMs: timeoutMs);
     }
 
     /// <summary>
     /// Add or reduce margin on an isolated-margin position.
+    /// Responds via MarginChangeNotificationData.
     /// </summary>
     public NotificationMessageData? ChangePositionMargin(
         MarketType marketType, string symbol, PositionSide positionSide,
         decimal amount, bool isAdd = true, int timeoutMs = 10_000)
     {
-        if (_udpClient == null)
-        {
-            return null;
-        }
-
+        if (_udpClient == null) { return null; }
         var request = new ChangePositionMarginRequest
         {
             exchangeType = Profile.Exchange,
@@ -1043,26 +1223,35 @@ public sealed class CoreConnection : IDisposable
                 ? ChangePositionMarginRequest.ActionType.ADD
                 : ChangePositionMarginRequest.ActionType.REDUCE
         };
-
-        return SendAndWait<NotificationMessageData>(
-            cb => _udpClient.SendChangePositionMargin(Profile.Exchange, request, cb),
-            timeoutMs);
+        return SendAndAwaitNotification<MarginChangeNotificationData>(
+            send: () => _udpClient.SendChangePositionMargin(Profile.Exchange, request, NetworkMessagePriority.HIGH),
+            build: n => new NotificationMessageData
+            {
+                notificationCode = n.success ? NotificationCode.OK : NotificationCode.ERROR,
+                msgString = n.message ?? string.Empty,
+            },
+            timeoutMs: timeoutMs);
     }
 
     /// <summary>
     /// Transfer funds between spot and futures (market type transfer).
+    /// MTCore now uses a typed Action&lt;TransferFundsNotificationData&gt; callback.
     /// </summary>
     public NotificationMessageData? TransferFunds(
         MarketType fromMarket, MarketType toMarket, string asset, double amount, int timeoutMs = 10_000)
     {
-        if (_udpClient == null)
-        {
-            return null;
-        }
-
-        return SendAndWait<NotificationMessageData>(
-            cb => _udpClient.SendTransferFundsRequest(Profile.Exchange, fromMarket, asset, amount, toMarket, 0, "", cb),
-            timeoutMs);
+        if (_udpClient == null) { return null; }
+        var tcs = new TaskCompletionSource<NotificationMessageData?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cts = new CancellationTokenSource(timeoutMs);
+        using var reg = cts.Token.Register(
+            static state => ((TaskCompletionSource<NotificationMessageData?>)state!).TrySetResult(null), tcs);
+        _udpClient.SendTransferFundsRequest(Profile.Exchange, fromMarket, asset, amount, toMarket, 0, "",
+            (TransferFundsNotificationData n) => tcs.TrySetResult(new NotificationMessageData
+            {
+                notificationCode = n.success ? NotificationCode.OK : NotificationCode.ERROR,
+                msgString = n.message ?? string.Empty,
+            }));
+        return tcs.Task.GetAwaiter().GetResult();
     }
 
     #endregion
@@ -1154,8 +1343,14 @@ public sealed class CoreConnection : IDisposable
             requestExchangeType = Profile.Exchange
         };
 
-        return SendAndWait<NotificationMessageData>(
-            cb => _udpClient.SendCancelTPSLRequest(msgData, cb, NetworkMessagePriority.HIGH), timeoutMs);
+        return SendAndAwaitNotification<TPSLCancelNotificationData>(
+            send: () => _udpClient.SendCancelTPSLRequest(msgData, NetworkMessagePriority.HIGH),
+            build: n => new NotificationMessageData
+            {
+                notificationCode = n.success ? NotificationCode.OK : NotificationCode.ERROR,
+                msgString = n.message ?? string.Empty,
+            },
+            timeoutMs: timeoutMs);
     }
 
     #endregion
@@ -1232,6 +1427,10 @@ public sealed class CoreConnection : IDisposable
             return;
         }
 
+        // Long-lived passive subscription — only used to populate
+        // NotificationStore for the mt_notifications_list tool. Per-request
+        // wire dispatching is handled by transient subscriptions inside
+        // SendAndAwaitNotification, mirroring the vendor BotClient pattern.
         _notificationSubscriptionId = _udpClient.SendNotificationSubscribe(
             Profile.Exchange,
             (AbstractNotificationData data) =>
@@ -1239,79 +1438,16 @@ public sealed class CoreConnection : IDisposable
                 string typeName = data.GetType().Name.Replace("NotificationData", "");
                 string message = data.notificationDescriptor.Id ?? "";
                 string profileName = data.profileName ?? Profile.Name;
-
                 var entry = new NotificationEntry(profileName, typeName, message, "", data.creationTime);
-
                 NotificationStore.Add(entry);
-
-                // MTCore 0.7.23902 delivers algorithm-request results on this
-                // notification channel: when an Algorithm{Update,ListUpdate}-
-                // NotificationData arrives, signal the next pending TCS that
-                // was queued by SendAlgorithmRequest / SendAlgorithmListRequest.
-                if (typeName == "AlgorithmListUpdate")
-                {
-                    if (_pendingAlgoListRequests.TryDequeue(out var tcs))
-                    {
-                        tcs.TrySetResult(BuildNotificationResponse(data, message));
-                    }
-                }
-                else if (typeName == "AlgorithmUpdate")
-                {
-                    if (_pendingAlgoRequests.TryDequeue(out var tcs))
-                    {
-                        tcs.TrySetResult(BuildNotificationResponse(data, message));
-                    }
-                }
-                else if (typeName == "ReportsUpdate")
-                {
-                    // ReportsUpdateNotificationData carries no report payload,
-                    // so the pending report-request TCS is signalled with an
-                    // empty ReportListData. Callers that expected non-empty
-                    // results should fall back to mt_reports_dates / live
-                    // execution streams (mt_account_executions).
-                    if (_pendingReportRequests.TryDequeue(out var rTcs))
-                    {
-                        rTcs.TrySetResult(BuildEmptyReportListResponse());
-                    }
-                }
             },
             _notificationSubscriptionId);
 
-        // SendNotificationSubscribe returns 0 on MTCore 0.7.23902 even when the
-        // callback registers correctly. Record the registered state on a
-        // separate flag so the algorithm-request fast path knows to enqueue.
+        // SendNotificationSubscribe returns 0 on some MTCore builds even when
+        // the callback registers correctly. Record the registered state on a
+        // separate flag for diagnostics; the per-request path no longer
+        // depends on it.
         _notificationCallbackRegistered = true;
-    }
-
-    /// <summary>Synthesise a NotificationMessageData-shaped response from an
-    /// arbitrary AbstractNotificationData. NotificationMessageData and the
-    /// Algorithm*UpdateNotificationData subclasses are sibling types under
-    /// AbstractNotificationData (not parent/child), so the value can't be
-    /// downcast — a new NMD instance is constructed instead.</summary>
-    private static NotificationMessageData BuildNotificationResponse(AbstractNotificationData data, string message)
-    {
-        return new NotificationMessageData
-        {
-            msgString = message,
-        };
-    }
-
-    /// <summary>Synthesise an empty ReportListData for the ReportsUpdate push path.
-    /// The notification carries no payload, so callers see an empty result and a
-    /// fallback message can point them at alternative tools that surface trade
-    /// data live (mt_reports_dates, mt_account_executions).</summary>
-    private static ReportListData BuildEmptyReportListResponse()
-    {
-        return new ReportListData
-        {
-            reports = new System.Collections.Generic.List<ReportData>(),
-            deletedCount = 0,
-            total = 0,
-            orderCount = 0,
-            isStream = false,
-            streamTotal = 0,
-            streamItem = 0,
-        };
     }
 
     public void UnsubscribeNotifications()
@@ -1585,9 +1721,9 @@ public sealed class CoreConnection : IDisposable
             exchangeType = Profile.Exchange,
         };
         string resultMsg = "Waiting...";
-        _udpClient.SendAlertsRequest(req, (NotificationMessageData result) =>
+        _udpClient.SendAlertsRequest(req, (AlertNotificationData result) =>
         {
-            resultMsg = result?.msgString ?? "OK";
+            resultMsg = result?.message ?? "OK";
         });
         System.Threading.Thread.Sleep(waitMs);
         return resultMsg;
@@ -1603,9 +1739,9 @@ public sealed class CoreConnection : IDisposable
             exchangeType = Profile.Exchange,
         };
         string resultMsg = "Waiting...";
-        _udpClient.SendAlertsRequest(req, (NotificationMessageData result) =>
+        _udpClient.SendAlertsRequest(req, (AlertNotificationData result) =>
         {
-            resultMsg = result?.msgString ?? "OK";
+            resultMsg = result?.message ?? "OK";
         });
         System.Threading.Thread.Sleep(waitMs);
         return resultMsg;
@@ -1628,9 +1764,9 @@ public sealed class CoreConnection : IDisposable
                 exchangeType = Profile.Exchange,
             };
         string resultMsg = "Waiting...";
-        _udpClient.SendAlertsRequest(req, (NotificationMessageData result) =>
+        _udpClient.SendAlertsRequest(req, (AlertNotificationData result) =>
         {
-            resultMsg = result?.msgString ?? "OK";
+            resultMsg = result?.message ?? "OK";
         });
         System.Threading.Thread.Sleep(waitMs);
         return resultMsg;
@@ -1657,8 +1793,14 @@ public sealed class CoreConnection : IDisposable
             sellLeverage = sellLeverage
         };
 
-        return SendAndWait<NotificationMessageData>(
-            cb => _udpClient.SendModifyLeverageBuySellRequest(request, cb), timeoutMs);
+        return SendAndAwaitNotification<ModifyLeverageNotificationData>(
+            send: () => _udpClient.SendModifyLeverageBuySellRequest(request),
+            build: n => new NotificationMessageData
+            {
+                notificationCode = n.success ? NotificationCode.OK : NotificationCode.ERROR,
+                msgString = n.message ?? string.Empty,
+            },
+            timeoutMs: timeoutMs);
     }
 
     public MultiAssetModeResultData? GetMultiAssetMode(MarketType marketType, int timeoutMs = 10_000)
@@ -1779,13 +1921,11 @@ public sealed class CoreConnection : IDisposable
             reqData.actionType = action;
         }
 
-        string resultMsg = "Waiting...";
-        _udpClient.SendTriggerRequest(reqData, (NotificationMessageData result) =>
-        {
-            resultMsg = result?.msgString ?? "OK";
-        });
-        System.Threading.Thread.Sleep(2000);
-        return resultMsg;
+        var r = SendAndAwaitNotification<TriggerNotificationData>(
+            send: () => _udpClient.SendTriggerRequest(reqData),
+            build: n => new NotificationMessageData { msgString = n.message ?? "OK" },
+            timeoutMs: 5_000);
+        return r?.msgString ?? "Timeout";
     }
 
     #endregion
@@ -1873,13 +2013,11 @@ public sealed class CoreConnection : IDisposable
             reqData.exchangeType = Profile.Exchange;
         }
 
-        string resultMsg = "Waiting...";
-        _udpClient.SendAutoBuyRequest(reqData, (NotificationMessageData result) =>
-        {
-            resultMsg = result?.msgString ?? "OK";
-        });
-        System.Threading.Thread.Sleep(2000);
-        return resultMsg;
+        var r = SendAndAwaitNotification<AutoBuyInfoNotificationData>(
+            send: () => _udpClient.SendAutoBuyRequest(reqData),
+            build: n => new NotificationMessageData { msgString = n.message ?? "OK" },
+            timeoutMs: 5_000);
+        return r?.msgString ?? "Timeout";
     }
 
     #endregion
@@ -1925,13 +2063,11 @@ public sealed class CoreConnection : IDisposable
         var reqData = new GraphToolRequestData();
         reqData.exchangeType = Profile.Exchange;
 
-        string resultMsg = "Waiting...";
-        _udpClient.SendGraphToolRequest(reqData, (NotificationMessageData result) =>
-        {
-            resultMsg = result?.msgString ?? "OK";
-        });
-        System.Threading.Thread.Sleep(2000);
-        return resultMsg;
+        var r = SendAndAwaitNotification<GraphToolNotificationData>(
+            send: () => _udpClient.SendGraphToolRequest(reqData),
+            build: n => new NotificationMessageData { msgString = n.message ?? "OK" },
+            timeoutMs: 5_000);
+        return r?.msgString ?? "Timeout";
     }
 
     #endregion
@@ -2080,204 +2216,141 @@ public sealed class CoreConnection : IDisposable
 
     public string MoveOrder(MarketType marketType, string clientOrderId, double newPrice)
     {
-        if (_udpClient == null)
-        {
-            return "Not connected";
-        }
-
-        var orderSettings = new OrderSettings();
-        string resultMsg = "Waiting...";
-        _udpClient.SendMoveOrderRequest(Profile.Exchange, marketType, clientOrderId, newPrice,
-            in orderSettings,
-            (NotificationMessageData result) =>
-            {
-                resultMsg = result?.msgString ?? "OK";
-            },
-            NetworkMessagePriority.HIGH);
-        System.Threading.Thread.Sleep(2000);
-        return resultMsg;
+        if (_udpClient == null) { return "Not connected"; }
+        OrderSettings empty = default;
+        var r = SendAndAwaitNotification<OrderMoveNotificationData>(
+            send: () => _udpClient.SendMoveOrderRequest(Profile.Exchange, marketType, clientOrderId, newPrice, ref empty, NetworkMessagePriority.HIGH),
+            build: n => new NotificationMessageData { msgString = n.message ?? "OK" },
+            timeoutMs: 5_000);
+        return r?.msgString ?? "Timeout";
     }
 
     public string MoveBatchOrders(MarketType marketType, Dictionary<string, decimal> orders)
     {
-        if (_udpClient == null)
-        {
-            return "Not connected";
-        }
-
-        string resultMsg = "Waiting...";
-        _udpClient.SendMoveBatchOrdersRequest(Profile.Exchange, marketType, orders,
-            (NotificationMessageData result) =>
-            {
-                resultMsg = result?.msgString ?? "OK";
-            },
-            NetworkMessagePriority.HIGH);
-        System.Threading.Thread.Sleep(2000);
-        return resultMsg;
+        if (_udpClient == null) { return "Not connected"; }
+        var r = SendAndAwaitNotification<OrderMoveNotificationData>(
+            send: () => _udpClient.SendMoveBatchOrdersRequest(Profile.Exchange, marketType, orders, NetworkMessagePriority.HIGH),
+            build: n => new NotificationMessageData { msgString = n.message ?? "OK" },
+            timeoutMs: 5_000);
+        return r?.msgString ?? "Timeout";
     }
 
     public string JoinOrder(MarketType marketType, string clientOrderId)
     {
-        if (_udpClient == null)
+        if (_udpClient == null) { return "Not connected"; }
+        var reqData = new OrderJoinRequestData
         {
-            return "Not connected";
-        }
-
-        var reqData = new OrderJoinRequestData();
-        reqData.exchangeType = Profile.Exchange;
-        reqData.marketType = marketType;
-        reqData.clOrderId = clientOrderId;
-
-        string resultMsg = "Waiting...";
-        _udpClient.SendJoinOrderRequest(reqData,
-            (NotificationMessageData result) =>
-            {
-                resultMsg = result?.msgString ?? "OK";
-            },
-            NetworkMessagePriority.DEFAULT);
-        System.Threading.Thread.Sleep(2000);
-        return resultMsg;
+            exchangeType = Profile.Exchange,
+            marketType = marketType,
+            clOrderId = clientOrderId
+        };
+        var r = SendAndAwaitNotification<OrderJoinNotificationData>(
+            send: () => _udpClient.SendJoinOrderRequest(reqData, NetworkMessagePriority.DEFAULT),
+            build: n => new NotificationMessageData { msgString = n.message ?? "OK" },
+            timeoutMs: 5_000);
+        return r?.msgString ?? "Timeout";
     }
 
     public string SplitOrder(MarketType marketType, string clientOrderId, byte count, float percentage)
     {
-        if (_udpClient == null)
+        if (_udpClient == null) { return "Not connected"; }
+        var reqData = new OrderSplitRequestData
         {
-            return "Not connected";
-        }
-
-        var reqData = new OrderSplitRequestData();
-        reqData.exchangeType = Profile.Exchange;
-        reqData.marketType = marketType;
-        reqData.clOrderId = clientOrderId;
-        reqData.count = count;
-        reqData.percentage = percentage;
-
-        string resultMsg = "Waiting...";
-        _udpClient.SendSplitOrderRequest(reqData,
-            (NotificationMessageData result) =>
-            {
-                resultMsg = result?.msgString ?? "OK";
-            },
-            NetworkMessagePriority.DEFAULT);
-        System.Threading.Thread.Sleep(2000);
-        return resultMsg;
+            exchangeType = Profile.Exchange,
+            marketType = marketType,
+            clOrderId = clientOrderId,
+            count = count,
+            percentage = percentage
+        };
+        var r = SendAndAwaitNotification<OrderSplitNotificationData>(
+            send: () => _udpClient.SendSplitOrderRequest(reqData, NetworkMessagePriority.DEFAULT),
+            build: n => new NotificationMessageData { msgString = n.message ?? "OK" },
+            timeoutMs: 5_000);
+        return r?.msgString ?? "Timeout";
     }
 
     public string ChangePositionMargin(MarketType marketType, string symbol, string action,
         PositionSide positionSide, decimal amount)
     {
-        if (_udpClient == null)
+        if (_udpClient == null) { return "Not connected"; }
+        var req = new ChangePositionMarginRequest
         {
-            return "Not connected";
-        }
-
-        var req = new ChangePositionMarginRequest();
-        req.exchangeType = Profile.Exchange;
-        req.marketType = marketType;
-        req.symbol = symbol;
-        req.positionSide = positionSide;
-        req.amount = amount;
-
+            exchangeType = Profile.Exchange,
+            marketType = marketType,
+            symbol = symbol,
+            positionSide = positionSide,
+            amount = amount
+        };
         if (Enum.TryParse<ChangePositionMarginRequest.ActionType>(action, true, out var actionType))
         {
             req.actionType = actionType;
         }
-
-        string resultMsg = "Waiting...";
-        _udpClient.SendChangePositionMargin(Profile.Exchange, req,
-            (NotificationMessageData result) =>
-            {
-                resultMsg = result?.msgString ?? "OK";
-            },
-            NetworkMessagePriority.DEFAULT);
-        System.Threading.Thread.Sleep(2000);
-        return resultMsg;
+        var r = SendAndAwaitNotification<MarginChangeNotificationData>(
+            send: () => _udpClient.SendChangePositionMargin(Profile.Exchange, req, NetworkMessagePriority.DEFAULT),
+            build: n => new NotificationMessageData { msgString = n.message ?? "OK" },
+            timeoutMs: 5_000);
+        return r?.msgString ?? "Timeout";
     }
 
     public string ModifyMarginType(MarketType marketType, string symbol, MarginType marginType)
     {
-        if (_udpClient == null)
+        if (_udpClient == null) { return "Not connected"; }
+        var reqData = new ModifyMarginTypeRequestData
         {
-            return "Not connected";
-        }
-
-        var reqData = new ModifyMarginTypeRequestData();
-        reqData.exchangeType = Profile.Exchange;
-        reqData.marketType = marketType;
-        reqData.symbol = symbol;
-        reqData.marginType = marginType;
-
-        string resultMsg = "Waiting...";
-        _udpClient.SendModifyMarginTypeRequest(reqData,
-            (NotificationMessageData result) =>
-            {
-                resultMsg = result?.msgString ?? "OK";
-            });
-        System.Threading.Thread.Sleep(2000);
-        return resultMsg;
+            exchangeType = Profile.Exchange,
+            marketType = marketType,
+            symbol = symbol,
+            marginType = marginType
+        };
+        var r = SendAndAwaitNotification<ModifyMarginTypeNotificationData>(
+            send: () => _udpClient.SendModifyMarginTypeRequest(reqData),
+            build: n => new NotificationMessageData { msgString = n.message ?? "OK" },
+            timeoutMs: 5_000);
+        return r?.msgString ?? "Timeout";
     }
 
     public string GetPositionMode(MarketType marketType, string symbol)
     {
-        if (_udpClient == null)
+        if (_udpClient == null) { return "Not connected"; }
+        var reqData = new PositionModeTypeRequestData
         {
-            return "Not connected";
-        }
-
-        var reqData = new PositionModeTypeRequestData();
-        reqData.exchangeType = Profile.Exchange;
-        reqData.marketType = marketType;
-        reqData.symbol = symbol ?? "";
-
-        string resultMsg = "Waiting...";
-        _udpClient.SendGetPositionModeType(reqData,
-            (NotificationMessageData result) =>
-            {
-                resultMsg = result?.msgString ?? "OK";
-            });
-        System.Threading.Thread.Sleep(2000);
-        return resultMsg;
+            exchangeType = Profile.Exchange,
+            marketType = marketType,
+            symbol = symbol ?? ""
+        };
+        var r = SendAndAwaitNotification<GetPositionModeTypeNotificationData>(
+            send: () => _udpClient.SendGetPositionModeType(reqData),
+            build: n => new NotificationMessageData { msgString = n.message ?? "OK" },
+            timeoutMs: 5_000);
+        return r?.msgString ?? "Timeout";
     }
 
     public string SetPositionMode(MarketType marketType, string symbol, PositionModeType mode)
     {
-        if (_udpClient == null)
+        if (_udpClient == null) { return "Not connected"; }
+        var reqData = new PositionModeTypeRequestData
         {
-            return "Not connected";
-        }
-
-        var reqData = new PositionModeTypeRequestData();
-        reqData.exchangeType = Profile.Exchange;
-        reqData.marketType = marketType;
-        reqData.symbol = symbol ?? "";
-        reqData.positionModeType = mode;
-
-        string resultMsg = "Waiting...";
-        _udpClient.SendSetPositionModeType(reqData,
-            (NotificationMessageData result) =>
-            {
-                resultMsg = result?.msgString ?? "OK";
-            });
-        System.Threading.Thread.Sleep(2000);
-        return resultMsg;
+            exchangeType = Profile.Exchange,
+            marketType = marketType,
+            symbol = symbol ?? "",
+            positionModeType = mode
+        };
+        var r = SendAndAwaitNotification<SetPositionModeTypeNotificationData>(
+            send: () => _udpClient.SendSetPositionModeType(reqData),
+            build: n => new NotificationMessageData { msgString = n.message ?? "OK" },
+            timeoutMs: 5_000);
+        return r?.msgString ?? "Timeout";
     }
 
     public string TransferFunds(AccountType fromAccount, string asset, double amount, AccountType toAccount)
     {
-        if (_udpClient == null)
-        {
-            return "Not connected";
-        }
-
-        string resultMsg = "Waiting...";
+        if (_udpClient == null) { return "Not connected"; }
+        var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cts = new CancellationTokenSource(5_000);
+        using var reg = cts.Token.Register(static s => ((TaskCompletionSource<string>)s!).TrySetResult("Timeout"), tcs);
         _udpClient.SendTransferAccountFundsRequest(Profile.Exchange, fromAccount, asset, amount, toAccount,
-            (NotificationMessageData result) =>
-            {
-                resultMsg = result?.msgString ?? "OK";
-            });
-        System.Threading.Thread.Sleep(2000);
-        return resultMsg;
+            (TransferFundsNotificationData result) => tcs.TrySetResult(result?.message ?? "OK"));
+        return tcs.Task.GetAwaiter().GetResult();
     }
 
     public string PanicSell(MarketType marketType, string asset, bool isPanicSelling)
@@ -2287,15 +2360,11 @@ public sealed class CoreConnection : IDisposable
             return "Not connected";
         }
 
-        string resultMsg = "Waiting...";
-        _udpClient.SendPanicSellRequest(Profile.Exchange, marketType, asset, isPanicSelling,
-            (NotificationMessageData result) =>
-            {
-                resultMsg = result?.msgString ?? "OK";
-            },
-            NetworkMessagePriority.HIGH);
-        System.Threading.Thread.Sleep(2000);
-        return resultMsg;
+        var r = SendAndAwaitNotification<PanicSellNotificationData>(
+            send: () => _udpClient.SendPanicSellRequest(Profile.Exchange, marketType, asset, isPanicSelling, NetworkMessagePriority.HIGH),
+            build: n => new NotificationMessageData { msgString = n.message ?? "OK" },
+            timeoutMs: 5_000);
+        return r?.msgString ?? "Timeout";
     }
 
     public string GetKlineList(MarketType marketType, string symbol, KlineInterval interval, short limit)
@@ -2557,9 +2626,14 @@ public sealed class CoreConnection : IDisposable
             return null;
         }
 
-        return SendAndWait<NotificationMessageData>(
-            cb => _udpClient.SendOrderTPSLUpdateRequest(orderData, cb, NetworkMessagePriority.HIGH),
-            timeoutMs);
+        return SendAndAwaitNotification<OrderTPSLUpdateNotificationData>(
+            send: () => _udpClient.SendOrderTPSLUpdateRequest(orderData, NetworkMessagePriority.HIGH),
+            build: n => new NotificationMessageData
+            {
+                notificationCode = n.success ? NotificationCode.OK : NotificationCode.ERROR,
+                msgString = n.message ?? string.Empty,
+            },
+            timeoutMs: timeoutMs);
     }
 
     #endregion
@@ -2569,27 +2643,31 @@ public sealed class CoreConnection : IDisposable
     public NotificationMessageData? JoinTPSL(
         TPSLInfoListData tpslData, int timeoutMs = 10_000)
     {
-        if (_udpClient == null)
-        {
-            return null;
-        }
-
-        return SendAndWait<NotificationMessageData>(
-            cb => _udpClient.SendJoinRequest(tpslData, cb, NetworkMessagePriority.HIGH),
-            timeoutMs);
+        if (_udpClient == null) { return null; }
+        // TPSL join response reuses OrderJoinNotificationData (per BotClient ServicesController).
+        return SendAndAwaitNotification<OrderJoinNotificationData>(
+            send: () => _udpClient.SendJoinRequest(tpslData, NetworkMessagePriority.HIGH),
+            build: n => new NotificationMessageData
+            {
+                notificationCode = n.success ? NotificationCode.OK : NotificationCode.ERROR,
+                msgString = n.message ?? string.Empty,
+            },
+            timeoutMs: timeoutMs);
     }
 
     public NotificationMessageData? SplitTPSL(
         TPSLInfoData tpslData, int timeoutMs = 10_000)
     {
-        if (_udpClient == null)
-        {
-            return null;
-        }
-
-        return SendAndWait<NotificationMessageData>(
-            cb => _udpClient.SendSplitRequest(tpslData, cb, NetworkMessagePriority.HIGH),
-            timeoutMs);
+        if (_udpClient == null) { return null; }
+        // TPSL split response is OrderSplitNotificationData (per BotClient ServicesController).
+        return SendAndAwaitNotification<OrderSplitNotificationData>(
+            send: () => _udpClient.SendSplitRequest(tpslData, NetworkMessagePriority.HIGH),
+            build: n => new NotificationMessageData
+            {
+                notificationCode = n.success ? NotificationCode.OK : NotificationCode.ERROR,
+                msgString = n.message ?? string.Empty,
+            },
+            timeoutMs: timeoutMs);
     }
 
     #endregion
