@@ -106,6 +106,14 @@ public sealed class AccountCommand : ICommand
         bool includeDust = ContainsIgnoreCase(args, "-all");
         IReadOnlyList<BalanceSnapshot>? balances = conn.AccountStore.GetBalances(includeDust);
 
+        // Transient UDS read to force the snapshot when the long-lived
+        // subscription hasn't pushed anything yet (fresh connect, no events).
+        if (balances.Count == 0 && conn.AccountStore.LastBalanceUpdate == default)
+        {
+            conn.ForceRefreshAccount();
+            balances = conn.AccountStore.GetBalances(includeDust);
+        }
+
         if (balances.Count == 0)
         {
             string? msg = conn.AccountStore.LastBalanceUpdate == default
@@ -142,6 +150,15 @@ public sealed class AccountCommand : ICommand
     {
         bool showAll = ContainsIgnoreCase(args, "-all");
         IReadOnlyList<OrderSnapshot>? orders = conn.AccountStore.GetOrders(activeOnly: !showAll);
+
+        // First call after connect — long-lived UDS subscribe doesn't push an
+        // initial empty drop on MTCore 0.7.23902. Open a transient UDS read to
+        // force the current snapshot, mirroring BotClient.GetOrdersListData.
+        if (orders.Count == 0 && conn.AccountStore.LastOrderUpdate == default)
+        {
+            conn.ForceRefreshOrders();
+            orders = conn.AccountStore.GetOrders(activeOnly: !showAll);
+        }
 
         if (orders.Count == 0)
         {
@@ -231,6 +248,13 @@ public sealed class AccountCommand : ICommand
     {
         bool showAll = ContainsIgnoreCase(args, "-all");
         IReadOnlyList<PositionSnapshot>? positions = conn.AccountStore.GetPositions(openOnly: !showAll);
+
+        // Force a transient UDS read when the long-lived store hasn't pushed.
+        if (positions.Count == 0 && conn.AccountStore.LastPositionUpdate == default)
+        {
+            conn.ForceRefreshAccount();
+            positions = conn.AccountStore.GetPositions(openOnly: !showAll);
+        }
 
         if (positions.Count == 0)
         {

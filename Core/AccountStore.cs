@@ -45,9 +45,9 @@ public sealed class AccountStore
     private const int MAX_RECENT_EXECUTIONS = 100;
 
     // ── Timestamps ───────────────────────────────────────────
-    public DateTime LastBalanceUpdate { get; private set; }
-    public DateTime LastOrderUpdate { get; private set; }
-    public DateTime LastPositionUpdate { get; private set; }
+    public DateTime LastBalanceUpdate { get; set; }
+    public DateTime LastOrderUpdate { get; set; }
+    public DateTime LastPositionUpdate { get; set; }
     public DateTime LastAccountInfoUpdate { get; private set; }
 
     // ── Events ───────────────────────────────────────────────

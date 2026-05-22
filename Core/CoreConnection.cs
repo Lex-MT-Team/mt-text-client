@@ -566,6 +566,114 @@ public sealed class CoreConnection : IDisposable
         }
     }
 
+    // ── Transient UDS read ──────────────────────────────────────────────
+    //
+    // The long-lived UDS subscription (set up at Subscribe()) only delivers
+    // OrderListData / BalanceListData / etc. when MTCore decides to push them
+    // — typically on order events, not at subscribe time. On a fresh profile
+    // with no recent orders, the AccountStore stays empty even though the
+    // subscription is healthy.
+    //
+    // ReadFreshUDSData opens a TRANSIENT SendUDSSubscribe, waits for any
+    // data drops of type T (per MarketType), takes them, then unsubscribes.
+    // Mirrors MTBotClient.Client.ServicesController.GetOrdersListData /
+    // GetPostitionsListData — the official pattern documented in
+    // internal vendor wire-pattern reference notes.
+    //
+    // The data is fed back through AccountStore.ProcessData so subsequent
+    // reads from the long-lived store see the snapshot.
+    private bool ReadFreshUDSData<T>(NetworkMessageType msgType, int timeoutMs = 5_000)
+        where T : NetworkData
+    {
+        if (_udpClient == null) { return false; }
+
+        var collected = new List<T>();
+        var done = new System.Threading.ManualResetEventSlim(false);
+        int subId = -1;
+        try
+        {
+            subId = _udpClient.SendUDSSubscribe(
+                Profile.Exchange,
+                (NetworkMessageType _, NetworkData data) =>
+                {
+                    if (data is T typed)
+                    {
+                        lock (collected) { collected.Add(typed); }
+                        // Don't break early — multiple market types may arrive.
+                        done.Set();
+                    }
+                },
+                -1,
+                NetworkMessagePriority.HIGH);
+
+            // Wait for first drop; once we have one, give a small grace
+            // window for any remaining markets to arrive.
+            if (done.Wait(timeoutMs))
+            {
+                System.Threading.Thread.Sleep(250);
+            }
+
+            lock (collected)
+            {
+                foreach (var item in collected)
+                {
+                    AccountStore.ProcessData(msgType, item);
+                }
+                return collected.Count > 0;
+            }
+        }
+        finally
+        {
+            if (subId != -1 && _udpClient != null)
+            {
+                try { _udpClient.SendUDSUnsubscribe(ref subId, Profile.Exchange, NetworkMessagePriority.HIGH); }
+                catch { /* best-effort */ }
+            }
+            done.Dispose();
+        }
+    }
+
+    /// <summary>Force-refresh the orders cache by opening a transient UDS
+    /// subscribe and feeding any received OrderListData back into AccountStore.
+    /// Use when the long-lived store hasn't been populated (no events since
+    /// connect). Always marks LastOrderUpdate after the call completes so
+    /// callers can distinguish "queried, no orders" from "never queried".
+    /// Returns true if at least one OrderListData drop arrived.</summary>
+    public bool ForceRefreshOrders(int timeoutMs = 5_000)
+    {
+        bool gotData = ReadFreshUDSData<OrderListData>(NetworkMessageType.UDS_ORDER_LIST_RESULT, timeoutMs);
+        // Even when no OrderListData drop arrived (genuine empty state — MTCore
+        // doesn't send empty confirmations on this build), record that we
+        // queried successfully so HandleOrders shows "No active orders" instead
+        // of "No order data received yet" on subsequent calls.
+        if (AccountStore.LastOrderUpdate == default)
+        {
+            AccountStore.LastOrderUpdate = DateTime.UtcNow;
+        }
+        return gotData;
+    }
+
+    /// <summary>Force-refresh positions + balances via a transient UDS read.
+    /// AccountInfoData arrives on the same UDS channel and carries both
+    /// position list and balance dictionary. Always marks Last{Position,Balance}Update
+    /// after the call so callers can distinguish "queried, empty" from "never queried".</summary>
+    public bool ForceRefreshAccount(int timeoutMs = 5_000)
+    {
+        bool gotData = ReadFreshUDSData<AccountInfoData>(NetworkMessageType.UDS_ACCOUNT_INFO_RESULT, timeoutMs);
+        if (AccountStore.LastPositionUpdate == default) { AccountStore.LastPositionUpdate = DateTime.UtcNow; }
+        if (AccountStore.LastBalanceUpdate == default)  { AccountStore.LastBalanceUpdate  = DateTime.UtcNow; }
+        return gotData;
+    }
+
+    /// <summary>Force-refresh standalone balance list (some venues push
+    /// BalanceListData separately from AccountInfoData).</summary>
+    public bool ForceRefreshBalances(int timeoutMs = 5_000)
+    {
+        bool gotData = ReadFreshUDSData<BalanceListData>(NetworkMessageType.UDS_BALANCE_LIST_RESULT, timeoutMs);
+        if (AccountStore.LastBalanceUpdate == default) { AccountStore.LastBalanceUpdate = DateTime.UtcNow; }
+        return gotData;
+    }
+
     #region Algorithm Lifecycle Requests
 
     /// <summary>
