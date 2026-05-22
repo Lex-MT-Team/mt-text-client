@@ -1,6 +1,6 @@
-# CLAUDE.md
+# Contributing to MTTextClient
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file describes the architecture, build conventions, and contribution guidelines for working in this repository.
 
 ## What this is
 
