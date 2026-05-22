@@ -57,6 +57,12 @@ mcp-proxy --port 8585 -- "path/to/MTTextClient.exe" --mcp
 
 ## Usage Modes
 
+> **Before placing real orders — read [docs/TPSL_SAFETY_GUIDE.md](docs/TPSL_SAFETY_GUIDE.md).**
+> Closing positions outside the TPSL pathway leaves no row in the reports DB,
+> even when the trade fills cleanly at the venue. The guide describes the
+> correct place → attach-TPSL → close-via-TPSL sequence and the venue/wire
+> quirks that compound the rule.
+
 ### 1. Interactive REPL (default)
 
 ```bash
