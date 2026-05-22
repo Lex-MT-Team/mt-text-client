@@ -104,9 +104,9 @@ public sealed class SettingsTests
         Skip.If(!EnvFlags.TestingEnv || !_bench.BenchAvailable, _bench.PreflightMessage);
         await _mcp.WaitForConnected(EnvFlags.DefaultBenchProfile);
 
-        // Per OV-5 + ConfirmGateStaticTests: settings_set requires confirm:true.
-        // Calling without confirm should fail at either the schema gate (RPC error)
-        // or the parser gate (success:false).
+        // settings_set requires confirm:true. Calling without confirm should
+        // fail at either the schema gate (RPC error) or the parser gate
+        // (success:false).
         var resp = await _mcp.CallTool("mt_settings_set",
             new { key = "Core.LOG_LEVEL", value = "INFO", profile = EnvFlags.DefaultBenchProfile });
 
@@ -115,7 +115,7 @@ public sealed class SettingsTests
             (resp.ParsedBody is { } b && b.TryGetProperty("success", out var s) &&
              s.ValueKind == System.Text.Json.JsonValueKind.False);
         gated.Should().BeTrue(
-            because: "OV-5: settings_set must reject without confirm:true");
+            because: "settings_set must reject without confirm:true");
     }
 
     [SkippableFact]

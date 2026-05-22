@@ -71,7 +71,7 @@ public sealed class SettingsCommand : ICommand
             "groups" => ShowGrouped(targetProfile),
             "profile-get" => GetProfileSettings(subArgs, targetProfile),
             "profile-update" => UpdateProfileSettings(subArgs, targetProfile, confirmFlag),
-            // Stage 6.7 — list keys of a named profile + delete one or more keys.
+            // List keys of a named profile + delete one or more keys.
             "profile-list" => ListProfileSettings(subArgs, targetProfile),
             "profile-delete" => DeleteProfileSettings(subArgs, targetProfile, confirmFlag),
             _ => CommandResult.Fail($"Unknown subcommand: {subCmd}. {Usage}")
@@ -343,7 +343,7 @@ public sealed class SettingsCommand : ICommand
             return error!;
         }
 
-        string profileName = subArgs.Length > 0 ? subArgs[0] : conn.Name;
+        string profileName = subArgs.Length > 0 ? subArgs[0] : "";
         string? result = conn.GetProfileSettings(profileName);
         if (string.IsNullOrEmpty(result))
         {
@@ -370,12 +370,12 @@ public sealed class SettingsCommand : ICommand
         if (conn == null) return error!;
         if (!confirmed) return CommandResult.Fail("Profile settings update requires --confirm flag.");
 
-        // Stage 6.7 fix (real MCP-010-ext root cause): the mt_profile_settings_update
+        // Real root cause of the historical update bug: the mt_profile_settings_update
         // dispatcher sends `settings profile-update <profile_name> <updates_json>`.
         // The previous implementation mis-parsed subArgs[0] as a setting KEY and
         // subArgs[1] as a setting VALUE — completely ignoring the JSON updates
         // payload.  Nothing actually invoked the typed update path before
-        // Stage 6.7's Smoke test, so the bug was latent.  Correct parse:
+        // the Smoke test added later, so the bug was latent.  Correct parse:
         //   subArgs[0] = profile_name (ignored — see below)
         //   subArgs[1] = updates JSON object {"key":"value", ...}
         //
@@ -423,10 +423,10 @@ public sealed class SettingsCommand : ICommand
             });
     }
 
-    // ── Stage 6.7 — profile_settings list + delete ───────────────────────────
+    // ── profile_settings list + delete ───────────────────────────
 
     /// <summary>
-    /// Stage 6.7 — list the keys of the connected profile's settings.
+    /// List the keys of the connected profile's settings.
     /// Read-only.  MTShared has no list-named-profiles RPC (verified via
     /// reflection: the only profile-settings wire methods are
     /// SendGetCurrentProfileSettingsRequest / SendGetProfileSettingsRequest /
@@ -475,7 +475,7 @@ public sealed class SettingsCommand : ICommand
     }
 
     /// <summary>
-    /// Stage 6.7 — accept either base64-encoded JSON (from the MCP dispatcher,
+    /// Accept either base64-encoded JSON (from the MCP dispatcher,
     /// which encodes to dodge the REPL tokenizer's double-quote stripping) OR
     /// raw JSON (from direct REPL calls).  Returns null if the input is not
     /// valid base64 of a JSON object — caller treats input as raw.
@@ -494,7 +494,7 @@ public sealed class SettingsCommand : ICommand
     }
 
     /// <summary>
-    /// Stage 6.7 — delete one or more profile-settings keys via the existing
+    /// Delete one or more profile-settings keys via the existing
     /// <c>SendUpdateProfileSettingsRequest</c> wire method's <c>deleted</c>
     /// HashSet parameter.  Confirm-gated.  Accepts comma-separated keys.
     /// </summary>
@@ -534,9 +534,9 @@ public sealed class SettingsCommand : ICommand
             return CommandResult.Fail(
                 $"not_found: none of [{string.Join(",", keys)}] are in {conn.Name}'s profile settings.");
 
-        // Stage 6.7 discovery — must use the implicit-profileName overload so
-        // MTCore sees the actual current profile name (not conn.Name).  See the
-        // matching fix in UpdateProfileSettings above.
+        // Must use the implicit-profileName overload so MTCore sees the actual
+        // current profile name (not conn.Name).  See the matching fix in
+        // UpdateProfileSettings above.
         var (uok, _, uerr) = conn.UpdateProfileSettings(
             new Dictionary<string, string>(), actuallyPresent);
         if (!uok)

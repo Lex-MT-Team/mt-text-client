@@ -7,7 +7,7 @@ using System.Reflection;
 using Newtonsoft.Json.Linq;
 
 /// <summary>
-/// Stage 6.2 — typed notification-config introspector.
+/// Typed notification-config introspector.
 ///
 /// MTShared exposes the notification surface across three primary types:
 ///   * MTShared.Types.NotificationGroupType — broad group (TRADE, SYSTEM, …).
@@ -19,9 +19,9 @@ using Newtonsoft.Json.Linq;
 ///
 /// MTShared's mutation surface (NotificationSettingsEditor) requires a
 /// ProfileManager + per-profile CommonProfileSettings — neither of which is
-/// currently exposed via CoreConnection on this build.  Stage 6.2 therefore
-/// ships the *typed read* of this catalog (defaults + grouping + per-target
-/// flags) and documents the mutation gap honestly in the capabilities tool.
+/// currently exposed via CoreConnection on this build. This reflector ships
+/// the *typed read* of the catalog (defaults + grouping + per-target flags)
+/// and documents the mutation gap honestly in the capabilities tool.
 /// </summary>
 public static class NotificationConfigReflector
 {
@@ -123,8 +123,8 @@ public static class NotificationConfigReflector
                 "NotificationSettingsEditor (SetUIGroupState, SetUINotificationState, " +
                 "SaveChanges, ResetToDefaults) but constructing it requires a " +
                 "ProfileManager + per-profile CommonProfileSettings — neither is " +
-                "exposed via CoreConnection on this build. Stage 6.2 ships the " +
-                "typed read catalog only; mutation is a follow-up workstream.",
+                "exposed via CoreConnection on this build. This reflector ships " +
+                "the typed read catalog only; mutation is a follow-up workstream.",
         };
     }
 

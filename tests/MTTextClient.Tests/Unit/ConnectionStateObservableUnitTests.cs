@@ -8,9 +8,9 @@ using State = MTTextClient.Core.ConnectionStateObservable.ConnectionState;
 namespace MTTextClient.Tests.Unit;
 
 /// <summary>
-/// Stage 0.4 — in-process unit tests for
-/// <see cref="ConnectionStateObservable"/>. No CoreConnection or MTCore
-/// required; we drive Publish() directly and observe the events.
+/// In-process unit tests for <see cref="ConnectionStateObservable"/>. No
+/// CoreConnection or MTCore required; we drive Publish() directly and
+/// observe the events.
 /// </summary>
 [Trait("Category", TraitCategories.Unit)]
 public sealed class ConnectionStateObservableUnitTests

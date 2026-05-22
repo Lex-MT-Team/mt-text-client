@@ -29,3 +29,11 @@ TestResults/
 
 # Local worktree/agent scaffolding — never committed.
 .claude/
+
+# Per-developer MCP server config — gitignored so each contributor's
+# local toolchain (codegraph, etc.) stays private.
+.mcp.json
+
+# Local code-intelligence index — machine-specific SQLite graph,
+# may be referenced cross-project via the codegraph projectPath argument.
+.codegraph/

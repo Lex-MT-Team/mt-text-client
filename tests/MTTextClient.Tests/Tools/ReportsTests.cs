@@ -6,10 +6,11 @@ namespace MTTextClient.Tests.Tools;
 
 /// <summary>
 /// Reports family. <c>mt_reports_dates</c> and <c>mt_reports_comments</c> are
-/// in the MCP-003 timeout cluster (cold/empty DB + 10s client cap). The other
-/// reads (<c>mt_reports_trades</c>, <c>mt_reports_stored</c>) work fine.
+/// in the fallback cluster (cold/empty DB + 10s client cap). The other reads
+/// (<c>mt_reports_trades</c>, <c>mt_reports_stored</c>) work fine.
 ///
-/// Rich-filter query (<c>mt_reports_query</c>) lands in Stage 7.1.
+/// Rich-filter query (<c>mt_reports_query</c>) lives in the reports-query
+/// Smoke + LiveTrade suites.
 /// </summary>
 [Collection(BenchCollection.Name)]
 public sealed class ReportsTests
@@ -49,8 +50,8 @@ public sealed class ReportsTests
         Skip.If(!EnvFlags.TestingEnv || !_bench.BenchAvailable, _bench.PreflightMessage);
         await _mcp.WaitForConnected(EnvFlags.DefaultBenchProfile);
 
-        // MCP-003 fix: cold/empty DB now returns success:true with empty data
-        // instead of timing out. The 30s default leaves plenty of headroom.
+        // Cold/empty DB returns success:true with empty data instead of timing
+        // out. The 30s default leaves plenty of headroom.
         var resp = await _mcp.CallTool("mt_reports_dates",
             new { profile = EnvFlags.DefaultBenchProfile },
             timeout: TimeSpan.FromSeconds(35));

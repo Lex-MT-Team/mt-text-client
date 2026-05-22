@@ -10,9 +10,8 @@ namespace MTTextClient.Tests.Tools;
 /// Trade-affecting algo lifecycle (start/stop/save_start) is in <see cref="OrdersTests"/>
 /// (LiveTrade category) since it actually places orders.
 ///
-/// MCP-001 regression check: tools whose dispatcher word was missing pre-PR-#1
-/// (perf, alerts, marketdata, etc.) live in their own files but algos_* is the
-/// canary because <c>mt_algos_list</c> is the most-used read.
+/// <c>mt_algos_list</c> is the canary for dispatcher routing because it is
+/// the most-used read.
 /// </summary>
 [Collection(BenchCollection.Name)]
 [Trait("Category", TraitCategories.Smoke)]
@@ -34,10 +33,10 @@ public sealed class AlgosTests
 
         // Real shape per AlgosCommand.ListAlgos: List<{id (long), name (string),
         // CoreName, signature, Running ("YES"/"no"), isRunning (bool), Processing,
-        // Market, symbol, GroupType, Group}>. Bench has 17 algos seeded.
+        // Market, symbol, GroupType, Group}>.
         data.ValueKind.Should().Be(System.Text.Json.JsonValueKind.Array);
         data.GetArrayLength().Should().BeGreaterThan(0,
-            because: "bench_01 ships with seeded algorithms (Tour_CORP_001 has 17)");
+            because: "the first bench profile is expected to ship with seeded algorithms");
 
         var first = data[0];
         first.TryGetProperty("id", out var id).Should().BeTrue();

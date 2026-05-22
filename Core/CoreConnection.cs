@@ -17,13 +17,12 @@ using MTTextClient.Monitoring;
 namespace MTTextClient.Core;
 
 /// <summary>
-/// A single connection to an MT-Core instance.
-/// Bundles UDPClient + all data stores (algorithms, account, core status, exchange info, profile settings).
-/// Each CoreConnection is independent — multiple can run concurrently.
-/// 
-/// Phase B: Algorithm lifecycle + profile settings requests.
-/// Phase D: Order & Position management requests.
-/// Phase E: Real-time monitoring — MonitorBuffer integration for UDP-based core status tracking.
+/// A single connection to an MT-Core instance. Bundles UDPClient + all
+/// data stores (algorithms, account, core status, exchange info, profile
+/// settings) plus the wire-level request surface (algorithm lifecycle,
+/// order &amp; position management, MonitorBuffer integration for UDP-based
+/// core status tracking, etc.). Each CoreConnection is independent —
+/// multiple can run concurrently.
 /// </summary>
 public sealed class CoreConnection : IDisposable
 {
@@ -48,6 +47,26 @@ public sealed class CoreConnection : IDisposable
     private int _tpslSubscriptionId;
     private int _tradingPerfSubscriptionId;
     private int _notificationSubscriptionId;
+    // The MTCore 0.7.23902 wire layer returns 0 from SendNotificationSubscribe
+    // even when the callback registers correctly, so the subscription-id
+    // sentinel can't be used to decide whether notifications are active.
+    // Track the registered state on a separate flag.
+    private bool _notificationCallbackRegistered;
+    // Algorithm requests in MTCore 0.7.23902 no longer deliver their response
+    // through the inline send callback — the response arrives as an
+    // AlgorithmUpdateNotificationData / AlgorithmListUpdateNotificationData on
+    // the notification subscription. Pending TCS instances are queued in FIFO
+    // order so the dispatcher can resolve them as the notifications arrive.
+    private readonly System.Collections.Concurrent.ConcurrentQueue<TaskCompletionSource<NotificationMessageData?>> _pendingAlgoRequests = new();
+    private readonly System.Collections.Concurrent.ConcurrentQueue<TaskCompletionSource<NotificationMessageData?>> _pendingAlgoListRequests = new();
+    // ReportListRequest responses on MTCore 0.7.23902 sometimes never trigger
+    // the inline send callback (profile-specific — observed on freshly initialised
+    // BYBIT bench profile). A ReportsUpdateNotificationData is pushed on the
+    // notification channel instead. The notification carries no report payload
+    // (only descriptor/profileName/creationTime), so the dispatcher signals an
+    // empty ReportListData and the caller treats it as "MTCore acknowledged but
+    // returned no rows" — the same outcome as a genuine empty result.
+    private readonly System.Collections.Concurrent.ConcurrentQueue<TaskCompletionSource<ReportListData?>> _pendingReportRequests = new();
     private int _alertsSubscriptionId;
     private int _alertHistorySubscriptionId;
     private readonly ConcurrentDictionary<string, int> _tradeSubscriptionIds = new ConcurrentDictionary<string, int>();
@@ -61,15 +80,15 @@ public sealed class CoreConnection : IDisposable
     private bool _disposed;
     private DateTime _connectedAt;
 
-    // MT-015: track connectionId + serverStartTime so we detect Core restarts
+    // Track connectionId + serverStartTime so we detect Core restarts
     // without a full disconnect/reconnect cycle
     private int   _lastConnectionId;
     private long  _lastServerStartTime;
 
-    // MT-017: per-connection token bucket rate limiter (120/s, burst 600)
+    // Per-connection token bucket rate limiter (120/s, burst 600)
     public RateLimiter RateLimit { get; } = new RateLimiter("connection", capacity: 600, refillPerSecond: 120);
 
-    // MT-021: per-connection circuit breaker (trip after 5 failures, 30s open window)
+    // Per-connection circuit breaker (trip after 5 failures, 30s open window)
     public CircuitBreaker Circuit { get; } = new CircuitBreaker("connection", failureThreshold: 5, openDurationMs: 30_000);
 
     /// <summary>The profile used to create this connection.</summary>
@@ -109,8 +128,11 @@ public sealed class CoreConnection : IDisposable
     /// <summary>Per-connection alert store. Holds active alerts and alert history.</summary>
     public AlertStore AlertStore { get; } = new AlertStore();
 
-    /// <summary>Whether notifications subscription is active.</summary>
-    public bool IsNotificationSubscribed { get { return _notificationSubscriptionId != 0; } }
+    /// <summary>Whether the notifications subscription is active. Reads the
+    /// registered-flag rather than the subscription id because MTCore 0.7.23902's
+    /// SendNotificationSubscribe returns 0 even when the callback successfully
+    /// registers.</summary>
+    public bool IsNotificationSubscribed { get { return _notificationCallbackRegistered; } }
 
     /// <summary>Whether alerts subscription is active.</summary>
     public bool IsAlertsSubscribed { get { return _alertsSubscriptionId != 0; } }
@@ -138,7 +160,7 @@ public sealed class CoreConnection : IDisposable
     public event Action<CoreConnection, int>? OnTradePairsLoaded;
     public event Action<CoreConnection>? OnAccountDataReceived;
     /// <summary>
-    /// MT-015: Fired when MTCore restarts while the UDP connection stays alive.
+    /// Fired when MTCore restarts while the UDP connection stays alive.
     /// Detected via connectionId or serverStartTime change in ConnectionInfoData.
     /// When fired: AlgoStore is stale — agents must re-query algo state.
     /// </summary>
@@ -175,7 +197,7 @@ public sealed class CoreConnection : IDisposable
             _udpClient.onConnect = HandleConnect;
             _udpClient.onDisconnect = HandleDisconnect;
             _udpClient.onReconnectStart = HandleReconnectStart;
-            // MT-015: detect Core restart (connectionId/serverStartTime change)
+            // Detect Core restart (connectionId/serverStartTime change)
             _udpClient.onConnectionInfoResult = HandleConnectionInfoChange;
 
             // Polling handled externally by ConnectionPump — no per-connection timer
@@ -212,7 +234,7 @@ public sealed class CoreConnection : IDisposable
         Cleanup();
     }
 
-    #region Monitor (Phase E)
+    #region Monitor
 
     /// <summary>
     /// Start collecting core status snapshots into a ring buffer.
@@ -302,6 +324,14 @@ public sealed class CoreConnection : IDisposable
             {
                 AccountStore.ProcessData(msgType, data);
             });
+
+        // 5. Notifications subscription — required by MTCore 0.7.23902's push
+        // model: algorithm-request responses arrive here as
+        // Algorithm{Update,ListUpdate}NotificationData rather than via the
+        // inline send callback. Calling SubscribeNotifications during the
+        // initial Subscribe means SendAlgorithmRequest etc. can rely on the
+        // TCS queue path from the first connect onward.
+        SubscribeNotifications();
     }
 
     private void Unsubscribe()
@@ -394,7 +424,7 @@ public sealed class CoreConnection : IDisposable
         catch { /* suppress processing errors */ }
     }
 
-    // ── MT-014: TCS-based request helper ─────────────────────────────────────
+    // ── TCS-based request helper ─────────────────────────────────────
     // Replaces ManualResetEventSlim.Wait() which held ThreadPool threads hostage
     // for up to timeoutMs on slow/unresponsive Core instances.
     // TaskCompletionSource runs continuations on the ThreadPool
@@ -405,19 +435,19 @@ public sealed class CoreConnection : IDisposable
     //            send: cb => _udpClient.SendXxx(data, cb),
     //            timeoutMs: 10_000);
 
-    // MT-017 + MT-021: guarded send — checks circuit breaker and rate limiter before dispatching.
+    // Guarded send — checks circuit breaker and rate limiter before dispatching.
     // timeoutMs=0 means "skip guard, internal use only" (e.g. subscribe calls).
     private T? SendAndWait<T>(Action<Action<T?>> send, int timeoutMs) where T : class
     {
         if (timeoutMs > 0)
         {
-            // MT-021: circuit breaker fast-fail
+            // Circuit breaker fast-fail
             if (!Circuit.AllowCall())
             {
                 return null;
             }
 
-            // MT-017: rate limiter — wait up to 500ms for a token
+            // Rate limiter — wait up to 500ms for a token
             if (!RateLimit.ConsumeBlocking(500))
             {
                 Circuit.RecordFailure();
@@ -432,7 +462,7 @@ public sealed class CoreConnection : IDisposable
         send(result => tcs.TrySetResult(result));
         T? result = tcs.Task.GetAwaiter().GetResult();
 
-        // MT-021: record outcome for circuit breaker
+        // Record outcome for circuit breaker
         if (timeoutMs > 0)
         {
             if (result != null) Circuit.RecordSuccess();
@@ -458,37 +488,67 @@ public sealed class CoreConnection : IDisposable
         return tcs.Task.GetAwaiter().GetResult();
     }
 
-    #region Algorithm Lifecycle Requests (Phase B)
+    #region Algorithm Lifecycle Requests
 
     /// <summary>
     /// Send an algorithm request (START, STOP, SAVE, DELETE, TOGGLE_DEBUG, etc.).
     /// The AlgorithmData.actionType must be set before calling.
     /// Returns a task that completes with the NotificationMessageData response.
     /// </summary>
-    public NotificationMessageData? SendAlgorithmRequest(AlgorithmData algoData, int timeoutMs = 10_000)
+    public NotificationMessageData? SendAlgorithmRequest(AlgorithmData algoData, int timeoutMs = 30_000)
     {
         if (_udpClient == null)
         {
             return null;
         }
 
-        return SendAndWait<NotificationMessageData>(
-            cb => _udpClient.SendAlgorithmRequest(algoData, cb), timeoutMs);
+        if (!_notificationCallbackRegistered)
+        {
+            // Fallback to the inline-callback path when notifications haven't
+            // been subscribed. Kept for safety; with the default Subscribe()
+            // flow the new-style path below is the one that fires.
+            return SendAndWait<NotificationMessageData>(
+                cb => _udpClient.SendAlgorithmRequest(algoData, cb), timeoutMs);
+        }
+
+        // MTCore 0.7.23902: the inline send-callback is no longer invoked.
+        // Enqueue a TCS, fire the request, and block until the notification
+        // dispatcher signals it with the next AlgorithmUpdateNotificationData.
+        var tcs = new TaskCompletionSource<NotificationMessageData?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _pendingAlgoRequests.Enqueue(tcs);
+        using var cts = new CancellationTokenSource(timeoutMs);
+        using var reg = cts.Token.Register(
+            static state => ((TaskCompletionSource<NotificationMessageData?>)state!).TrySetResult(null), tcs);
+        _udpClient.SendAlgorithmRequest(algoData, _ => { });
+        return tcs.Task.GetAwaiter().GetResult();
     }
 
     /// <summary>
     /// Send an algorithm list request (START_ALL, STOP_ALL, SAVE_GROUP, DELETE_GROUP, CLONE_GROUP).
     /// Returns a task that completes with the NotificationMessageData response.
     /// </summary>
-    public NotificationMessageData? SendAlgorithmListRequest(AlgorithmListData listData, int timeoutMs = 10_000)
+    public NotificationMessageData? SendAlgorithmListRequest(AlgorithmListData listData, int timeoutMs = 30_000)
     {
         if (_udpClient == null)
         {
             return null;
         }
 
-        return SendAndWait<NotificationMessageData>(
-            cb => _udpClient.SendAlgorithmListRequest(listData, cb), timeoutMs);
+        if (!_notificationCallbackRegistered)
+        {
+            return SendAndWait<NotificationMessageData>(
+                cb => _udpClient.SendAlgorithmListRequest(listData, cb), timeoutMs);
+        }
+
+        // Same pattern as SendAlgorithmRequest — response arrives on the
+        // notification channel as AlgorithmListUpdateNotificationData.
+        var tcs = new TaskCompletionSource<NotificationMessageData?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _pendingAlgoListRequests.Enqueue(tcs);
+        using var cts = new CancellationTokenSource(timeoutMs);
+        using var reg = cts.Token.Register(
+            static state => ((TaskCompletionSource<NotificationMessageData?>)state!).TrySetResult(null), tcs);
+        _udpClient.SendAlgorithmListRequest(listData, _ => { });
+        return tcs.Task.GetAwaiter().GetResult();
     }
 
     /// <summary>
@@ -567,7 +627,7 @@ public sealed class CoreConnection : IDisposable
 
     #endregion
 
-    #region Order & Position Management (Phase D)
+    #region Order & Position Management
 
     /// <summary>
     /// Place an order via Core.
@@ -696,7 +756,7 @@ public sealed class CoreConnection : IDisposable
     /// <summary>
     /// Request historical trade reports from MT-Core's report storage.
     /// This is the historical trading data — closed trades, not just live fills.
-    /// Phase H: Extended with B6 filters (excludeEmulated, closedBy, marketTypes, orderSideTypes, tradeModeType).
+    /// Supports filters: excludeEmulated, closedBy, marketTypes, orderSideTypes, tradeModeType.
     /// </summary>
     public ReportListData? RequestReports(
         long unixFrom, long unixTo,
@@ -707,7 +767,7 @@ public sealed class CoreConnection : IDisposable
         List<MarketType>? marketTypes = null,
         List<OrderSideType>? orderSideTypes = null,
         TradeModeType tradeModeType = TradeModeType.UNKNOWN,
-        int timeoutMs = 30_000)
+        int timeoutMs = 5_000)
     {
         if (_udpClient == null)
         {
@@ -745,18 +805,35 @@ public sealed class CoreConnection : IDisposable
             request.orderSideTypes = orderSideTypes;
         }
 
-        return SendAndWait<ReportListData>(
-            cb => _udpClient.SendReportListRequest(request, cb), timeoutMs);
+        if (!_notificationCallbackRegistered)
+        {
+            return SendAndWait<ReportListData>(
+                cb => _udpClient.SendReportListRequest(request, cb), timeoutMs);
+        }
+
+        // Race two paths and take whichever lands first:
+        //   (a) inline send callback — fires on profiles where MTCore still
+        //       honours the legacy callback for SendReportListRequest;
+        //   (b) ReportsUpdateNotificationData on the notification channel —
+        //       fires on profiles that switched to push-only; carries no
+        //       payload, so we synthesise an empty ReportListData.
+        var tcs = new TaskCompletionSource<ReportListData?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _pendingReportRequests.Enqueue(tcs);
+        using var cts = new CancellationTokenSource(timeoutMs);
+        using var reg = cts.Token.Register(
+            static state => ((TaskCompletionSource<ReportListData?>)state!).TrySetResult(null), tcs);
+        _udpClient.SendReportListRequest(request, data => tcs.TrySetResult(data));
+        return tcs.Task.GetAwaiter().GetResult();
     }
 
 
-    #region Read Queries (Phase K)
+    #region Read Queries
 
     /// <summary>
     /// Get 24h ticker price statistics for a symbol.
     /// </summary>
     public TickerPrice24ListData? RequestTicker24(
-        MarketType marketType, string symbol, int timeoutMs = 30_000)
+        MarketType marketType, string symbol, int timeoutMs = 5_000)
     {
         if (_udpClient == null)
         {
@@ -858,7 +935,7 @@ public sealed class CoreConnection : IDisposable
 
     #endregion
 
-    #region Write Operations (Phase K)
+    #region Write Operations
 
     /// <summary>
     /// Set position mode (HEDGE/ONE_WAY) for a symbol.
@@ -1166,15 +1243,83 @@ public sealed class CoreConnection : IDisposable
                 var entry = new NotificationEntry(profileName, typeName, message, "", data.creationTime);
 
                 NotificationStore.Add(entry);
+
+                // MTCore 0.7.23902 delivers algorithm-request results on this
+                // notification channel: when an Algorithm{Update,ListUpdate}-
+                // NotificationData arrives, signal the next pending TCS that
+                // was queued by SendAlgorithmRequest / SendAlgorithmListRequest.
+                if (typeName == "AlgorithmListUpdate")
+                {
+                    if (_pendingAlgoListRequests.TryDequeue(out var tcs))
+                    {
+                        tcs.TrySetResult(BuildNotificationResponse(data, message));
+                    }
+                }
+                else if (typeName == "AlgorithmUpdate")
+                {
+                    if (_pendingAlgoRequests.TryDequeue(out var tcs))
+                    {
+                        tcs.TrySetResult(BuildNotificationResponse(data, message));
+                    }
+                }
+                else if (typeName == "ReportsUpdate")
+                {
+                    // ReportsUpdateNotificationData carries no report payload,
+                    // so the pending report-request TCS is signalled with an
+                    // empty ReportListData. Callers that expected non-empty
+                    // results should fall back to mt_reports_dates / live
+                    // execution streams (mt_account_executions).
+                    if (_pendingReportRequests.TryDequeue(out var rTcs))
+                    {
+                        rTcs.TrySetResult(BuildEmptyReportListResponse());
+                    }
+                }
             },
             _notificationSubscriptionId);
+
+        // SendNotificationSubscribe returns 0 on MTCore 0.7.23902 even when the
+        // callback registers correctly. Record the registered state on a
+        // separate flag so the algorithm-request fast path knows to enqueue.
+        _notificationCallbackRegistered = true;
+    }
+
+    /// <summary>Synthesise a NotificationMessageData-shaped response from an
+    /// arbitrary AbstractNotificationData. NotificationMessageData and the
+    /// Algorithm*UpdateNotificationData subclasses are sibling types under
+    /// AbstractNotificationData (not parent/child), so the value can't be
+    /// downcast — a new NMD instance is constructed instead.</summary>
+    private static NotificationMessageData BuildNotificationResponse(AbstractNotificationData data, string message)
+    {
+        return new NotificationMessageData
+        {
+            msgString = message,
+        };
+    }
+
+    /// <summary>Synthesise an empty ReportListData for the ReportsUpdate push path.
+    /// The notification carries no payload, so callers see an empty result and a
+    /// fallback message can point them at alternative tools that surface trade
+    /// data live (mt_reports_dates, mt_account_executions).</summary>
+    private static ReportListData BuildEmptyReportListResponse()
+    {
+        return new ReportListData
+        {
+            reports = new System.Collections.Generic.List<ReportData>(),
+            deletedCount = 0,
+            total = 0,
+            orderCount = 0,
+            isStream = false,
+            streamTotal = 0,
+            streamItem = 0,
+        };
     }
 
     public void UnsubscribeNotifications()
     {
-        if (_udpClient != null && _notificationSubscriptionId != 0)
+        if (_udpClient != null && _notificationCallbackRegistered)
         {
             _udpClient.SendNotificationUnsubscribe(ref _notificationSubscriptionId, Profile.Exchange);
+            _notificationCallbackRegistered = false;
         }
     }
 
@@ -1423,10 +1568,10 @@ public sealed class CoreConnection : IDisposable
         }
     }
 
-    // Stage 6.3 — CRUD on alerts via SendAlertsRequest with the right
+    // CRUD on alerts via SendAlertsRequest with the right
     // AlertRequestSaveData / DeleteData / StartData / StopData subtype.
     // MTCore dispatches by ActionType; the populated subtype carries the
-    // alert ids / records.  Each helper blocks up to ~2 s waiting for the
+    // alert ids / records. Each helper blocks up to ~2 s waiting for the
     // NotificationMessageData callback (mirroring SendAutoBuyRequest's
     // sleep-2s pattern), then returns the server's msg string.
 
@@ -2510,7 +2655,7 @@ public sealed class CoreConnection : IDisposable
     }
 
     /// <summary>
-    /// MT-015: Called by UDPClient when ConnectionInfoData changes.
+    /// Called by UDPClient when ConnectionInfoData changes.
     /// If the connectionId or serverStartTime has changed since our last record,
     /// the Core has restarted while the socket stayed alive.
     /// We invalidate all cached stores and fire OnCoreRestarted.
@@ -2546,7 +2691,7 @@ public sealed class CoreConnection : IDisposable
         _lastServerStartTime = newStartTime;
     }
 
-    // MT-024: Send a TP/SL algorithm change request (fire-and-forget)
+    // Send a TP/SL algorithm change request (fire-and-forget)
     public void SendTpSlAlgorithmChangeRequest(
         TPSLInfoData msgData,
         NetworkMessagePriority priority = NetworkMessagePriority.DEFAULT)
@@ -2554,7 +2699,7 @@ public sealed class CoreConnection : IDisposable
         _udpClient?.SendTpSlAlgorithmChangeRequest(msgData, priority);
     }
 
-    // MT-024: Send algorithm profiling data request (asynchronous — response comes via event subscription)
+    // Send algorithm profiling data request (asynchronous — response comes via event subscription)
     public void SendAlgorithmProfilingDataRequest(
         ExchangeType exchangeType,
         MarketType marketType,
@@ -2564,7 +2709,7 @@ public sealed class CoreConnection : IDisposable
         _udpClient?.SendAlgorithmProfilingDataRequest(exchangeType, marketType, symbol, algorithmId);
     }
 
-    // MT-023: Send a service command to MTCore (shutdown / restart variants)
+    // Send a service command to MTCore (shutdown / restart variants)
     public void SendServiceCommand(CoreServiceCommand command)
     {
         if (_udpClient == null) return;
@@ -2575,7 +2720,7 @@ public sealed class CoreConnection : IDisposable
     {
         _udpClient = null;
         _isConnected = false;
-        // MT-015: reset restart-detection sentinels so a fresh connect starts clean
+        // Reset restart-detection sentinels so a fresh connect starts clean
         _lastConnectionId    = 0;
         _lastServerStartTime = 0;
         AlgoStore.Clear();

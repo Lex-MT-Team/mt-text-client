@@ -8,10 +8,10 @@
     <RootNamespace>MTTextClient</RootNamespace>
   </PropertyGroup>
 
-  <!-- Test sources live in their own project under tests/, and the Stage 0.3
-       generator helpers under tools/. Without these excludes, the SDK's
-       default glob pulls every <c>*.cs</c> in the repo into the main assembly,
-       which then conflicts with the generators' own Main entry points. -->
+  <!-- Test sources live in their own project under tests/, and the generator
+       helpers under tools/. Without these excludes, the SDK's default glob
+       pulls every *.cs in the repo into the main assembly, which then
+       conflicts with the generators' own Main entry points. -->
   <ItemGroup>
     <Compile Remove="tests\**" />
     <None Remove="tests\**" />
@@ -23,50 +23,94 @@
     <EmbeddedResource Remove="tools\**" />
   </ItemGroup>
 
+  <!-- Vendor-lib resolution.
+       The MTShared.dll / LiteNetLib.dll referenced below come from the
+       published MoonTrader build. They are platform-dependent (different
+       SHA per RID even for the same vendor version), so the project ships
+       a small download-at-build helper (scripts/fetch_vendor_libs.py) that
+       fetches the right tarball for the host RID, verifies it against the
+       vendor's SHA-256 manifest, and extracts the two DLLs into
+       lib/<rid>/.
+       The HintPath below prefers lib/<rid>/<dll> when present, falling
+       back to the committed lib/<dll> baseline. See lib/README.md. -->
+  <Choose>
+    <When Condition="$([MSBuild]::IsOSPlatform('OSX')) AND '$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)' == 'Arm64'">
+      <PropertyGroup><MTCoreVendorRid>osx-arm64</MTCoreVendorRid></PropertyGroup>
+    </When>
+    <When Condition="$([MSBuild]::IsOSPlatform('OSX'))">
+      <PropertyGroup><MTCoreVendorRid>osx-x64</MTCoreVendorRid></PropertyGroup>
+    </When>
+    <When Condition="$([MSBuild]::IsOSPlatform('Linux')) AND '$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)' == 'Arm64'">
+      <PropertyGroup><MTCoreVendorRid>linux-arm64</MTCoreVendorRid></PropertyGroup>
+    </When>
+    <Otherwise>
+      <PropertyGroup><MTCoreVendorRid>linux-x64</MTCoreVendorRid></PropertyGroup>
+    </Otherwise>
+  </Choose>
+
+  <PropertyGroup>
+    <_MTSharedRidPath>$(MSBuildThisFileDirectory)lib/$(MTCoreVendorRid)/MTShared.dll</_MTSharedRidPath>
+    <_LiteNetLibRidPath>$(MSBuildThisFileDirectory)lib/$(MTCoreVendorRid)/LiteNetLib.dll</_LiteNetLibRidPath>
+    <_MTSharedLegacyPath>$(MSBuildThisFileDirectory)lib/MTShared.dll</_MTSharedLegacyPath>
+    <_LiteNetLibLegacyPath>$(MSBuildThisFileDirectory)lib/LiteNetLib.dll</_LiteNetLibLegacyPath>
+    <!-- Resolution order: legacy committed file wins when present, RID copy
+         is the fallback. The committed lib/MTShared.dll is the active
+         API surface the code is compiled against; the RID-specific copy
+         (produced by scripts/fetch_vendor_libs.py from the latest vendor
+         build) is the migration target. When mt-text-client's wire layer
+         is upgraded to track the latest vendor MTShared.dll, the legacy
+         file will be removed from the repo and the RID copy becomes the
+         single source of truth. -->
+    <MTSharedHintPath Condition="Exists('$(_MTSharedLegacyPath)')">$(_MTSharedLegacyPath)</MTSharedHintPath>
+    <MTSharedHintPath Condition="'$(MTSharedHintPath)' == '' AND Exists('$(_MTSharedRidPath)')">$(_MTSharedRidPath)</MTSharedHintPath>
+    <LiteNetLibHintPath Condition="Exists('$(_LiteNetLibLegacyPath)')">$(_LiteNetLibLegacyPath)</LiteNetLibHintPath>
+    <LiteNetLibHintPath Condition="'$(LiteNetLibHintPath)' == '' AND Exists('$(_LiteNetLibRidPath)')">$(_LiteNetLibRidPath)</LiteNetLibHintPath>
+    <!-- Force the vendor-fetch step even when a HintPath already resolves;
+         useful for testing newer pinned vendor versions. -->
+    <FetchVendorLibs Condition="'$(FetchVendorLibs)' == ''">false</FetchVendorLibs>
+  </PropertyGroup>
+
   <ItemGroup>
     <Reference Include="MTShared">
-      <HintPath>lib/MTShared.dll</HintPath>
+      <HintPath>$(MTSharedHintPath)</HintPath>
     </Reference>
     <Reference Include="LiteNetLib">
-      <HintPath>lib/LiteNetLib.dll</HintPath>
+      <HintPath>$(LiteNetLibHintPath)</HintPath>
     </Reference>
   </ItemGroup>
 
-  <!-- Stage 0.6 — Apple Silicon build hygiene.
-       Vendor ships lib/MTShared.dll built for x64 (Machine=0x8664). Under
-       Apple Silicon the .NET 8 CLR refuses to load that as a native dep.
-       scripts/patch_mtshared_arm64.py flips the PE Machine field to
-       ARM64 (0xAA64); the managed IL is AnyCPU so it runs fine after JIT.
-       Repo ships lib/MTShared.dll already patched. This target re-runs
-       the script after every build as a safety net: if anyone refreshes
-       MTShared.dll from the vendor (which re-introduces 0x8664), the
-       next build flips it back. Idempotent. On Linux / Windows the
-       condition is false and the target is a no-op. -->
-  <Target Name="PatchMTSharedArm64"
-          AfterTargets="Build"
-          Condition="$([MSBuild]::IsOSPlatform('OSX'))">
-    <Exec Command="python3 &quot;$(MSBuildThisFileDirectory)scripts/patch_mtshared_arm64.py&quot;"
+  <!-- Vendor-lib auto-fetch.
+       Runs scripts/fetch_vendor_libs.py before reference resolution when:
+         (a) neither lib/<rid>/MTShared.dll nor lib/MTShared.dll exists,
+             i.e. the build has no fallback source, OR
+         (b) -p:FetchVendorLibs=true was passed explicitly to refresh.
+       The script downloads the right MoonTrader tarball for $(MTCoreVendorRid),
+       verifies SHA-256 against the vendor manifest, extracts MTShared.dll
+       and LiteNetLib.dll into lib/<rid>/, and applies the PE Machine-field
+       patch on osx-arm64.  ContinueOnError so a missing python3 / offline
+       host can still build against the committed baseline.  -->
+  <Target Name="FetchVendorLibs"
+          BeforeTargets="ResolveAssemblyReferences"
+          Condition=" '$(FetchVendorLibs)' == 'true' OR (!Exists('$(_MTSharedRidPath)') AND !Exists('$(_MTSharedLegacyPath)')) ">
+    <Message Importance="high"
+             Text="[FetchVendorLibs] running scripts/fetch_vendor_libs.py --rid $(MTCoreVendorRid)" />
+    <Exec Command="python3 &quot;$(MSBuildThisFileDirectory)scripts/fetch_vendor_libs.py&quot; --rid $(MTCoreVendorRid)"
           WorkingDirectory="$(MSBuildThisFileDirectory)"
           ContinueOnError="WarnAndContinue" />
   </Target>
 
   <ItemGroup>
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
-    <!-- Stage 0.5 pin (UnifiedDevelopmentPlan §6, decision in §12.1):
-         BouncyCastle.Cryptography is the AES256 implementation referenced by
-         lib/MTShared.dll's wire-protocol crypto path. Before this pin it was
-         an implicit transitive dep — MTShared.dll's metadata named the
-         assembly, but no copy was guaranteed under bin/Release/net8.0/. That
-         meant any future NuGet resolution could silently substitute a
-         different patched version OR omit it entirely until MTShared exercised
-         the crypto path (which Smoke does NOT — connect handshake takes the
-         path that loads BouncyCastle types). Pinning explicitly here:
-           (a) makes NuGet copy the DLL into bin/ on every build,
+    <!-- BouncyCastle.Cryptography is the AES256 implementation that
+         lib/MTShared.dll's wire-protocol crypto path resolves to at runtime.
+         Pinning explicitly here:
+           (a) makes NuGet copy the DLL into bin/<config>/net8.0/ on every
+               build, regardless of whether a transitive consumer touches it;
            (b) locks the version to 2.0.0 so a transitive bump can't drift
-               the cipher implementation under our feet,
-           (c) provides a single declaration point for the advisory review
-               that the plan §12.1 calls for (advisories noted; revisit).
-         The Static test in tests/.../Static/BouncyCastleVersionPinTests.cs
+               the cipher implementation underneath us;
+           (c) provides a single declaration point so security advisory
+               review is concentrated on one line of the manifest.
+         The Static test in tests/MTTextClient.Tests/Static/BouncyCastleVersionPinTests.cs
          asserts the runtime-loaded version matches 2.0.0. -->
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.0.0" />
   </ItemGroup>

@@ -10,7 +10,7 @@ using MTTextClient.Core;
 namespace MTTextClient.Commands;
 
 /// <summary>
-/// Phase D + Phase K: Order & Position management commands.
+/// Order & Position management commands.
 ///
 /// orders list                                — list active orders (from AccountStore)
 /// orders cancel <clientOrderId>              — cancel a specific order (--confirm)
@@ -97,7 +97,7 @@ public sealed class OrdersCommand : ICommand
             "fund-transfer" => TransferAccountFunds(subArgs, targetProfile, confirmFlag),
             "close-by-tpsl" => ClosePositionByTPSL(subArgs, targetProfile, confirmFlag),
             "reset-tpsl" => ResetPositionTPSL(subArgs, targetProfile, confirmFlag),
-            // Stage 2.1 — active-order TP/SL/TS update (wires SendOrderTPSLUpdateRequest).
+            // Active-order TP/SL/TS update (wires SendOrderTPSLUpdateRequest).
             "update-tpsl" => UpdateOrderTpsl(subArgs, targetProfile, confirmFlag),
             _ => CommandResult.Fail($"Unknown subcommand: {subCmd}. {Usage}")
         };
@@ -463,7 +463,7 @@ public sealed class OrdersCommand : ICommand
             new { Server = conn.Name, Action = "CLOSE_ALL", Count = positions.Count });
     }
 
-    #region Phase K: New Order Operations
+    #region New Order Operations
 
     private CommandResult PlaceOrder(string[] args, string? targetProfile, bool confirmed)
     {
@@ -519,6 +519,16 @@ public sealed class OrdersCommand : ICommand
         MarketType marketOverride = MarketType.FUTURES;
         bool hasMarketOverride = false;
         string? clientOrderIdOverride = null;
+        // TPSL inline-placement params. When tpPercent / slPercent are set,
+        // OrderRequestData.{takeProfitSettings,stopLossSettings} are populated
+        // so MTCore tracks the trade through TPSL bookkeeping (the only path
+        // that reaches the reports Firebird DB on close).
+        float tpPercent = 0f;
+        OrderType tpType = OrderType.LIMIT;
+        float slPercent = 0f;
+        OrderType slType = OrderType.MARKET;
+        bool trailingStop = false;
+        float trailingSpread = 0f;
 
         for (int i = nextArg; i < args.Length; i++)
         {
@@ -567,6 +577,33 @@ public sealed class OrdersCommand : ICommand
             else if (args[i].Equals("--client-order-id", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
             {
                 clientOrderIdOverride = args[++i];
+            }
+            else if (args[i].Equals("--tp-percent", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                float.TryParse(args[++i], System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out tpPercent);
+            }
+            else if (args[i].Equals("--tp-type", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                Enum.TryParse(args[++i].ToUpperInvariant(), out tpType);
+            }
+            else if (args[i].Equals("--sl-percent", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                float.TryParse(args[++i], System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out slPercent);
+            }
+            else if (args[i].Equals("--sl-type", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                Enum.TryParse(args[++i].ToUpperInvariant(), out slType);
+            }
+            else if (args[i].Equals("--trailing-stop", StringComparison.OrdinalIgnoreCase))
+            {
+                trailingStop = true;
+            }
+            else if (args[i].Equals("--trailing-spread", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                float.TryParse(args[++i], System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out trailingSpread);
             }
         }
 
@@ -633,6 +670,36 @@ public sealed class OrdersCommand : ICommand
                 isIceberg = iceberg,
             }
         };
+
+        // Attach TPSL settings inline when the caller asked for them. Setting
+        // takeProfitSettings.isOn / stopLossSettings.isOn = true is what
+        // routes MTCore through its TPSL bookkeeping path on close — the
+        // only path that writes a row into the reports Firebird DB.
+        // See docs/TPSL_SAFETY_GUIDE.md for the full pattern.
+        if (tpPercent > 0f)
+        {
+            orderRequest.takeProfitSettings = new TakeProfitSettings
+            {
+                isOn = true,
+                percentage = tpPercent,
+                orderType = tpType,
+            };
+        }
+        if (slPercent > 0f)
+        {
+            var sl = new StopLossSettings
+            {
+                isOn = true,
+                percentage = slPercent,
+                orderType = slType,
+            };
+            if (trailingStop)
+            {
+                sl.tralingIsOn = true;
+                if (trailingSpread > 0f) { sl.trailingSpread = trailingSpread; }
+            }
+            orderRequest.stopLossSettings = sl;
+        }
         if (!string.IsNullOrEmpty(clientOrderIdOverride))
         {
             // MTShared OrderRequestData carries clientOrderId; the venue may still
@@ -1378,10 +1445,9 @@ public sealed class OrdersCommand : ICommand
         string symbol = args[0];
         MarketType marketType = MarketType.FUTURES;
         PositionSide posSide = PositionSide.BOTH;
-        // Stage 1.3: order_type defaults to MARKET (back-compat with the
-        // pre-Stage-1 behaviour). The MCP wrapper exposes the new
-        // semantic via the order_type schema field; pre-Stage-1 callers
-        // that pass no override still get MARKET.
+        // order_type defaults to MARKET (back-compat with earlier behaviour).
+        // The MCP wrapper exposes the semantic via the order_type schema field;
+        // callers that pass no override still get MARKET.
         OrderType orderType = OrderType.MARKET;
 
         for (int i = 1; i < args.Length; i++)
@@ -1476,7 +1542,7 @@ public sealed class OrdersCommand : ICommand
     }
 
     /// <summary>
-    /// Stage 2.1 — update Take-Profit / Stop-Loss (and optional trailing spread) on
+    /// Update Take-Profit / Stop-Loss (and optional trailing spread) on
     /// an active order or open position.  Wires
     /// <see cref="CoreConnection.UpdateOrderTPSL"/> →
     /// <c>SendOrderTPSLUpdateRequest</c> on the MTShared wire.

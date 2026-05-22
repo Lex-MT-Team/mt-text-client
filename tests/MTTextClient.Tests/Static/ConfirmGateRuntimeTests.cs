@@ -5,7 +5,7 @@ using Xunit;
 namespace MTTextClient.Tests.Static;
 
 /// <summary>
-/// Stage 0.4 — verify the ConfirmGate actually fires at runtime, not just
+/// Verify the ConfirmGate actually fires at runtime, not just
 /// that the registry declares <c>confirm</c> in <c>inputSchema.required</c>.
 /// <see cref="ConfirmGateStaticTests"/> covers the schema declaration;
 /// this file probes the running MCP server to confirm that calls without

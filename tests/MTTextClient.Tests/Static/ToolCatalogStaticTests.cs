@@ -20,8 +20,7 @@ namespace MTTextClient.Tests.Static;
 ///       time this baseline was captured).</item>
 /// </list>
 ///
-/// Per OV-2: when Stage 0.3 lands the registry refactor, these assertions
-/// should still pass. Per OV-1: the test stack is xUnit/.NET only.
+/// The test stack is xUnit/.NET only.
 /// </summary>
 [Collection(McpCollection.Name)]
 [Trait("Category", TraitCategories.Static)]

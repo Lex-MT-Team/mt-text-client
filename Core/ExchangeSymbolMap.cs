@@ -4,7 +4,7 @@ using MTShared.Types;
 namespace MTTextClient.Core;
 
 /// <summary>
-/// Stage 4.1 — minimal cross-exchange symbol-format suggester.
+/// Minimal cross-exchange symbol-format suggester.
 ///
 /// MoonTrader / MTCore presents per-exchange symbol-format quirks: BINANCE +
 /// BYBIT both use <c>BTCUSDT</c>, OKX uses <c>BTC-USDT-SWAP</c> for perp
@@ -12,10 +12,10 @@ namespace MTTextClient.Core;
 /// When pasting an algorithm across exchanges these have to match the
 /// destination's expectations or MTCore rejects.
 ///
-/// This map covers the major base/quote pairs we see in dev (BTC, ETH, SOL,
-/// XRP × USDT/USDC).  It is intentionally narrow — the goal is a useful
-/// "suggested_symbol" in the structured error, not authoritative routing.
-/// Callers must surface the suggestion to the operator, never auto-apply it.
+/// This map covers the major base/quote pairs (BTC, ETH, SOL, XRP × USDT/USDC).
+/// It is intentionally narrow — the goal is a useful "suggested_symbol" in
+/// the structured error, not authoritative routing. Callers must surface the
+/// suggestion to the user, never auto-apply it.
 /// </summary>
 public static class ExchangeSymbolMap
 {

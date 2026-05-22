@@ -6,7 +6,7 @@ using Xunit;
 namespace MTTextClient.Tests.Integration;
 
 /// <summary>
-/// Stage 0.4 — full-bench regression. Iterates all configured bench
+/// Full-bench regression. Iterates all configured bench
 /// profiles (<see cref="EnvFlags.AllBenches"/>) and exercises a
 /// representative read-only tool set against each one, validating real
 /// MTCore response shapes. The point: prove the MCP/CoreConnection path
@@ -23,7 +23,7 @@ namespace MTTextClient.Tests.Integration;
 ///   • mt_settings_get — assert array of {Key, Value}
 ///
 /// Gated by MTC_TESTING_ENV=1 plus per-bench BenchFixture.IsBenchAvailable.
-/// A bench that's not up gets skipped, NOT failed — the operator can
+/// A bench that's not up gets skipped, NOT failed — the caller can
 /// start a subset of cores and still get useful coverage.
 ///
 /// Note on bench_03 (HYPERLIQUID): the third bench's MTCore can take
@@ -121,9 +121,9 @@ public sealed class BenchAllTests
 
         var resp = await _mcp.CallTool("mt_algos_list", new { profile });
         resp.InnerSuccess.Should().BeTrue();
-        // bench_01 (Tour_CORP_001) has 17 seeded algos; bench_02/03/04 may
-        // have 0. We accept any array shape (including empty / absent for
-        // the text-only "No algorithms loaded yet" branch).
+        // The first bench profile is expected to ship with seeded algorithms;
+        // the others may have 0. We accept any array shape (including empty /
+        // absent for the text-only "No algorithms loaded yet" branch).
     }
 
     [SkippableTheory]

@@ -15,7 +15,7 @@ public sealed class AccountTests
     private async Task EnsureConnectedAsync()
     {
         var ok = await _mcp.WaitForConnected(EnvFlags.DefaultBenchProfile);
-        Skip.IfNot(ok, "bench did not become CONNECTED — see MCP-002 in MT_RUNBOOK.md §9");
+        Skip.IfNot(ok, "bench did not become CONNECTED");
     }
 
     [SkippableFact]
@@ -55,7 +55,7 @@ public sealed class AccountTests
                 foundUsdtPositive = true;
         }
         foundUsdtPositive.Should().BeTrue(
-            because: "bench_01 (Tour_CORP_001) is seeded with ~$935 USDT on the futures wallet");
+            because: "the first bench profile is expected to carry a non-zero USDT balance on the futures wallet");
     }
 
     [SkippableFact]

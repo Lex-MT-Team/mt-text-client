@@ -213,7 +213,7 @@ public sealed class StatusCommand : ICommand
                 }
             }
 
-            // MCP-002: distinguish "connected but stale" from healthy CONNECTED.
+            // Distinguish "connected but stale" from healthy CONNECTED.
             // The UDP socket can stay open silently after MTCore stops talking; we mark it
             // STALE if no message has been seen for >60s (matches ConnectionHealthRecord.IsHealthy window).
             ConnectionHealthRecord? hRow = _manager.GetHealthRecord(c.Name);
@@ -279,7 +279,7 @@ public sealed class StatusCommand : ICommand
             }
         }
 
-        // MCP-002: same staleness check as list view.
+        // Same staleness check as list view.
         ConnectionHealthRecord? h = _manager.GetHealthRecord(conn.Name);
         TimeSpan idle = h != null ? DateTime.UtcNow - h.LastSeen : TimeSpan.Zero;
         bool stale = conn.IsConnected && h != null && idle > TimeSpan.FromSeconds(60);

@@ -21,14 +21,13 @@ public sealed class MiscTests
 
     [SkippableFact]
     [Trait("Category", TraitCategories.Smoke)]
-    public async Task mt_perf_list_succeeds_after_PR_1_with_text_body()
+    public async Task mt_perf_list_succeeds_with_text_body()
     {
         Skip.If(!EnvFlags.TestingEnv || !_bench.BenchAvailable, _bench.PreflightMessage);
         await _mcp.WaitForConnected(EnvFlags.DefaultBenchProfile);
 
-        // Pre-PR-#1 this returned "Unknown command: 'perf'" (MCP-001 cluster).
-        // Post-fix returns success with a message body. PerformanceCommand emits
-        // text-only Ok with a "[server] No performance data..." or summary block.
+        // PerformanceCommand emits text-only Ok with a "[server] No performance
+        // data..." or summary block.
         var resp = await _mcp.CallTool("mt_perf_list",
             new { profile = EnvFlags.DefaultBenchProfile });
         resp.InnerSuccess.Should().BeTrue();

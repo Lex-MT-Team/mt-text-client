@@ -16,10 +16,10 @@ namespace MTTextClient.Tests.LiveTrade.Campaign;
 ///      ~/mt-test-artifacts/campaign-2026-05-12/{campaign_letter}.jsonl;
 ///   4. Returns the response so the caller can drive follow-up flow.
 ///
-/// The artifact is the supervisor-auditable evidence. Tests deliberately do
-/// NOT assert pass/fail on a single tool — campaign success means evidence
-/// captured. Real failures (timeouts, rpc errors) are recorded honestly so
-/// the supervisor can re-verify.
+/// The artifact is auditable evidence.  Tests deliberately do NOT assert
+/// pass/fail on a single tool — campaign success means evidence captured.
+/// Real failures (timeouts, rpc errors) are recorded honestly so the
+/// evidence can be re-verified.
 /// </summary>
 public static class CampaignEvidence
 {

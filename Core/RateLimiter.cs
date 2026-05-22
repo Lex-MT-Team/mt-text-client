@@ -4,7 +4,7 @@ using System.Threading;
 namespace MTTextClient.Core;
 
 /// <summary>
-/// MT-017: Per-connection token bucket rate limiter.
+/// Per-connection token bucket rate limiter.
 ///
 /// Enforces exchange API call rates to prevent IP bans.
 /// Bybit conservative defaults: 120 calls/second bursting to 600.

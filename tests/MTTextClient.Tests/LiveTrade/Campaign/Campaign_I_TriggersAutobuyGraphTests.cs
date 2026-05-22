@@ -35,7 +35,7 @@ public sealed class Campaign_I_TriggersAutobuyGraphTests
         Skip.If(!_bench.IsBenchAvailable(Profile), $"{Profile} unavailable.");
 
         await _mcp.RestartSubprocessAsync();
-        // First attempt; if it flakes (MCP-002 race), retry once.
+        // First attempt; if it flakes (handshake race), retry once.
         bool connected = await _mcp.WaitForConnected(Profile, 60);
         if (!connected)
         {

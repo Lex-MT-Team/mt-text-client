@@ -10,10 +10,8 @@ namespace MTTextClient.Core;
 
 /// <summary>
 /// In-memory store for algorithm data received from Core via subscription.
-/// Thread-safe. Updated by ConnectionService callbacks.
-/// 
-/// Phase B: Extended with group tracking, argsJson parsing, and richer querying.
-/// Phase H: Fixed D3/D4 — complete ArgumentType mapping (65 types), robust MapValueToken.
+/// Thread-safe. Updated by ConnectionService callbacks. Tracks groups,
+/// parses argsJson, and provides richer querying.
 /// </summary>
 public sealed class AlgorithmStore
 {
@@ -57,7 +55,7 @@ public sealed class AlgorithmStore
                 {
                     if (_algorithms.TryGetValue(statusData.id, out AlgorithmData? existing))
                     {
-                        // MT-019: lock-protected atomic update of both fields so readers
+                        // Lock-protected atomic update of both fields so readers
                         // never observe a torn state (isRunning=new, isProcessing=old).
                         lock (existing)
                         {

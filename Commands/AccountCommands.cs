@@ -22,8 +22,6 @@ namespace MTTextClient.Commands;
 /// Supports @profile prefix for multi-server targeting:
 ///   account @bnc_001 balance
 ///   account @okx_001 positions
-///
-/// Phase H: Updated to display all expanded snapshot fields from AccountStore.
 /// </summary>
 public sealed class AccountCommand : ICommand
 {

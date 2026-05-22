@@ -38,14 +38,14 @@ namespace MTTextClient.Import;
 ///   3. Overriding each parameter value from the V2 text
 ///   4. Setting metadata fields (algorithmName, version, groupId, etc.)
 ///
-/// FIX HISTORY:
-///   - BUG-14: Windows \r\n line endings caused trailing ";\r" in multi-line JSON values.
-///             Fix: normalize all \r\n to \n at the start of Parse().
-///   - BUG-11: ###GROUP_START### blocks were silently skipped (lost group metadata).
-///             Fix: extract group info from preamble before first ###START###.
-///   - BUG-15: Group IDs from V2 files don't match Core-assigned IDs after SAVE_GROUP.
-///             Fix: parse result now includes GroupInfos list so ImportCommand can remap IDs.
-///   - Improved: multi-line JSON accumulation now uses Trim() on continuation lines.
+/// Notes:
+///   - Windows \r\n line endings are normalised to \n at the start of Parse()
+///     so TrimEnd(';') doesn't leave a trailing "\r" in multi-line JSON values.
+///   - ###GROUP_START### metadata is extracted from the preamble before the
+///     first ###START### so group bindings survive import.
+///   - Parse result includes GroupInfos so ImportCommand can remap group IDs
+///     (V2 file IDs don't match Core-assigned IDs after SAVE_GROUP).
+///   - Multi-line JSON accumulation uses Trim() on continuation lines.
 /// </summary>
 public sealed class V2FormatParser
 {
@@ -107,12 +107,12 @@ public sealed class V2FormatParser
     {
         var result = new ParseResult();
 
-        // FIX BUG-14: Normalize Windows line endings before any processing.
+        // Normalize Windows line endings before any processing.
         // V2 files from MTController often have \r\n which causes TrimEnd(';')
         // to fail when the line ends with ";\r".
         v2Text = v2Text.Replace("\r\n", "\n").Replace("\r", "\n");
 
-        // FIX BUG-11: Extract ###GROUP_START### metadata before splitting by ###START###.
+        // Extract ###GROUP_START### metadata before splitting by ###START###.
         // The group block sits between "VERSION: 2" and the first "###START###".
         GroupInfo? groupInfo = null;
         int groupStartIdx = v2Text.IndexOf("###GROUP_START###", StringComparison.OrdinalIgnoreCase);

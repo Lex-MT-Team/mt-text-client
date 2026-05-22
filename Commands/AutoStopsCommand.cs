@@ -518,7 +518,7 @@ public sealed class AutoStopsCommand : ICommand
 
     // AutoStop enums are byte-backed in MTShared, so Enum.IsDefined(typeof(...), int)
     // throws.  Render by name only if the int value falls in the known range; else
-    // surface as "(N)" so the operator can still see the raw byte value.
+    // surface as "(N)" so the caller can still see the raw byte value.
     private static string FilterTypeName(int v)
         => v switch
         {

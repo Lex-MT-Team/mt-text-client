@@ -1,14 +1,14 @@
 name: CI (PR-gate)
 
-# Per UnifiedDevelopmentPlan §5 / OV-4: PR-gate runs Static + Unit ONLY.
-# No MTCore subprocess, no live exchange. Smoke + LiveTrade + BenchAll are
-# routed to .github/workflows/testing-environment.yml (manual / scheduled,
-# separate self-hosted runner — see comment below).
+# PR-gate runs Static + Unit ONLY. No MTCore subprocess, no live exchange.
+# Smoke + LiveTrade + BenchAll are routed to
+# .github/workflows/testing-environment.yml (manual / scheduled, separate
+# self-hosted runner).
 #
-# Runner matrix (Stage 0.6 — Apple Silicon build hygiene):
-#   * ubuntu-latest  — x64 Linux. MTShared.dll runs unmodified (vendor
-#                       AMD64 Machine field matches the host arch).
-#                       Apple-Silicon PE patch target is no-op
+# Runner matrix — Apple Silicon build hygiene:
+#   * ubuntu-latest  — x64 Linux. MTShared.dll runs unmodified (vendor AMD64
+#                       Machine field matches the host arch). The
+#                       Apple-Silicon PE patch target is a no-op here
 #                       (Condition="$([MSBuild]::IsOSPlatform('OSX'))" is false).
 #   * macos-latest   — Apple Silicon (M-series) arm64. The MSBuild
 #                       post-build target PatchMTSharedArm64 (in
@@ -16,11 +16,6 @@ name: CI (PR-gate)
 #                       via scripts/patch_mtshared_arm64.py. The repo
 #                       ships lib/MTShared.dll already patched, so the
 #                       script is an idempotent safety net.
-#
-# Testing-environment workflow (Smoke, BenchAll, LiveTrade) needs a real
-# MTCore process and lives in testing-environment.yml. Stage 0.7 will
-# stand up a self-hosted macOS arm64 runner for that workflow; for now,
-# it runs locally via `dotnet test --filter "Category=Smoke"`.
 
 on:
   pull_request:

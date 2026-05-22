@@ -11,7 +11,7 @@ namespace MTTextClient.Commands;
 
 /// <summary>
 /// Algorithm management commands with multi-server support.
-/// Phase B: Full algorithm lifecycle — list, get, start, stop, save, delete, clone,
+/// Full algorithm lifecycle — list, get, start, stop, save, delete, clone,
 /// config view/edit, group management, toggle debug, rename.
 /// 
 /// All commands operate on the active connection unless @profile is specified.
@@ -40,10 +40,10 @@ namespace MTTextClient.Commands;
 /// algos export <id>             — export algo as portable JSON
 ///
 /// FIX HISTORY:
-///   - BUG-8: Rename uses description field, preserves type name in name field.
-///   - BUG-9: START_ALL/STOP_ALL uses AlgorithmData, not AlgorithmListData.
-///   - BUG-16: DELETE_GROUP uses AlgorithmData (single request), not AlgorithmListData.
-///             Core handles DELETE_GROUP in AlgorithmRequest handler, not AlgorithmListRequest.
+///   - Rename uses description field, preserves type name in name field.
+///   - START_ALL/STOP_ALL uses AlgorithmData, not AlgorithmListData.
+///   - DELETE_GROUP uses AlgorithmData (single request), not AlgorithmListData.
+///     Core handles DELETE_GROUP in AlgorithmRequest handler, not AlgorithmListRequest.
 /// </summary>
 /// <summary>
 /// Maps algorithm signature codes to their Core-internal type names.
@@ -144,13 +144,13 @@ public sealed class AlgosCommand : ICommand
             "delete-group" => DeleteGroup(subArgs, targetProfile, confirmFlag),
             "copy" or "cp" => CopyAlgo(subArgs, targetProfile, confirmFlag),
             "export" => ExportAlgo(subArgs, targetProfile),
-            // Stage 4.1 — file-backed clipboard for cross-profile transfer.
+            // File-backed clipboard for cross-profile transfer.
             "copy-to-clipboard" => CopyToClipboard(subArgs, targetProfile),
             "paste-from-clipboard" => PasteFromClipboard(subArgs, targetProfile, confirmFlag),
             "import-json" => ImportFromJson(subArgs, targetProfile, confirmFlag),
-            // Stage 4.2 — bulk field-level edit across many algos.
+            // Bulk field-level edit across many algos.
             "bulk-edit" => BulkEdit(subArgs, targetProfile, confirmFlag),
-            // Post-Stage-5 — create a new algorithm via clone-from-source.
+            // Create a new algorithm via clone-from-source.
             "create" => CreateAlgo(subArgs, targetProfile, confirmFlag),
             "start-verify" or "sv" => StartAndVerify(subArgs, targetProfile),
             "verify" => VerifyAlgo(subArgs, targetProfile),
@@ -224,8 +224,8 @@ public sealed class AlgosCommand : ICommand
 
 
     /// <summary>
-    /// Issue #15: resolve display name in priority info → description → name.
-    /// Filters out the raw mt-algo-XXXX synthetic names so operator-set
+    /// Resolve display name in priority info → description → name.
+    /// Filters out the raw mt-algo-XXXX synthetic names so user-set
     /// labels surface in list/info outputs. Raw on-wire name still emitted
     /// alongside as CoreName for joins / id-based tooling.
     /// </summary>
@@ -887,7 +887,7 @@ public sealed class AlgosCommand : ICommand
     }
 
     /// <summary>
-    /// FIX BUG-16: DELETE_GROUP must use AlgorithmData (single request), NOT AlgorithmListData.
+    /// DELETE_GROUP must use AlgorithmData (single request), NOT AlgorithmListData.
     /// Core's CoreMessagesProcessor routes:
     ///   - AlgorithmRequest (type 111) → handles DELETE_GROUP at line 1023
     ///   - AlgorithmListRequest (type 112) → does NOT handle DELETE_GROUP (no case for it)
@@ -934,7 +934,7 @@ public sealed class AlgosCommand : ICommand
                 $"  algos delete-group {groupId} --confirm");
         }
 
-        // BUG-16 FIX: Send as AlgorithmData via AlgorithmRequest handler.
+        // Send as AlgorithmData via AlgorithmRequest handler.
         // Core's AlgorithmRequest handler routes DELETE_GROUP to AlgorithmManager.DeleteGroup(AlgorithmData),
         // which accesses requestData.groupID to find and remove the folder.
         var request = new AlgorithmData
@@ -1172,10 +1172,10 @@ public sealed class AlgosCommand : ICommand
 
     #endregion
 
-    #region Stage 4.1 — File-backed Clipboard (copy-to-clipboard / paste / import-json)
+    #region File-backed Clipboard (copy-to-clipboard / paste / import-json)
 
     /// <summary>
-    /// Stage 4.1 — serialise an algorithm to the schema-versioned clipboard.
+    /// Serialise an algorithm to the schema-versioned clipboard.
     /// Read-only: never mutates the source profile.
     /// </summary>
     private CommandResult CopyToClipboard(string[] args, string? sourceProfile)
@@ -1210,10 +1210,10 @@ public sealed class AlgosCommand : ICommand
     }
 
     /// <summary>
-    /// Stage 4.1 — read the clipboard JSON, validate schema, run edge-case
+    /// Read the clipboard JSON, validate schema, run edge-case
     /// pre-flight (symbol/market/duplicate/blacklist), and dispatch to the
     /// target connection.  Optional <c>--override-symbol</c> / <c>--override-market</c>
-    /// flags let the operator force the paste through a known mismatch.
+    /// flags let the caller force the paste through a known mismatch.
     /// </summary>
     private CommandResult PasteFromClipboard(string[] args, string? targetProfile, bool confirmed)
     {
@@ -1223,7 +1223,7 @@ public sealed class AlgosCommand : ICommand
     }
 
     /// <summary>
-    /// Stage 4.1 — direct inline JSON paste (the automation-friendly form;
+    /// Direct inline JSON paste (the automation-friendly form;
     /// avoids the clipboard-file hop).  Same edge-case pre-flight as paste.
     /// </summary>
     private CommandResult ImportFromJson(string[] args, string? targetProfile, bool confirmed)
@@ -1270,7 +1270,7 @@ public sealed class AlgosCommand : ICommand
         catch (Exception ex) { return CommandResult.Fail($"Clipboard ({sourceLabel}) JSON unparseable: {ex.Message}"); }
 
         // Schema-version gate — refuse to silently apply a payload from a
-        // different MTCore generation.  The operator can re-export with the
+        // different MTCore generation.  The caller can re-export with the
         // current schema or update the importing client.
         string? schemaErr = AlgorithmClipboard.ValidateSchema(payload);
         if (schemaErr != null) return CommandResult.Fail(schemaErr);
@@ -1511,10 +1511,10 @@ public sealed class AlgosCommand : ICommand
         return d;
     }
 
-    // ── Stage 4.2 — bulk-edit ──────────────────────────────────────────────
+    // ── bulk-edit ──────────────────────────────────────────────
 
     /// <summary>
-    /// Stage 4.2 — fan out a single field-level mutation across many algos
+    /// Fan out a single field-level mutation across many algos
     /// in one call.  Dry-run by default (no <c>--confirm</c>) returns a
     /// per-algo diff preview.  With <c>--confirm</c> each affected algo is
     /// saved via <see cref="CoreConnection.SendAlgorithmRequest"/>; failures
@@ -1920,7 +1920,7 @@ public sealed class AlgosCommand : ICommand
 
     #endregion
 
-    #region Post-Stage-5 — algorithm creation (clone-from-source w/ 3-layer resilience)
+    #region Algorithm creation (clone-from-source w/ 3-layer resilience)
 
     /// <summary>
     /// Schema-version stamp embedded in created algorithms' argsJson.
@@ -1932,12 +1932,11 @@ public sealed class AlgosCommand : ICommand
     /// Create a new algorithm on a target profile by cloning a source
     /// algorithm's argsJson and applying user overrides on top.
     ///
-    /// <para>Strategy (chosen after MTShared reflection — see Claude session
-    /// reflection report 2026-05-12): MTCore exposes no preset / template
-    /// RPC.  The only viable creation path is clone-from-source.  An
-    /// operator-pinned <c>--source-id</c> takes precedence; otherwise the
-    /// handler auto-discovers a source on the target profile matching the
-    /// <c>--algo-type</c> (group_type) and optional <c>--signature</c>.</para>
+    /// <para>Strategy: MTCore exposes no preset / template RPC.  The only viable
+    /// creation path is clone-from-source.  A user-pinned <c>--source-id</c>
+    /// takes precedence; otherwise the handler auto-discovers a source on the
+    /// target profile matching the <c>--algo-type</c> (group_type) and optional
+    /// <c>--signature</c>.</para>
     ///
     /// <para><b>Three-layer resilience against MoonTrader-update drift:</b></para>
     /// <list type="number">
@@ -1957,8 +1956,8 @@ public sealed class AlgosCommand : ICommand
     ///   only <c>Arguments.&lt;key&gt;.value</c>; every other field
     ///   (argumentType, useOnlyPositiveValue, label, group, order, AND any
     ///   future field the MCP layer doesn't recognise) is preserved
-    ///   verbatim.  Unknown override keys are warned but accepted — the
-    ///   operator may know about a new MT field before MCP does.</item>
+    ///   verbatim.  Unknown override keys are warned but accepted — a
+    ///   caller may know about a new MT field before MCP does.</item>
     /// </list>
     ///
     /// CLI:
@@ -2260,12 +2259,12 @@ public sealed class AlgosCommand : ICommand
     }
 
 
-    #region MT-012: Algo Verification (BUG-13 Detection)
+    #region Algo Verification (Silent Init Failure Detection)
 
     /// <summary>
-    /// MT-012: Start an algorithm then verify it initialized successfully.
+    /// Start an algorithm then verify it initialized successfully.
     ///
-    /// BUG-13 (Silent Init Failure): MTCore may report isRunning=true even when the
+    /// Silent Init Failure: MTCore may report isRunning=true even when the
     /// algo's Init() failed. Running algos should have a non-empty symbol and a known
     /// marketType. This method detects that pattern after a configurable wait.
     ///
@@ -2294,7 +2293,7 @@ public sealed class AlgosCommand : ICommand
     }
 
     /// <summary>
-    /// MT-012: Verify current state of an already-started algo (BUG-13 spot check).
+    /// Verify current state of an already-started algo (silent init failure spot check).
     /// Does not start the algo — just evaluates the current AlgoStore state.
     ///
     /// Usage: algos verify <id> [@profile]
@@ -2311,9 +2310,9 @@ public sealed class AlgosCommand : ICommand
     }
 
     /// <summary>
-    /// Evaluate algo state data for BUG-13 patterns and produce a structured report.
+    /// Evaluate algo state data for silent-init-failure patterns and produce a structured report.
     ///
-    /// BUG-13 heuristic: trading algo shows isRunning=true but symbol is empty and
+    /// Heuristic: trading algo shows isRunning=true but symbol is empty and
     /// marketType is still UNKNOWN (0). This indicates Init() failed silently.
     /// </summary>
     private static CommandResult EvaluateVerification(string server, long id, AlgorithmData? algo, int waitedSecs, string startMsg)
@@ -2327,7 +2326,7 @@ public sealed class AlgosCommand : ICommand
                           || (int)algo.marketType == 0;
         bool   isTradingAlgo = algo.isTradingAlgo;
 
-        // BUG-13 pattern: reports running, but no symbol/market resolved (Init failed)
+        // Silent init failure pattern: reports running, but no symbol/market resolved (Init failed)
         bool bug13Detected = algo.isRunning && isTradingAlgo && symEmpty && mktUnknown;
 
         // Verified: running AND (not a trading algo, OR has resolved symbol+market)
@@ -2343,7 +2342,7 @@ public sealed class AlgosCommand : ICommand
         if (algo.isProcessing)                   evidence.Add("isProcessing=true");
         if (!symEmpty)                           evidence.Add($"symbol={algo.symbol}");
         if (!mktUnknown && !symEmpty)            evidence.Add($"market={marketStr}");
-        if (bug13Detected)                       evidence.Add("WARN: isRunning=true but symbol/market unresolved — BUG-13 pattern");
+        if (bug13Detected)                       evidence.Add("WARN: isRunning=true but symbol/market unresolved — silent init failure pattern");
         if (!algo.isRunning)                     evidence.Add("isRunning=false — algo is not running");
 
         string msg = $"[{server}] Algo {id} ({algo.name}) — {status} (waited {waitedSecs}s). {startMsg}";

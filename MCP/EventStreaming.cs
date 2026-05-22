@@ -11,7 +11,7 @@ using Newtonsoft.Json.Linq;
 
 namespace MTTextClient.MCP;
 
-// MT-005: Event Streaming — algo state changes, order fills, errors via SSE
+// Event Streaming — algo state changes, order fills, errors via SSE
 
 /// <summary>Immutable event record pushed to subscribers.</summary>
 public sealed class NexusEvent
@@ -36,7 +36,7 @@ public sealed class EventBroadcaster
     private readonly List<SseClient> _clients = new();
     private readonly object _clientLock = new();
 
-    // ── NATS bridge (MT-020) ──────────────────────────────────────────────────
+    // ── NATS bridge ──────────────────────────────────────────────────────────
     // Optional NATS UDP publish alongside SSE.
     // Enabled by setting MT_NATS_UDP_HOST env var (e.g. "127.0.0.1:4223").
     // Uses a fire-and-forget UDP datagram — zero blocking, sub-millisecond.
@@ -77,7 +77,7 @@ public sealed class EventBroadcaster
 
         NotifyClients(evt);
 
-        // MT-020: bridge to NATS via UDP (fire-and-forget, no blocking)
+        // bridge to NATS via UDP (fire-and-forget, no blocking)
         if (s_natsUdp != null && s_natsEndpoint != null)
         {
             try
@@ -180,7 +180,7 @@ public sealed class SseClient
 
 /// <summary>
 
-// MT-006: Prometheus-format metrics collector
+// Prometheus-format metrics collector
 /// <summary>Thread-safe counter store for mt-text-client Prometheus metrics.</summary>
 public sealed class MetricsCollector
 {
@@ -193,7 +193,7 @@ public sealed class MetricsCollector
     private readonly ConcurrentDictionary<string, long> _perToolErrors = new();
     private readonly ConcurrentDictionary<string, long> _perEventType  = new();
 
-    // MT-022: per-tool latency histograms (rolling window of last 1000 samples)
+    // per-tool latency histograms (rolling window of last 1000 samples)
     private const int LatencySampleCap = 1000;
     private readonly ConcurrentDictionary<string, List<long>> _perToolLatency = new();
 
@@ -218,7 +218,7 @@ public sealed class MetricsCollector
     public void SetConnectionsActive(int count) =>
         Interlocked.Exchange(ref _connectionsActive, count);
 
-    /// <summary>MT-022: Record observed latency for a tool call (milliseconds).</summary>
+    /// <summary>Record observed latency for a tool call (milliseconds).</summary>
     public void RecordLatency(string tool, long ms)
     {
         var samples = _perToolLatency.GetOrAdd(tool, _ => new List<long>());
@@ -231,7 +231,7 @@ public sealed class MetricsCollector
         }
     }
 
-    /// <summary>MT-022: Return P50/P95/P99 percentile latencies (ms) for a tool. Returns null if no data.</summary>
+    /// <summary>Return P50/P95/P99 percentile latencies (ms) for a tool. Returns null if no data.</summary>
     public (long p50, long p95, long p99)? GetLatencyPercentiles(string tool)
     {
         if (!_perToolLatency.TryGetValue(tool, out var samples)) return null;
@@ -278,7 +278,7 @@ public sealed class MetricsCollector
         sb.AppendLine("# TYPE mt_connections_active gauge");
         sb.AppendLine($"mt_connections_active {_connectionsActive}");
 
-        // MT-022: latency histograms
+        // latency histograms
         sb.AppendLine("# HELP mt_tool_latency_p50_ms Tool call P50 latency in milliseconds");
         sb.AppendLine("# TYPE mt_tool_latency_p50_ms gauge");
         sb.AppendLine("# HELP mt_tool_latency_p95_ms Tool call P95 latency in milliseconds");
@@ -307,7 +307,7 @@ public sealed class MetricsCollector
             ["connections_active"] = Interlocked.Read(ref _connectionsActive),
         };
 
-        // MT-022: include per-tool latency percentiles
+        // include per-tool latency percentiles
         var latency = new JObject();
         foreach (var tool in _perToolLatency.Keys)
         {

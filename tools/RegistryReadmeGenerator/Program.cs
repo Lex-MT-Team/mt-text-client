@@ -8,10 +8,9 @@ using Newtonsoft.Json.Linq;
 namespace MTTextClient.Tools.RegistryReadmeGenerator;
 
 /// <summary>
-/// Stage 0.3 (OV-2) helper: render an authoritative tool-table from
-/// <see cref="ToolRegistry.AllTools"/> and splice it into README.md between
-/// the BEGIN / END markers defined by <see cref="BeginMarker"/> and
-/// <see cref="EndMarker"/>.
+/// Renders an authoritative tool-table from <see cref="ToolRegistry.AllTools"/>
+/// and splices it into README.md between the BEGIN / END markers defined by
+/// <see cref="BeginMarker"/> and <see cref="EndMarker"/>.
 ///
 /// CLI:
 ///   dotnet run --project tools/RegistryReadmeGenerator -- [--check]
@@ -21,8 +20,8 @@ namespace MTTextClient.Tools.RegistryReadmeGenerator;
 /// against the in-file section between the markers; exits 1 if drift.
 ///
 /// The Static <c>ReadmeParityTests</c> calls <see cref="Render"/> directly
-/// in-process and asserts the in-file table is byte-equal — the binary form
-/// is just for operator convenience.
+/// in-process and asserts the in-file table is byte-equal; the CLI binary
+/// is a convenience wrapper around the same rendering function.
 /// </summary>
 public static class Program
 {

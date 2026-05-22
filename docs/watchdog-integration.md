@@ -1,6 +1,6 @@
 # Watchdog integration (discovery)
 
-**Status:** Out of scope for the current epic.  Schema placeholders are
+**Status:** Not yet implemented.  Schema placeholders are
 registered (`mt_watchdog_status`, `mt_watchdog_token_update`) so the
 workstream is grep-discoverable, but no client wiring exists yet and
 there is no bench coverage.
@@ -223,18 +223,17 @@ existing `Resolve(profile)` for cores.
 
 ## Bench requirement
 
-The current bench cluster (`local-binance-bench`/`local-profile`, etc.) runs **only the
-MTCore process**, not the watchdog.  A real bench for this workstream
-needs:
+The standard bench cluster runs **only the MTCore process**, not the
+watchdog.  A real bench for this workstream needs:
 
-- A separate watchdog process listening on its own UDP port (not 4243
-  — that's MTCore on local-binance-bench).  Look at `MoonTrader.app` bundle's
-  watchdog binary, or run the watchdog assembly from
-  `cores-cloned/local-binance-bench/lib/` directly with `--watchdog` mode.
+- A separate watchdog process listening on its own UDP port (not
+  colliding with any MTCore port already in use).  Run the watchdog
+  assembly shipped alongside the MTCore binary directly with
+  `--watchdog` mode.
 - Its own auth token configured in a `WatchdogProfile`.  The token is
   what `mt_watchdog_token_update` would rotate.
-- The watchdog must already be configured to monitor the bench's
-  MTCore (one row in `WatchdogStatusInfo` per monitored core).
+- The watchdog must already be configured to monitor a real MTCore (one
+  row in `WatchdogStatusInfo` per monitored core).
 
 ## Placeholder contract (regression harness)
 
@@ -257,9 +256,3 @@ behaviour check).
 `ConfirmGateStaticTests.ConfirmRequiredTools` /
 `ConfirmGateUnitTests`'s destructive-tools table.  The gate fires
 before any dispatch even reaches the (currently-missing) handler.
-
-## Out-of-scope marker
-
-This work is **deferred** at operator direction.  Do NOT implement the
-handlers as a side-quest — bring it back as a standalone workstream
-when the bench infrastructure (separate watchdog process) is ready.

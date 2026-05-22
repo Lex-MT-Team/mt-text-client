@@ -24,8 +24,6 @@ namespace MTTextClient.Commands;
 ///   reports [@profile] --market FUTURES
 ///   reports [@profile] --side BUY
 ///   reports [@profile] --mode REAL
-///
-/// Phase H: Added B6 (more filters), B7 (more fields), E1/E2 (null safety).
 /// </summary>
 public sealed class ReportsCommand : ICommand
 {
@@ -120,7 +118,7 @@ public sealed class ReportsCommand : ICommand
             return CommandResult.Fail($"Connection '{conn.Name}' is not connected.");
         }
 
-        // Phase K: Check for subcommands (comments, dates)
+        // Check for subcommands (comments, dates)
         if (cleanArgs.Count > 0)
         {
             string? firstArg = cleanArgs[0].ToLowerInvariant();
@@ -245,7 +243,13 @@ public sealed class ReportsCommand : ICommand
 
         if (reportList == null)
         {
-            return CommandResult.Fail($"[{conn.Name}] Report request timed out or failed.");
+            return CommandResult.Ok(
+                $"[{conn.Name}] No report rows returned. MTCore did not respond on this profile " +
+                $"within the request window — some builds drop ReportListRequest without firing a " +
+                $"callback when the underlying Firebird table is empty or uninitialised. " +
+                $"Fall back to: mt_reports_dates (lists available dates), mt_account_executions " +
+                $"(live fill stream), or mt_marketdata_trades for symbol-level trade history.",
+                new { Server = conn.Name, Reports = new List<object>(), TimedOut = true });
         }
 
         List<ReportData>? reports = reportList.reports;
@@ -679,18 +683,17 @@ public sealed class ReportsCommand : ICommand
 
 
 
-    #region Phase K: Report Metadata
+    #region Report Metadata
 
     private static readonly RequestExecutor _executor = new();
 
     private CommandResult GetReportComments(CoreConnection conn)
     {
-        // MCP-003 / Stage 7.2: empty/cold Firebird returns silence; the
-        // RequestExecutor.ExecuteWithFallback overload centralises the
-        // null-on-timeout → empty-envelope translation that this site, the
-        // Dates handler below, and the ticker24 handler in ExchangeCommand
-        // all share.  Each call-site provides its own typed fallback so the
-        // shape callers expect is preserved.
+        // Empty/cold Firebird returns silence; the RequestExecutor.ExecuteWithFallback
+        // overload centralises the null-on-timeout → empty-envelope translation that
+        // this site, the Dates handler below, and the ticker24 handler in
+        // ExchangeCommand all share.  Each call-site provides its own typed fallback
+        // so the shape callers expect is preserved.
         ReportsFieldData data = _executor.ExecuteWithFallback(
             () => conn.RequestReportComments(),
             () => new ReportsFieldData { reportComments = new List<string>() });
@@ -708,7 +711,7 @@ public sealed class ReportsCommand : ICommand
 
     private CommandResult GetReportDates(CoreConnection conn)
     {
-        // MCP-003 / Stage 7.2: same pattern via RequestExecutor.
+        // Same pattern via RequestExecutor.
         ReportsFieldData data = _executor.ExecuteWithFallback(
             () => conn.RequestReportDates(),
             () => new ReportsFieldData { reportsDate = new List<long>() });
@@ -837,7 +840,13 @@ public sealed class ReportsCommand : ICommand
 
         if (reportList == null)
         {
-            return CommandResult.Fail($"[{conn.Name}] Report request timed out or failed.");
+            return CommandResult.Ok(
+                $"[{conn.Name}] No report rows returned. MTCore did not respond on this profile " +
+                $"within the request window — some builds drop ReportListRequest without firing a " +
+                $"callback when the underlying Firebird table is empty or uninitialised. " +
+                $"Fall back to: mt_reports_dates (lists available dates), mt_account_executions " +
+                $"(live fill stream), or mt_marketdata_trades for symbol-level trade history.",
+                new { Server = conn.Name, Reports = new List<object>(), TimedOut = true });
         }
 
         List<ReportData>? reports = reportList.reports;
@@ -868,21 +877,26 @@ public sealed class ReportsCommand : ICommand
         TradeModeType tradeModeType = ParseTradeModeType(tradeModeFilter);
 
         IReadOnlyList<CoreConnection> connections = _manager.GetAll();
-        Dictionary<string, List<ReportData>> reportsByServer =
-            new Dictionary<string, List<ReportData>>();
-        List<string> errors = new List<string>();
+        var reportsByServer = new System.Collections.Concurrent.ConcurrentDictionary<string, List<ReportData>>();
+        var errors = new System.Collections.Concurrent.ConcurrentBag<string>();
 
-        foreach (CoreConnection c in connections)
+        // Parallelise the per-server RequestReports calls. Each call is
+        // already capped at 5s in CoreConnection; sequential iteration would
+        // multiply that by the number of connected profiles. MaxDegreeOfParallelism
+        // is bounded so we don't open hundreds of in-flight UDP requests at once.
+        var parallelOpts = new System.Threading.Tasks.ParallelOptions
+        {
+            MaxDegreeOfParallelism = 8,
+        };
+        System.Threading.Tasks.Parallel.ForEach(connections, parallelOpts, c =>
         {
             if (!c.IsConnected)
             {
-                continue;
+                return;
             }
-
             ReportListData? reportList = c.RequestReports(
                 unixFrom, unixTo, symbolFilter, algoFilter, sigFilter,
                 false, excludeEmulated, closedByList, marketTypes, orderSideTypes, tradeModeType);
-
             if (reportList?.reports != null && reportList.reports.Count > 0)
             {
                 reportsByServer[c.Name] = reportList.reports;
@@ -891,14 +905,15 @@ public sealed class ReportsCommand : ICommand
             {
                 errors.Add(c.Name);
             }
-        }
+        });
 
         if (reportsByServer.Count == 0)
         {
             return CommandResult.Fail("No trades found from any connected server.");
         }
 
-        string csv = ReportCsvExporter.GenerateMergedCsv(reportsByServer);
+        var mergedReports = new Dictionary<string, List<ReportData>>(reportsByServer);
+        string csv = ReportCsvExporter.GenerateMergedCsv(mergedReports);
         string outputPath = ReportCsvExporter.WriteToFile(csv, filePath);
 
         int totalTrades = 0;

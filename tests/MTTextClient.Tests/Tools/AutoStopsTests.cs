@@ -5,12 +5,8 @@ using Xunit;
 namespace MTTextClient.Tests.Tools;
 
 /// <summary>
-/// AutoStops read tools. The full lifecycle (run / stop / edit / add) is
-/// missing from mt-text-client today and lands in Stage 3 of the unified plan
-/// (gap blocks A, B in <c>mt_textclient_missing_features.md</c>).
-///
-/// <c>mt_autostops_reports</c> is in the MCP-003 timeout cluster and gets a
-/// KnownIssue trait until Stage 7 lands.
+/// AutoStops read tools.  Full lifecycle (add / start / stop / edit / delete)
+/// coverage is exercised by the autostops-crud Smoke and LiveTrade suites.
 /// </summary>
 [Collection(BenchCollection.Name)]
 public sealed class AutoStopsTests
@@ -36,7 +32,7 @@ public sealed class AutoStopsTests
         resp.ParsedBody!.Value.TryGetProperty("message", out var msg).Should().BeTrue();
         string text = msg.GetString() ?? "";
         text.Should().Contain("AutoStop",
-            because: "the body must announce the AutoStop section so an operator/agent recognises the response");
+            because: "the body must announce the AutoStop section so a caller recognises the response");
     }
 
     [SkippableFact]
@@ -63,8 +59,8 @@ public sealed class AutoStopsTests
         Skip.If(!EnvFlags.TestingEnv || !_bench.BenchAvailable, _bench.PreflightMessage);
         await _mcp.WaitForConnected(EnvFlags.DefaultBenchProfile);
 
-        // MCP-003 fix: cold/empty Firebird now returns success:true with an empty
-        // Reports array instead of timing out. 35s leaves headroom over the 30s default.
+        // Cold/empty Firebird returns success:true with an empty Reports
+        // array instead of timing out. 35s leaves headroom over the 30s default.
         var resp = await _mcp.CallTool("mt_autostops_reports",
             new { profile = EnvFlags.DefaultBenchProfile },
             timeout: TimeSpan.FromSeconds(35));

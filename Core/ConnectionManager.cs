@@ -26,21 +26,21 @@ public sealed class ConnectionManager : IDisposable
     private int _cachedVersion;
     private int _currentVersion;
 
-    // MT-002: Persistent profiles — auto-reconnect when connection drops
+    // Persistent profiles — auto-reconnect when connection drops
     private readonly ConcurrentDictionary<string, ServerProfile> _persistentProfiles =
         new(StringComparer.OrdinalIgnoreCase);
 
-    // MT-003: Per-connection health records — latency, error rate, reconnect history
+    // Per-connection health records — latency, error rate, reconnect history
     private readonly ConcurrentDictionary<string, ConnectionHealthRecord> _healthRecords =
         new(StringComparer.OrdinalIgnoreCase);
 
     // Cancellation for all pending reconnect tasks
     private readonly CancellationTokenSource _reconnectCts = new();
 
-    // MT-016: cap concurrent reconnect attempts during fleet storms (e.g. 30 conns drop at once)
+    // Cap concurrent reconnect attempts during fleet storms (e.g. 30 conns drop at once)
     private static readonly SemaphoreSlim _reconnectSemaphore = new(10, 10);
 
-    // MT-015: fired when Core restarts (connectionId or serverStartTime changes on same connection)
+    // Fired when Core restarts (connectionId or serverStartTime changes on same connection)
     public event Action<CoreConnection>? OnCoreRestarted;
 
     public ConnectionManager()
@@ -100,15 +100,15 @@ public sealed class ConnectionManager : IDisposable
     public event Action<CoreConnection, int>? OnAlgorithmsLoaded;
 
     /// <summary>
-    /// Stage 0.4 — centralised per-profile lifecycle state. Fed by the
-    /// existing OnConnectionEstablished / OnConnectionLost events; consumers
+    /// Centralised per-profile lifecycle state. Fed by the existing
+    /// OnConnectionEstablished / OnConnectionLost events; consumers
     /// (mt_status, mt_connection_health, tests) can subscribe here instead
     /// of querying CoreConnection.IsConnected directly. Existing event
     /// surface remains for backward compatibility.
     /// </summary>
     public ConnectionStateObservable State { get; } = new ConnectionStateObservable();
 
-    // Events — Phase A data streams
+    // Events — data streams
     public event Action<CoreConnection>? OnCoreStatusReceived;
     public event Action<CoreConnection, int>? OnTradePairsLoaded;
     public event Action<CoreConnection>? OnAccountDataReceived;
@@ -131,15 +131,15 @@ public sealed class ConnectionManager : IDisposable
             Disconnect(profile.Name);
         }
 
-        // MT-002/MT-003: register profile for auto-reconnect and init health record
+        // Register profile for auto-reconnect and init health record
         _persistentProfiles[profile.Name] = profile;
         ConnectionHealthRecord health = _healthRecords.GetOrAdd(profile.Name,
             n => new ConnectionHealthRecord(n));
 
         var conn = new CoreConnection(profile);
 
-        // Stage 0.4: announce the initial pre-handshake state so subscribers
-        // that join the observable later still see the connection.
+        // Announce the initial pre-handshake state so subscribers that join
+        // the observable later still see the connection.
         State.Publish(profile.Name, ConnectionStateObservable.ConnectionState.Connecting);
 
         // Wire connection lifecycle events
@@ -180,12 +180,12 @@ public sealed class ConnectionManager : IDisposable
         conn.OnError += (c, msg) => OnConnectionError?.Invoke(c, msg);
         conn.OnAlgorithmsLoaded += (c, count) => OnAlgorithmsLoaded?.Invoke(c, count);
 
-        // Wire Phase A data events
+        // Wire data events
         conn.OnCoreStatusReceived += c => OnCoreStatusReceived?.Invoke(c);
         conn.OnTradePairsLoaded += (c, count) => OnTradePairsLoaded?.Invoke(c, count);
         conn.OnAccountDataReceived += c => OnAccountDataReceived?.Invoke(c);
 
-        // MT-003: wire health metric updates
+        // Wire health metric updates
         conn.OnConnected += c =>
         {
             health.IsConnected = true;
@@ -195,7 +195,7 @@ public sealed class ConnectionManager : IDisposable
         conn.OnDisconnected += c =>
         {
             health.IsConnected = false;
-            // MT-002: schedule auto-reconnect with exponential backoff
+            // Schedule auto-reconnect with exponential backoff
             if (_persistentProfiles.TryGetValue(c.Name, out ServerProfile? savedProfile))
             {
                 _ = ScheduleReconnectAsync(savedProfile, _reconnectCts.Token);
@@ -215,12 +215,12 @@ public sealed class ConnectionManager : IDisposable
                 health.LastSeen = DateTime.UtcNow;
             }
         };
-        // ISS-1 fix: update LastSeen on any data event, not just CoreStatus push.
+        // Update LastSeen on any data event, not just CoreStatus push.
         // Connections that respond to commands are clearly alive even if CoreStatus stops.
         conn.OnAlgorithmsLoaded += (c, _) => health.LastSeen = DateTime.UtcNow;
         conn.OnTradePairsLoaded += (c, _) => health.LastSeen = DateTime.UtcNow;
         conn.OnAccountDataReceived += c => health.LastSeen = DateTime.UtcNow;
-        // MT-015: propagate Core restart notification from CoreConnection to manager
+        // Propagate Core restart notification from CoreConnection to manager
         conn.OnCoreRestarted += c => OnCoreRestarted?.Invoke(c);
 
         _connections[profile.Name] = conn;
@@ -245,7 +245,7 @@ public sealed class ConnectionManager : IDisposable
     /// <summary>Disconnect a specific connection by profile name.</summary>
     public bool Disconnect(string profileName)
     {
-        // MT-002: stop auto-reconnect for explicitly disconnected profiles
+        // Stop auto-reconnect for explicitly disconnected profiles
         _persistentProfiles.TryRemove(profileName, out _);
 
         if (_connections.TryRemove(profileName, out CoreConnection? conn))
@@ -281,7 +281,7 @@ public sealed class ConnectionManager : IDisposable
         _activeConnectionName = string.Empty;
     }
 
-    // ── Health Records (MT-003) ───────────────────────────────
+    // ── Health Records ───────────────────────────────
 
     /// <summary>
     /// Returns health records for all tracked profiles (connected or reconnecting).
@@ -299,7 +299,7 @@ public sealed class ConnectionManager : IDisposable
         return record;
     }
 
-    // ── Auto-Reconnect (MT-002) ───────────────────────────────
+    // ── Auto-Reconnect ───────────────────────────────
 
     /// <summary>
     /// Schedules a reconnect attempt for a profile after its current backoff delay.
@@ -328,7 +328,7 @@ public sealed class ConnectionManager : IDisposable
             return;
         }
 
-        // MT-016: throttle concurrent reconnects to avoid LiteNetLib socket storm
+        // Throttle concurrent reconnects to avoid LiteNetLib socket storm
         // when many connections drop simultaneously (e.g. network hiccup hitting 30 conns)
         try
         {

@@ -5,9 +5,8 @@ using Xunit;
 namespace MTTextClient.Tests.Tools;
 
 /// <summary>
-/// Detect the MTCore freeze pattern that Stage 1's LiveTrade campaign
-/// exposed (DEFECT-11 / DEFECT-MTCORE-FREEZE on the Stage 0 defect
-/// register).  Symptom: the MTCore process stays alive and its UDP port
+/// Detect the MTCore freeze pattern that LiveTrade runs occasionally
+/// expose.  Symptom: the MTCore process stays alive and its UDP port
 /// stays bound, but its LiteNetLib receive loop stops pumping, so
 /// inbound peer-connect packets sit in the OS receive queue forever.
 /// The bench port "looks up" via <c>lsof</c>, but no client can ever
@@ -57,7 +56,6 @@ public sealed class CoreHandshakeFreezeTests
         bool connected = await _mcp.WaitForConnected(profile, firstAttemptSeconds: 60);
         connected.Should().BeTrue(
             because: $"bench {profile} is bound to UDP:{port} but its MTCore receive loop did not produce a CONNECTED state within 60 s — " +
-                     "this is the DEFECT-11 / MTCORE-FREEZE signature.  Restart the bench " +
-                     "(`kill -9 $(pgrep -f \"--profile <profile>\"); start_all_cores.sh`) and re-run.");
+                     "this is the MTCore-freeze signature.  Restart the bench MTCore and re-run.");
     }
 }

@@ -41,7 +41,7 @@ public sealed class CoreTests
 
         var connected = await _mcp.WaitForConnected(EnvFlags.DefaultBenchProfile, firstAttemptSeconds: 30);
         connected.Should().BeTrue(
-            because: $"bench is supposed to be running on UDP:{EnvFlags.DefaultBenchPort}; if this fails, see MCP-002 in MT_RUNBOOK.md §9 (kill+restart MTCore and retry).");
+            because: $"bench is supposed to be running on UDP:{EnvFlags.DefaultBenchPort}; if this fails, kill+restart MTCore and retry.");
 
         // Strengthened: assert mt_status itself reports CONNECTED (not just that
         // WaitForConnected returned true — that's a transient poll, this is the
@@ -130,13 +130,12 @@ public sealed class CoreTests
 
     [Fact]
     [Trait("Category", TraitCategories.Static)]
-    [Trait(KnownIssue.TraitKey, KnownIssue.McpRetained009)]
     public void mt_core_restart_is_documented_known_issue()
     {
         // No subprocess call — this is a Static reminder test. mt_core_restart
         // crashes MTCore on macOS arm64 via the Firebird shutdown path.
-        // PR #4 made the tool report success:false honestly. Smoke tests must
-        // NOT call this tool — see MT_RUNBOOK.md §4.
+        // The tool reports success:false honestly.  Smoke tests must
+        // NOT call this tool.
         var tool = _mcp.Tools.FirstOrDefault(t => t.GetProperty("name").GetString() == "mt_core_restart");
         tool.ValueKind.Should().NotBe(System.Text.Json.JsonValueKind.Undefined,
             because: "mt_core_restart still exists; the bug is in MTCore (vendor-side), not in mt-text-client");

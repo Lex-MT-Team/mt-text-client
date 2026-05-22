@@ -21,24 +21,9 @@ public static class TraitCategories
     /// <summary>
     /// Integration tests that exercise ALL configured bench profiles
     /// (bench_01–bench_04) end-to-end against real MTCore instances on
-    /// different exchanges. Stage 0.4 addition. Gated by
-    /// MTC_TESTING_ENV=1 plus the bench-port availability probe in
-    /// BenchFixture (any profile whose port is unbound is skipped).
+    /// different exchanges.  Gated by MTC_TESTING_ENV=1 plus the
+    /// bench-port availability probe in BenchFixture (any profile whose
+    /// port is unbound is skipped).
     /// </summary>
     public const string BenchAll = "BenchAll";
-}
-
-/// <summary>
-/// Trait keys used alongside <see cref="TraitCategories"/> to mark known-broken tools.
-/// </summary>
-public static class KnownIssue
-{
-    public const string TraitKey = "KnownIssue";
-
-    public const string McpRetained003 = "MCP-003"; // timeout cluster
-    public const string McpRetained005 = "MCP-005"; // import_templates fixed-path
-    public const string McpRetained006 = "MCP-006"; // vault auth
-    public const string McpRetained009 = "MCP-009"; // core_restart Rosetta crash
-    public const string McpRetained010Ext = "MCP-010-ext";          // profile_settings_update missing confirm
-    public const string McpRetained010SettingsSet = "MCP-010-set";  // mt_settings_set: parser requires --confirm but schema does not
 }

@@ -52,7 +52,7 @@ a { color: var(--accent); text-decoration: none; }
 .sidebar .category-label:hover { color: var(--accent); }
 .sidebar .category-label .arrow { font-size: 9px; transition: transform 0.15s; }
 .sidebar .category-label .arrow.collapsed { transform: rotate(-90deg); }
-.sidebar .tool-item { padding: 6px 12px 6px 20px; font-size: 13px; cursor: pointer;
+.sidebar .tool-item { padding: 9px 12px 9px 20px; font-size: 13px; cursor: pointer;
   border-left: 2px solid transparent; transition: all 0.15s; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; }
 .sidebar .tool-item:hover { background: rgba(88,166,255,0.08); }
@@ -109,6 +109,7 @@ a { color: var(--accent); text-decoration: none; }
   white-space: pre-wrap; word-break: break-word; line-height: 1.6; }
 .response-success { border-left: 3px solid var(--green); padding-left: 16px; }
 .response-error { border-left: 3px solid var(--red); padding-left: 16px; }
+.response-empty { border-left: 3px solid var(--yellow); padding-left: 16px; }
 .response-meta { font-size: 11px; color: var(--text-dim); margin-top: 8px; }
 
 /* Tables */
@@ -332,6 +333,7 @@ let messagesEndpoint = null;
 let profiles = [];
 let lastUsedProfile = localStorage.getItem('mt_last_profile') || '';
 let editingProfile = null;
+let cancelCurrentExecution = null;
 
 const EXCHANGE_LABELS = { 0: 'BINANCE', 1: 'BYBIT', 2: 'OKX' };
 const EXCHANGE_CLASSES = { BINANCE: 'exch-BINANCE', BYBIT: 'exch-BYBIT', OKX: 'exch-OKX' };
@@ -473,13 +475,17 @@ function renderProfileBadge() {
 }
 
 function buildProfileSelect(paramName) {
-  let opts = '<option value="">— select profile —</option>';
+  let opts = '';
   profiles.forEach(p => {
-    const sel = (p.Name === lastUsedProfile) ? ' selected' : '';
-    const dot = p.Status?.includes('CONNECTED') ? '🟢 ' : '⚪ ';
-    opts += '<option value="' + esc(p.Name) + '"' + sel + '>' + dot + esc(p.Name) + '</option>';
+    const dot = p.Status?.includes('CONNECTED') ? '\u{1F7E2} ' : '⚪ ';
+    opts += '<option value="' + esc(p.Name) + '">' + dot + esc(p.Name) + '</option>';
   });
-  return '<select id="param_' + paramName + '" onchange="rememberProfile(this.value)">' + opts + '</select>';
+  const autoFill = paramName === 'profile';
+  const defVal = (autoFill && lastUsedProfile) ? ' value="' + esc(lastUsedProfile) + '"' : '';
+  const changeHandler = autoFill ? ' oninput="rememberProfile(this.value)"' : '';
+  return '<input type="text" id="param_' + paramName + '" list="dl_' + paramName + '"' + defVal +
+    ' placeholder="Type or select profile"' + changeHandler + '>' +
+    '<datalist id="dl_' + paramName + '">' + opts + '</datalist>';
 }
 
 function rememberProfile(val) {
@@ -686,6 +692,7 @@ function renderToolDetail() {
   }
   html += '<div class="btn-row">';
   html += '<button class="btn btn-primary" id="execBtn" onclick="executeTool()">▶ Execute</button>';
+  html += '<button class="btn btn-danger" id="cancelBtn" style="display:none" onclick="cancelExecution()">✕ Cancel</button>';
   html += '<button class="btn btn-secondary" onclick="clearForm()">Clear</button>';
   html += '</div></div>';
 
@@ -723,9 +730,13 @@ function collectArgs() {
 
 async function executeTool() {
   if (!activeTool) return;
+  let cancelled = false;
+  cancelCurrentExecution = () => { cancelled = true; };
   const btn = document.getElementById('execBtn');
+  const cancelBtn = document.getElementById('cancelBtn');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Running...';
+  if (cancelBtn) cancelBtn.style.display = 'inline-block';
   const args = collectArgs();
   const area = document.getElementById('responseArea');
   area.style.display = 'block';
@@ -736,24 +747,51 @@ async function executeTool() {
   const t0 = performance.now();
   try {
     const result = await callTool(activeTool.name, args);
+    if (cancelled) return;
     const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
     renderResponse(result, args, elapsed);
     if (activeTool.name === 'mt_status' || activeTool.name === 'mt_connect' || activeTool.name === 'mt_disconnect') {
       fetchProfiles();
     }
   } catch(e) {
-    document.getElementById('tab_beautified').innerHTML =
-      '<pre class="response-error">Error: ' + esc(e.message) + '</pre>';
+    if (cancelled) {
+      document.getElementById('tab_beautified').innerHTML =
+        '<div class="response-empty"><pre>Cancelled by user.</pre></div>';
+    } else {
+      document.getElementById('tab_beautified').innerHTML =
+        '<pre class="response-error">Error: ' + esc(e.message) + '</pre>';
+    }
   }
   btn.disabled = false;
   btn.innerHTML = '▶ Execute';
+  if (cancelBtn) cancelBtn.style.display = 'none';
+  cancelCurrentExecution = null;
+}
+
+function cancelExecution() {
+  if (cancelCurrentExecution) cancelCurrentExecution();
+  const lastId = requestId - 1;
+  if (pendingRequests[lastId]) {
+    const cb = pendingRequests[lastId];
+    delete pendingRequests[lastId];
+    cb({ error: { message: 'Cancelled' } });
+  }
 }
 
 function renderResponse(result, args, elapsed) {
   const isError = result.isError;
   const rawContent = result.content || [];
   const rawText = rawContent.map(c => c.text || '').join('\n');
-  const cls = isError ? 'response-error' : 'response-success';
+  let isEmpty = !rawText.trim();
+  if (!isEmpty) {
+    try {
+      const p = JSON.parse(rawText);
+      isEmpty = (p && typeof p === 'object' && !Array.isArray(p) && p.data !== undefined &&
+        ((Array.isArray(p.data) && p.data.length === 0) ||
+         (p.data && typeof p.data === 'object' && !Array.isArray(p.data) && Object.keys(p.data).length === 0)));
+    } catch(e) {}
+  }
+  const cls = isError ? 'response-error' : (isEmpty ? 'response-empty' : 'response-success');
 
   // Raw tab
   const rawPayload = {
@@ -766,6 +804,9 @@ function renderResponse(result, args, elapsed) {
 
   // Beautified tab
   let bHtml = '<div class="' + cls + '">';
+  if (isEmpty && !isError) {
+    bHtml += '<div style="color:var(--yellow);margin-bottom:8px">No data returned — the operation succeeded but produced an empty result.</div>';
+  }
   let parsed = null;
   try { parsed = JSON.parse(rawText); } catch(e) {}
   if (parsed && typeof parsed === 'object') {
@@ -774,7 +815,9 @@ function renderResponse(result, args, elapsed) {
     bHtml += '<pre>' + esc(rawText) + '</pre>';
   }
   bHtml += '</div><div class="response-meta">' +
-    (isError ? '<span class="status-err">✗ Error</span>' : '<span class="status-ok">✓ Success</span>') +
+    (isError ? '<span class="status-err">✗ Error</span>' :
+     isEmpty ? '<span class="status-warn">⚠ Empty</span>' :
+     '<span class="status-ok">✓ Success</span>') +
     ' — ' + elapsed + 's</div>';
   document.getElementById('tab_beautified').innerHTML = bHtml;
 

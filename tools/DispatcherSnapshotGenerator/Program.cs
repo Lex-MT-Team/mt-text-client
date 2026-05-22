@@ -10,15 +10,14 @@ using Newtonsoft.Json.Linq;
 namespace MTTextClient.Tools.DispatcherSnapshotGenerator;
 
 /// <summary>
-/// Stage 0.3 (OV-2) helper: render the deterministic CLI-string that
+/// Renders the deterministic CLI-string that
 /// <see cref="McpServer.MapToolToCommand"/> emits for every registry tool
 /// with a canonical argument set. The output is committed as
 /// <c>tests/MTTextClient.Tests/_expected/commandlines.snapshot.json</c>;
 /// the Static <see cref="MTTextClient.Tests.Static.DispatcherSnapshotTests"/>
 /// re-runs this rendering in-process and asserts byte-equality against the
 /// committed file. Any change to the dispatcher CLI string for any tool
-/// breaks CI immediately — exactly the registry-drift safety net the plan
-/// calls for.
+/// breaks CI immediately — the registry-drift safety net.
 ///
 /// CLI:
 ///   dotnet run --project tools/DispatcherSnapshotGenerator -- [--check]

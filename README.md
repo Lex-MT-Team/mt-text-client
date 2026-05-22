@@ -28,7 +28,12 @@ MTTextClient communicates with MTCore over [LiteNetLib](https://github.com/Reven
 ## Requirements
 
 - [.NET 8.0 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) (or later)
-- `MTShared.dll` and `LiteNetLib.dll` (included in `lib/`)
+- Python 3 (only when refreshing vendor libs; see [`lib/README.md`](lib/README.md))
+- `MTShared.dll` and `LiteNetLib.dll` — committed as the active baseline in
+  [`lib/`](lib/) and fetchable from the public MoonTrader CDN per host RID
+  via `scripts/fetch_vendor_libs.py`. The build picks per-RID copies when
+  present, falls back to the committed baseline. See [`lib/README.md`](lib/README.md)
+  for the full layout, supported RIDs, and refresh workflow.
 
 ## Quick Start
 
@@ -51,6 +56,12 @@ mcp-proxy --port 8585 -- "path/to/MTTextClient.exe" --mcp
 ```
 
 ## Usage Modes
+
+> **Before placing real orders — read [docs/TPSL_SAFETY_GUIDE.md](docs/TPSL_SAFETY_GUIDE.md).**
+> Closing positions outside the TPSL pathway leaves no row in the reports DB,
+> even when the trade fills cleanly at the venue. The guide describes the
+> correct place → attach-TPSL → close-via-TPSL sequence and the venue/wire
+> quirks that compound the rule.
 
 ### 1. Interactive REPL (default)
 
@@ -866,14 +877,14 @@ MIT — see [LICENSE](LICENSE).
 
 | Tool | Description | Required args | Confirm |
 |------|-------------|---------------|---------|
-| `mt_events_poll` | MT-005: Poll buffered events (algo state changes, connection events, errors). Returns events since 'since_seq' (or last N if omitted). Use 'current_seq' from response as next 'since_seq'. | — | — |
-| `mt_events_status` | MT-005: Show event stream status — current sequence number, SSE server port, URLs. | — | — |
+| `mt_events_poll` | Poll buffered events (algo state changes, connection events, errors). Returns events since 'since_seq' (or last N if omitted). Use 'current_seq' from response as next 'since_seq'. | — | — |
+| `mt_events_status` | Show event stream status — current sequence number, SSE server port, URLs. | — | — |
 | `mt_config_import_algos` | Import algorithms from algorithms.config JSON (native MTCore format). Bypasses V2 text parsing. | — | — |
 | `mt_core_restart` | Restart the trading core server (requires --confirm) | `confirm` | ✓ |
 | `mt_core_restart_update` | Restart the core with software update (requires --confirm) | `confirm` | ✓ |
 | `mt_core_clear_orders` | Restart core and clear orders cache (requires --confirm) | `confirm` | ✓ |
 | `mt_core_clear_archive` | Restart core and clear archive data (requires --confirm) | `confirm` | ✓ |
-| `mt_orders_close_by_tpsl` | Close a position using TPSL mechanism (requires --confirm). Stage 1.3: order_type (MARKET\|LIMIT) selects whether the closing leg is filled at market (default) or as a LIMIT order at the last price. Semantic-first naming per CD-6 — we do not mirror v423's controller swap. | `symbol`, `confirm` | ✓ |
+| `mt_orders_close_by_tpsl` | Close a position using TPSL mechanism (requires --confirm). The order_type argument (MARKET\|LIMIT) selects whether the closing leg is filled at market (default) or as a LIMIT order at the last price. | `symbol`, `confirm` | ✓ |
 | `mt_orders_reset_tpsl` | Reset TP/SL settings on a position (requires --confirm) | `symbol`, `confirm` | ✓ |
 | `mt_orders_update_tpsl` | Update Take-Profit / Stop-Loss on an active order or open position. Identifies the position by symbol + side + market + position_side. Pass take_profit_percent and/or stop_loss_percent as positive percentages from entry; omit to leave that side disabled. trailing_spread (optional) attaches a trailing stop on the SL leg. Requires confirm=true — this mutates open position state. | `symbol`, `side`, `confirm` | ✓ |
 | `mt_tpsl_join` | Join multiple TPSL (Take Profit / Stop Loss) positions into a single position. Requires an active TPSL subscription and at least 2 valid tpsl_ids (see mt_tpsl_list). Requires confirm=true. | `tpsl_ids`, `confirm` | ✓ |
@@ -887,18 +898,18 @@ MIT — see [LICENSE](LICENSE).
 | `mt_watchdog_status` | [PLACEHOLDER — NOT AVAILABLE] Intended to query a watchdog's per-core status map (monitored cores, addresses, statuses). status: placeholder — not operational in the current deployment. Requires a watchdog-mode MTCore instance and a client-side watchdog connection that is not yet implemented in this build. Calling this tool returns an 'unknown_tool' error. See docs/watchdog-integration.md for the planned design. | — | — |
 | `mt_watchdog_token_update` | [PLACEHOLDER — NOT AVAILABLE] Intended to update the watchdog client token used to authenticate against a watchdog session. status: placeholder — not operational in the current deployment. Requires a watchdog-mode MTCore instance and a client-side watchdog connection that is not yet implemented in this build. Calling this tool returns an 'unknown_tool' error. See docs/watchdog-integration.md for the planned design. | `token`, `confirm` | ✓ |
 | `mt_metrics_get` | Get Prometheus-compatible metrics for tool calls, errors, events, and connections | — | — |
-| `mt_rate_status` | MT-011: Return sliding-window rate limit status per category (orders/market/account). Shows limit, used, and remaining capacity within the current window. | — | — |
-| `mt_vault_store_profile` | HK-001: Store an exchange API profile (api_key + api_secret) in HashiCorp Vault. Credentials are stored securely and never written to disk. | `name`, `api_key`, `api_secret` | — |
-| `mt_vault_list_profiles` | HK-001: List all API profiles stored in HashiCorp Vault. | — | — |
-| `mt_vault_get_profile` | Stage 6.6: Retrieve a stored API profile from HashiCorp Vault. Returns api_key, api_secret, and the stored_at timestamp. | `name` | — |
-| `mt_vault_delete_profile` | Stage 6.6: Permanently delete an API profile from HashiCorp Vault (KV v2 destroy-all-versions). Requires confirm=true. | `name`, `confirm` | ✓ |
+| `mt_rate_status` | Return sliding-window rate limit status per category (orders/market/account). Shows limit, used, and remaining capacity within the current window. | — | — |
+| `mt_vault_store_profile` | Store an exchange API profile (api_key + api_secret) in HashiCorp Vault. Credentials are stored securely and never written to disk. | `name`, `api_key`, `api_secret` | — |
+| `mt_vault_list_profiles` | List all API profiles stored in HashiCorp Vault. | — | — |
+| `mt_vault_get_profile` | Retrieve a stored API profile from HashiCorp Vault. Returns api_key, api_secret, and the stored_at timestamp. | `name` | — |
+| `mt_vault_delete_profile` | Permanently delete an API profile from HashiCorp Vault (KV v2 destroy-all-versions). Requires confirm=true. | `name`, `confirm` | ✓ |
 | `mt_config_snapshot` | Snapshot all settings + algo list for a profile to a timestamped JSON file | — | — |
 | `mt_config_restore` | Restore profile settings from a snapshot file (requires confirm=true) | `path` | — |
 | `mt_settings_diff` | Diff settings between two profiles — shows added, removed, changed keys | `profile_a`, `profile_b` | — |
-| `mt_settings_diff_snapshots` | Stage 6.10 — diff two snapshot files written by mt_config_snapshot.  Pure client-side; no MTCore wire calls.  Each snapshot path may be absolute or a bare filename under ~/.mt-snapshots/.  Reports added/removed/changed keys in the snapshot's settings block + the two snapshots' captured_at timestamps and profile names. | `snapshot_a`, `snapshot_b` | — |
-| `mt_core_shutdown` | MT-023: Send a service command to MTCore (shutdown or restart). Requires confirm=true. | `confirm` | ✓ |
-| `mt_algos_tpsl_change` | MT-024: Send a TP/SL algorithm change request to MT-Core (fire-and-forget). | — | — |
-| `mt_algos_profiling` | MT-024: Request algorithm profiling data from MT-Core. Result is delivered asynchronously via mt_events_poll. | `symbol` | — |
+| `mt_settings_diff_snapshots` | Diff two snapshot files written by mt_config_snapshot.  Pure client-side; no MTCore wire calls.  Each snapshot path may be absolute or a bare filename under ~/.mt-snapshots/.  Reports added/removed/changed keys in the snapshot's settings block + the two snapshots' captured_at timestamps and profile names. | `snapshot_a`, `snapshot_b` | — |
+| `mt_core_shutdown` | Send a service command to MTCore (shutdown or restart). Requires confirm=true. | `confirm` | ✓ |
+| `mt_algos_tpsl_change` | Send a TP/SL algorithm change request to MT-Core (fire-and-forget). | — | — |
+| `mt_algos_profiling` | Request algorithm profiling data from MT-Core. Result is delivered asynchronously via mt_events_poll. | `symbol` | — |
 | `mt_algos_snapshot` | Return a structured snapshot of all groups and algorithms across all connected profiles. Includes group names, algo IDs, names, symbols, running state, and signatures. Designed for state reconciliation — compare desired vs actual state. | — | — |
 | `mt_algos_group_by_name` | Find a group by name (case-insensitive). Returns group ID, name, type, and contained algorithms. | `name` | — |
 | `mt_connect` | Connect to an MT-Core server using a saved profile | `profile` | — |
@@ -931,8 +942,8 @@ MIT — see [LICENSE](LICENSE).
 | `mt_algos_start` | Start an algorithm | `id` | — |
 | `mt_algos_stop` | Stop an algorithm | `id` | — |
 | `mt_algos_start_all` | Start all algorithms (requires confirm=true). Bulk operation: starts every algo on the target server. | `confirm` | ✓ |
-| `mt_algos_start_verified` | Start an algorithm and verify it initialized successfully (MT-012 / BUG-13 mitigation). Waits wait_secs seconds then checks isRunning, symbol, and marketType. Returns status: VERIFIED \| BUG13_SUSPECTED \| RUNNING_UNCONFIRMED \| NOT_RUNNING. | `id` | — |
-| `mt_algos_verify` | Verify current state of a running algorithm — checks for BUG-13 pattern (isRunning=true but symbol/market unresolved). Does NOT start the algo. | `id` | — |
+| `mt_algos_start_verified` | Start an algorithm and verify it initialized successfully. Waits wait_secs seconds then checks isRunning, symbol, and marketType. Returns status: VERIFIED \| INIT_FAILURE_SUSPECTED \| RUNNING_UNCONFIRMED \| NOT_RUNNING. | `id` | — |
+| `mt_algos_verify` | Verify current state of a running algorithm — checks for the silent-init-failure pattern (isRunning=true but symbol/market unresolved). Does NOT start the algo. | `id` | — |
 | `mt_algos_stop_all` | Stop all algorithms (requires confirm=true). Bulk operation: stops every running algo on the target server. | `confirm` | ✓ |
 | `mt_algos_batch_start` | Start an algorithm (matched by name/signature/symbol pattern) across multiple servers in parallel. Searches each server for algos matching the pattern and starts all matches. Use mt_algos_batch_stop to reverse. SAFETY: requires either explicit profiles or all_servers=true. | `algo` | — |
 | `mt_algos_batch_stop` | Stop an algorithm (matched by name/signature/symbol pattern) across multiple servers in parallel. | `algo` | — |
@@ -950,11 +961,11 @@ MIT — see [LICENSE](LICENSE).
 | `mt_algos_delete_group` | Delete an algorithm group (requires confirm=true) | `group_id`, `confirm` | ✓ |
 | `mt_algos_copy` | Copy an algorithm from one server to another (requires confirm=true) | `id`, `destination_profile` | — |
 | `mt_algos_export` | Export an algorithm as portable JSON for cross-server transfer | `id` | — |
-| `mt_algos_copy_to_clipboard` | Stage 4.1 — serialise an algorithm to the schema-versioned clipboard file at ~/mt-clipboard/algo-clipboard.json.  Read-only on the source; never mutates the bench. Use mt_algos_paste_from_clipboard to apply on a destination. | `id` | — |
-| `mt_algos_paste_from_clipboard` | Stage 4.1 — read the clipboard JSON, run cross-exchange pre-flight, and paste the algorithm onto the destination profile.  Without confirm=true, returns a DRY RUN preview listing every detected edge case (symbol mismatch, market change, duplicate, blacklist conflict).  override_symbol / override_market let the operator force the paste past a known mismatch.  Schema-version-mismatched payloads are REJECTED before any wire call. | `destination_profile`, `confirm` | ✓ |
-| `mt_algos_create` | Create a new algorithm on a target profile by cloning a source algorithm's argsJson and applying user overrides on top.  Creation is clone-from-source: either pin an explicit source_algo_id, or specify algo_type to auto-discover a matching algorithm on the target profile (optionally filtered by preset_name=signature).  The source algorithm's argument template is cloned verbatim, with operator overrides applied on top — so any new vendor fields flow through without an MCP-side update. A small _mcp_metadata block is injected into the new algorithm's arguments (schema_version, source_algo_id, source_profile, created_at_utc) and is observable via mt_algos_config. DRY-RUN by default (omit no_dry_run to preview); commit requires no_dry_run=true AND confirm=true. | `profile`, `confirm` | ✓ |
-| `mt_algos_bulk_edit` | Stage 4.2 — fan a single field-level mutation across many algorithms in one call. Filter selects which algos (by ids, group_id, or all). Mutation is one of: whitelist_add (array of symbols to append to each algo's whiteList parameter), whitelist_remove (array of symbols to drop), or set (an object of {paramKey: newValue} pairs). Without confirm=true the response is a DRY RUN preview showing per-algo current → proposed diffs and any warnings (schema_mismatch, blacklist_conflict, no_change). With confirm=true each affected algo is SAVE-dispatched individually; failures DO NOT abort the batch — every row's success/error is surfaced in partial_result. | `filter_json`, `mutation_json`, `confirm` | ✓ |
-| `mt_algos_import_json` | Stage 4.1 — direct inline JSON paste (automation-friendly form; avoids the clipboard-file hop). Same edge-case pre-flight as mt_algos_paste_from_clipboard.  Stage 6.8: added 'path' argument — when path is provided, the payload is read from that file instead of taken from the 'payload' arg. | `destination_profile`, `confirm` | ✓ |
+| `mt_algos_copy_to_clipboard` | Serialise an algorithm to the schema-versioned clipboard file at ~/mt-clipboard/algo-clipboard.json.  Read-only on the source; never mutates the bench. Use mt_algos_paste_from_clipboard to apply on a destination. | `id` | — |
+| `mt_algos_paste_from_clipboard` | Read the clipboard JSON, run cross-exchange pre-flight, and paste the algorithm onto the destination profile.  Without confirm=true, returns a DRY RUN preview listing every detected edge case (symbol mismatch, market change, duplicate, blacklist conflict).  override_symbol / override_market let the caller force the paste past a known mismatch.  Schema-version-mismatched payloads are REJECTED before any wire call. | `destination_profile`, `confirm` | ✓ |
+| `mt_algos_create` | Create a new algorithm on a target profile by cloning a source algorithm's argsJson and applying user overrides on top.  Creation is clone-from-source: either pin an explicit source_algo_id, or specify algo_type to auto-discover a matching algorithm on the target profile (optionally filtered by preset_name=signature).  The source algorithm's argument template is cloned verbatim, with caller-supplied overrides applied on top — so any new vendor fields flow through without an MCP-side update. A small _mcp_metadata block is injected into the new algorithm's arguments (schema_version, source_algo_id, source_profile, created_at_utc) and is observable via mt_algos_config. DRY-RUN by default (omit no_dry_run to preview); commit requires no_dry_run=true AND confirm=true. | `profile`, `confirm` | ✓ |
+| `mt_algos_bulk_edit` | Fan a single field-level mutation across many algorithms in one call. Filter selects which algos (by ids, group_id, or all). Mutation is one of: whitelist_add (array of symbols to append to each algo's whiteList parameter), whitelist_remove (array of symbols to drop), or set (an object of {paramKey: newValue} pairs). Without confirm=true the response is a DRY RUN preview showing per-algo current → proposed diffs and any warnings (schema_mismatch, blacklist_conflict, no_change). With confirm=true each affected algo is SAVE-dispatched individually; failures DO NOT abort the batch — every row's success/error is surfaced in partial_result. | `filter_json`, `mutation_json`, `confirm` | ✓ |
+| `mt_algos_import_json` | Direct inline JSON paste (automation-friendly form; avoids the clipboard-file hop). Same edge-case pre-flight as mt_algos_paste_from_clipboard. The 'path' argument: when path is provided, the payload is read from that file instead of taken from the 'payload' arg. | `destination_profile`, `confirm` | ✓ |
 | `mt_settings_get` | Get profile settings (all or specific key) | — | — |
 | `mt_settings_search` | Search settings by keyword | `query` | — |
 | `mt_settings_set` | Set a profile setting (requires confirm=true) | `key`, `value`, `confirm` | ✓ |
@@ -962,14 +973,14 @@ MIT — see [LICENSE](LICENSE).
 | `mt_import_templates` | List available algorithm templates from algoConfigs.json. If 'path' is provided, reads from that file. Otherwise searches the default locations: <app-dir>/algoConfigs.json, ~/Documents/algoConfigs.json, /tmp/algoConfigs.json. | — | — |
 | `mt_import_v2` | Import algorithms from V2 text format file | `path` | — |
 | `mt_import_add_numeric` | Add numeric delta to all numeric params of an algorithm | `id`, `delta` | — |
-| `mt_import_from_profile` | Stage 6.8: Survey what would be imported from source_profile to destination_profile. Returns one entry per source algorithm with its name, group, symbol, market, and a duplicate_on_destination flag.  Read-only — no mutation.  Use mt_algos_copy per-id or mt_algos_paste_from_clipboard / mt_algos_import_json to actually transfer. | `source_profile`, `destination_profile` | — |
+| `mt_import_from_profile` | Survey what would be imported from source_profile to destination_profile. Returns one entry per source algorithm with its name, group, symbol, market, and a duplicate_on_destination flag.  Read-only — no mutation.  Use mt_algos_copy per-id or mt_algos_paste_from_clipboard / mt_algos_import_json to actually transfer. | `source_profile`, `destination_profile` | — |
 | `mt_orders_list` | List active orders | — | — |
 | `mt_orders_positions` | List open positions with PnL | — | — |
 | `mt_orders_cancel` | Cancel a specific order (requires confirm=true) | `client_order_id` | — |
 | `mt_orders_cancel_all` | Cancel all orders (requires confirm=true) | — | — |
 | `mt_orders_close` | Close a position (requires confirm=true) | `symbol` | — |
 | `mt_orders_close_all` | Close all positions (requires confirm=true) | — | — |
-| `mt_orders_place` | Place a new order (market or limit). Requires confirm=true. If price is omitted, places a MARKET order. If price is set, places a LIMIT order. On hedge-mode FUTURES accounts, position_side must match the side book (LONG for BUY, SHORT for SELL); for SPOT/one-way leave position_side unset or BOTH. market (FUTURES\|SPOT) lets callers force the venue when a symbol exists in both — without it the server picks whichever pair-cache entry comes back first (BTCUSDT on Binance hits SPOT, which on this build refuses orders while SPOT UDS is offline). | `symbol`, `side`, `qty` | — |
+| `mt_orders_place` | Place a new order (market or limit). Requires confirm=true. If price is omitted, places a MARKET order. If price is set, places a LIMIT order. On hedge-mode FUTURES accounts, position_side must match the side book (LONG for BUY, SHORT for SELL); for SPOT/one-way leave position_side unset or BOTH. market (FUTURES\|SPOT) lets callers force the venue when a symbol exists in both — without it the server picks whichever pair-cache entry comes back first (BTCUSDT on Binance hits SPOT, which on this build refuses orders while SPOT UDS is offline). TPSL on placement: set tp_percent and/or sl_percent (with optional tp_type/sl_type/trailing_stop/trailing_spread) to attach take-profit and stop-loss settings to the new order at placement time. This is the safe pattern — orders placed without TPSL are not recorded in the reports DB even after they close. Use mt_orders_update_tpsl only to MODIFY an existing order's TPSL, not to attach it to a new one. See docs/TPSL_SAFETY_GUIDE.md. | `symbol`, `side`, `qty` | — |
 | `mt_orders_move` | Move/modify price of an existing order (requires confirm=true) | `client_order_id`, `new_price` | — |
 | `mt_orders_set_leverage` | Set leverage for a symbol (requires confirm=true) | `symbol`, `leverage` | — |
 | `mt_orders_set_margin_type` | Set margin type CROSS or ISOLATED for a symbol (requires confirm=true) | `symbol`, `margin_type` | — |
@@ -1005,19 +1016,19 @@ MIT — see [LICENSE](LICENSE).
 | `mt_autostops_list` | List auto-stop algorithm configurations and status. Shows balance/report filters and thresholds. | — | — |
 | `mt_autostops_baseline` | Request auto-stop baseline recalculation on Core (fire-and-forget). | — | — |
 | `mt_autostops_reports` | Get report data for auto-stop algorithms. Optionally filter by algorithm IDs. | — | — |
-| `mt_autostops_add` | Append a new balance auto-stop filter (Stage 3.1).  Created disabled — call mt_autostops_start to activate. max_loss is the lower bound of the value range (e.g. -0.1 USDT) and value_max its upper bound. filter_type ∈ {GLOBAL_BY_SYMBOL, ALGO_SYMBOLS, ALGO_TOTAL, CUSTOM}; source_type ∈ {VALUE, PRICE_DELTA_SUM, PROFIT_FACTOR}; market ∈ {SPOT, MARGIN, FUTURES, DELIVERY}. | `max_loss`, `confirm` | ✓ |
-| `mt_autostops_edit` | Mutate an existing balance auto-stop filter at the given index (Stage 3.1). Every other field is optional — only the ones you pass are updated. | `index`, `confirm` | ✓ |
+| `mt_autostops_add` | Append a new balance auto-stop filter. Created disabled — call mt_autostops_start to activate. max_loss is the lower bound of the value range (e.g. -0.1 USDT) and value_max its upper bound. filter_type ∈ {GLOBAL_BY_SYMBOL, ALGO_SYMBOLS, ALGO_TOTAL, CUSTOM}; source_type ∈ {VALUE, PRICE_DELTA_SUM, PROFIT_FACTOR}; market ∈ {SPOT, MARGIN, FUTURES, DELIVERY}. | `max_loss`, `confirm` | ✓ |
+| `mt_autostops_edit` | Mutate an existing balance auto-stop filter at the given index. Every other field is optional — only the ones you pass are updated. | `index`, `confirm` | ✓ |
 | `mt_autostops_start` | Enable a balance auto-stop filter. If index is omitted, the master balance auto-stop switch is flipped to true. | `confirm` | ✓ |
-| `mt_autostops_stop` | Disable a balance auto-stop filter (Stage 3.1). If index is omitted, the master switch is flipped to false. | `confirm` | ✓ |
-| `mt_autostops_delete` | Remove a balance auto-stop filter at the given index (Stage 3.1). | `index`, `confirm` | ✓ |
+| `mt_autostops_stop` | Disable a balance auto-stop filter. If index is omitted, the master switch is flipped to false. | `confirm` | ✓ |
+| `mt_autostops_delete` | Remove a balance auto-stop filter at the given index. | `index`, `confirm` | ✓ |
 | `mt_blacklist_list` | List current blacklist configuration: blocked markets, quote assets, and symbols. | — | — |
 | `mt_blacklist_add` | Add an item to the blacklist. type=market needs market_type only; type=quote needs market_type+quote_asset; type=symbol needs market_type+quote_asset+symbol. Requires confirm=true. | `type`, `market_type`, `confirm` | ✓ |
 | `mt_blacklist_remove` | Remove an item from the blacklist. type=market needs market_type only; type=quote needs market_type+quote_asset; type=symbol needs market_type+quote_asset+symbol. Requires confirm=true. | `type`, `market_type`, `confirm` | ✓ |
-| `mt_whitelist_list` | List profile-level WhiteList contents: WhiteList.Symbols (typed entries: market/quote/symbol), WhiteList.Quotes (typed entries: market/quote), WhiteList.Only toggle. This is the PROFILE-level whitelist (which pairs the profile is allowed to trade), distinct from per-algo whiteList that Stage 4.2's mt_algos_bulk_edit mutates. | — | — |
-| `mt_whitelist_add` | Add ONE typed whitelist entry (Stage 5.2). type=symbol needs market+quote+symbol; type=quote needs market+quote. If the entry is already present the call is a no-op (already_present warning).  For type=symbol the tool also warns when the value isn't in the destination's ExchangeInfoStore pair cache (not_tradable). | `type`, `market`, `quote`, `confirm` | ✓ |
-| `mt_whitelist_remove` | Remove ONE typed whitelist entry (Stage 5.2).  Removing a value that isn't present surfaces a structured 'not_found' error. | `type`, `market`, `quote`, `confirm` | ✓ |
-| `mt_whitelist_bulk_add` | Add MANY whitelist entries in one call (Stage 5.2).  For type=symbol, the (market, quote) prefix is constant and 'symbols' is a comma-separated list; for type=quote, 'quotes' is a comma-separated list of quote assets under the given market. Items already present surface as already_present warnings; for type=symbol any item not resolvable on the exchange surfaces as not_tradable (item still lands; MTCore decides at order-place time). | `type`, `market`, `confirm` | ✓ |
-| `mt_whitelist_bulk_remove` | Remove MANY whitelist entries in one call (Stage 5.2).  Items not present surface as not_found warnings; an all-not-found call fails with a structured error. | `type`, `market`, `confirm` | ✓ |
+| `mt_whitelist_list` | List profile-level WhiteList contents: WhiteList.Symbols (typed entries: market/quote/symbol), WhiteList.Quotes (typed entries: market/quote), WhiteList.Only toggle. This is the PROFILE-level whitelist (which pairs the profile is allowed to trade), distinct from per-algo whiteList that mt_algos_bulk_edit mutates. | — | — |
+| `mt_whitelist_add` | Add ONE typed whitelist entry. type=symbol needs market+quote+symbol; type=quote needs market+quote. If the entry is already present the call is a no-op (already_present warning).  For type=symbol the tool also warns when the value isn't in the destination's ExchangeInfoStore pair cache (not_tradable). | `type`, `market`, `quote`, `confirm` | ✓ |
+| `mt_whitelist_remove` | Remove ONE typed whitelist entry. Removing a value that isn't present surfaces a structured 'not_found' error. | `type`, `market`, `quote`, `confirm` | ✓ |
+| `mt_whitelist_bulk_add` | Add MANY whitelist entries in one call. For type=symbol, the (market, quote) prefix is constant and 'symbols' is a comma-separated list; for type=quote, 'quotes' is a comma-separated list of quote assets under the given market. Items already present surface as already_present warnings; for type=symbol any item not resolvable on the exchange surfaces as not_tradable (item still lands; MTCore decides at order-place time). | `type`, `market`, `confirm` | ✓ |
+| `mt_whitelist_bulk_remove` | Remove MANY whitelist entries in one call. Items not present surface as not_found warnings; an all-not-found call fails with a structured error. | `type`, `market`, `confirm` | ✓ |
 | `mt_tpsl_list` | List all TPSL (Take Profit / Stop Loss) positions. Requires active TPSL subscription. | — | — |
 | `mt_tpsl_subscribe` | Subscribe to TPSL position updates from Core. Data available via mt_tpsl_list. | — | — |
 | `mt_tpsl_unsubscribe` | Unsubscribe from TPSL position updates. | — | — |
@@ -1032,15 +1043,15 @@ MIT — see [LICENSE](LICENSE).
 | `mt_reports_stored` | List all locally stored report sets with summary statistics. Shows name, server, trade count, PnL, win rate, capture time. | — | — |
 | `mt_reports_load` | Load a previously stored report set by name and display its trade table and summary stats. The tool returns formatted text output; it does not return raw rows for further processing. Use mt_reports_stored to list available stored sets first. | `name` | — |
 | `mt_reports_delete` | Delete a stored report set by name. | `name` | — |
-| `mt_reports_query` | Stage 7.1: Run a trade-report query and return structured JSON rows. Each row carries id, open/close prices, qty, USDT-denominated profit/commission/total, symbol, market_type, order side, closed_by, and timestamps.  The same rich filters as mt_reports_trades are supported.  This is the structured-client variant — mt_reports_trades formats text; mt_reports_query is consumable as JSON. | — | — |
-| `mt_reports_csv_inline` | Stage 7.1: Same filters as mt_reports_query but returns a CSV string in the response body (no file written).  Useful when the agent wants to feed CSV directly into another tool without round-tripping through the filesystem. | — | — |
+| `mt_reports_query` | Run a trade-report query and return structured JSON rows. Each row carries id, open/close prices, qty, USDT-denominated profit/commission/total, symbol, market_type, order side, closed_by, and timestamps.  The same rich filters as mt_reports_trades are supported.  This is the structured-client variant — mt_reports_trades formats text; mt_reports_query is consumable as JSON. | — | — |
+| `mt_reports_csv_inline` | Same filters as mt_reports_query but returns a CSV string in the response body (no file written).  Useful when the agent wants to feed CSV directly into another tool without round-tripping through the filesystem. | — | — |
 | `mt_reports_cancel` | Cancel a query by request_id. The underlying report-query call is currently synchronous (~30s wire time), so cancellation cannot interrupt an in-flight request — this tool acknowledges and records the cancellation intent so the caller can observe it. | `request_id` | — |
-| `mt_reports_status` | Stage 7.1: Look up a query by request_id and return its status, filter summary, latency, row_count, and end state.  Returns a structured 'not_found' envelope when the request_id is unknown. | `request_id` | — |
+| `mt_reports_status` | Look up a query by request_id and return its status, filter summary, latency, row_count, and end state.  Returns a structured 'not_found' envelope when the request_id is unknown. | `request_id` | — |
 | `mt_fleet_autostops` | Query auto-stop configuration across ALL connected servers. Shows which servers have balance/report filters configured. | — | — |
 | `mt_fleet_blacklist` | Query blacklist configuration across ALL connected servers. Shows market/quote/symbol filter counts per server. | — | — |
 | `mt_fleet_perf` | Query trading performance subscription status across ALL connected servers. Shows entry counts and subscription state per server. | — | — |
 | `mt_fleet_reports` | Query trade reports across ALL connected servers with per-server P&L breakdown. Shows trades, PnL, fees, win rate, volume per server with fleet totals. | — | — |
-| `mt_fleet_set_margin_type` | Stage 5.1 — apply a CROSS/ISOLATED margin-type change to <symbol> across the entire fleet (or a filtered subset).  WITHOUT confirm=true the response is a DRY RUN preview: per-profile current_margin (where observable), proposed_margin, would_change flag, and any skip_reason (disconnected, symbol_not_in_pair_cache).  Touches venue-side state on commit and is only reversible by another call — the dry_run contract is the safety boundary. | `symbol`, `margin_type`, `confirm` | ✓ |
+| `mt_fleet_set_margin_type` | Apply a CROSS/ISOLATED margin-type change to <symbol> across the entire fleet (or a filtered subset).  WITHOUT confirm=true the response is a DRY RUN preview: per-profile current_margin (where observable), proposed_margin, would_change flag, and any skip_reason (disconnected, symbol_not_in_pair_cache).  Touches venue-side state on commit and is only reversible by another call — the dry_run contract is the safety boundary. | `symbol`, `margin_type`, `confirm` | ✓ |
 | `mt_notifications_list` | List cached notifications from Core. Shows type, time, and message. | — | — |
 | `mt_notifications_subscribe` | Subscribe to real-time notifications from Core (deal complete, order fill, liquidation, alerts, errors). | — | — |
 | `mt_notifications_unsubscribe` | Unsubscribe from notifications. | — | — |
@@ -1071,9 +1082,9 @@ MIT — see [LICENSE](LICENSE).
 | `mt_alerts_history` | View alert trigger history. | — | — |
 | `mt_alerts_history_subscribe` | Subscribe to alert history updates. | — | — |
 | `mt_alerts_history_unsubscribe` | Unsubscribe from alert history updates. | — | — |
-| `mt_alerts_save` | Stage 6.3: Create or update a single price alert. When alert_id is omitted (or 0), a new alert is created; non-zero alert_id updates that alert. | `name`, `symbol`, `market_type`, `condition_type`, `ref_price` | — |
-| `mt_alerts_delete` | Stage 6.3: Delete alert(s) by id, or delete ALL alerts on the profile. Requires confirm=true. | `confirm` | ✓ |
-| `mt_alerts_set_running` | Stage 6.3: Start (running=true) or stop (running=false) alert(s). Requires confirm=true. | `running`, `confirm` | ✓ |
+| `mt_alerts_save` | Create or update a single price alert. When alert_id is omitted (or 0), a new alert is created; non-zero alert_id updates that alert. | `name`, `symbol`, `market_type`, `condition_type`, `ref_price` | — |
+| `mt_alerts_delete` | Delete alert(s) by id, or delete ALL alerts on the profile. Requires confirm=true. | `confirm` | ✓ |
+| `mt_alerts_set_running` | Start (running=true) or stop (running=false) alert(s). Requires confirm=true. | `running`, `confirm` | ✓ |
 | `mt_profiling_subscribe` | Subscribe to real-time algorithm profiling data stream. | `symbol`, `algo_id` | — |
 | `mt_profiling_unsubscribe` | Unsubscribe from algorithm profiling data stream. | `symbol`, `algo_id` | — |
 | `mt_triggers_list` | List received trigger events. | — | — |

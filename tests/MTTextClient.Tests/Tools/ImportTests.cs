@@ -5,10 +5,10 @@ using Xunit;
 namespace MTTextClient.Tests.Tools;
 
 /// <summary>
-/// Import tools. MCP-005 is fixed in fix/known-defects-batch-1: <c>mt_import_templates</c>
-/// now accepts an optional <c>path</c> argument that overrides the default search.
-/// When the file is missing (either at the explicit path or the defaults), the call
-/// returns a clean <c>success: false</c> with a descriptive message (no crash).
+/// Import tools.  <c>mt_import_templates</c> accepts an optional <c>path</c>
+/// argument that overrides the default search.  When the file is missing
+/// (either at the explicit path or the defaults), the call returns a clean
+/// <c>success: false</c> with a descriptive message (no crash).
 /// </summary>
 [Collection(McpCollection.Name)]
 public sealed class ImportTests

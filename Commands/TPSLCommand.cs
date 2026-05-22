@@ -79,10 +79,10 @@ public sealed class TPSLCommand : ICommand
             "unsubscribe" => HandleUnsubscribe(targetProfile),
             "join" => HandleJoin(cleanArgs, targetProfile, confirmFlag),
             "split" => HandleSplit(cleanArgs, targetProfile, confirmFlag),
-            // Stage 1.1 — TPSL bulk operations (loop wrappers around the existing single-item wire methods).
+            // TPSL bulk operations (loop wrappers around the existing single-item wire methods).
             "cancel-many" => HandleCancelMany(cleanArgs, targetProfile, confirmFlag),
             "split-many"  => HandleSplitMany(cleanArgs, targetProfile, confirmFlag),
-            // Stage 1.2 — panic operations (immediate MARKET close via TPSL mechanism).
+            // Panic operations (immediate MARKET close via TPSL mechanism).
             "panic"       => HandlePanic(cleanArgs, targetProfile, confirmFlag),
             "panic-many"  => HandlePanicMany(cleanArgs, targetProfile, confirmFlag),
             _ => CommandResult.Fail($"Unknown subcommand: {subcommand}. Use: list, cancel, subscribe, unsubscribe, join, split, cancel-many, split-many, panic, panic-many")
@@ -288,7 +288,7 @@ public sealed class TPSLCommand : ICommand
             : CommandResult.Fail($"[{conn.Name}] TPSL split failed: {result.notificationCode} — {result.jsonData}");
     }
 
-    // ── Stage 1.1: TPSL bulk operations ─────────────────────────────────────
+    // ── TPSL bulk operations ─────────────────────────────────────
     //
     // The MTShared wire protocol exposes only single-item Cancel / Split
     // requests. These "many" tools are loop wrappers that emit one wire call
@@ -373,7 +373,7 @@ public sealed class TPSLCommand : ICommand
             new { Server = conn.Name, Ok = ok, Failed = fail, Results = rows });
     }
 
-    // ── Stage 1.2: TPSL panic close ─────────────────────────────────────────
+    // ── TPSL panic close ─────────────────────────────────────────
     //
     // "Panic" close = immediate MARKET-order exit of the position underlying
     // the named TPSL. Implementation: look up the TPSL in the store (must be

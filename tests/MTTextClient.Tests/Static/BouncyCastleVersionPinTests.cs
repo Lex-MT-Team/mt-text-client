@@ -9,15 +9,15 @@ using Xunit;
 namespace MTTextClient.Tests.Static;
 
 /// <summary>
-/// Stage 0.5 — pin guard for <c>BouncyCastle.Cryptography</c>.
+/// Pin guard for <c>BouncyCastle.Cryptography</c>.
 ///
 /// The MTCore wire protocol uses AES256 encryption implemented by
-/// <c>BouncyCastle.Cryptography</c>. Before Stage 0.5 the dependency was
-/// an implicit transitive — <c>lib/MTShared.dll</c>'s metadata named the
+/// <c>BouncyCastle.Cryptography</c>. The dependency was historically an
+/// implicit transitive — <c>lib/MTShared.dll</c>'s metadata named the
 /// assembly but our build never copied it under <c>bin/Release/net8.0/</c>.
 /// A future NuGet probe order shift could silently substitute a different
-/// patched version, breaking cipher interop with MTCore. Stage 0.5 pins
-/// the version explicitly in <c>MTTextClient.csproj</c>; this test asserts
+/// patched version, breaking cipher interop with MTCore.  We pin the
+/// version explicitly in <c>MTTextClient.csproj</c>; this test asserts
 /// the pin is honoured at runtime, not just at restore time:
 ///
 ///   1. The assembly is reachable from the test process — i.e. the

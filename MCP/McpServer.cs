@@ -40,14 +40,14 @@ public sealed class McpServer
     private readonly CommandRegistry _registry;
     private TextWriter _stdoutWriter = Console.Out;
 
-    // MT-005: Event streaming
+    // Event streaming
     private readonly EventBroadcaster _events = new();
     private SseEventServer? _sseServer;
 
-    // MT-006: Prometheus metrics
+    // Prometheus metrics
     private readonly MetricsCollector _metrics = new();
 
-    // MT-011: Rate limit tracker
+    // Rate limit tracker
     private readonly RateLimitTracker _rateLimits = new();
 
     /// <summary>MCP protocol version.</summary>
@@ -73,38 +73,38 @@ public sealed class McpServer
         _registry.Register(new UseCommand(_manager));
         _registry.Register(new StatusCommand(_manager));
 
-        // Account data (Phase A)
+        // Account data
         _registry.Register(new AccountCommand(_manager));
         _registry.Register(new CoreStatusCommand(_manager));
         _registry.Register(new ExchangeCommand(_manager));
 
-        // Algorithm management (Phase B)
+        // Algorithm management
         _registry.Register(new AlgosCommand(_manager));
 
-        // Server profile settings (Phase B)
+        // Server profile settings
         _registry.Register(new SettingsCommand(_manager));
 
-        // Import (Phase C)
+        // Import
         _registry.Register(new ImportCommand(_manager));
 
-        // Orders (Phase D)
+        // Orders
         _registry.Register(new OrdersCommand(_manager));
 
-        // Trade Reports (Phase F)
+        // Trade Reports
         _registry.Register(new ReportsCommand(_manager, new ReportStore()));
 
-        // Fleet (Phase E) — fleet-wide operations
+        // Fleet-wide operations
         _registry.Register(new FleetCommand(_manager));
-        _registry.Register(new TagCommand(_manager));  // MT-007
+        _registry.Register(new TagCommand(_manager));
 
-        // Monitor — real-time core monitoring via UDP (Phase G)
+        // Monitor — real-time core monitoring via UDP
         _registry.Register(new MonitorCommand(_manager));
 
         // Configuration
         _registry.Register(new ProfileCommand());
         _registry.Register(new OutputCommand(_output));
 
-        // ── Phase H — feature command parity with REPL ──
+        // ── Feature command parity with REPL ──
         // (These were registered in Program.cs but missing here, causing
         //  MCP tools to fail with "Unknown command: '<verb>'" at dispatch.)
         _registry.Register(new AutoStopsCommand(_manager));
@@ -164,7 +164,7 @@ public sealed class McpServer
         Console.SetOut(Console.Error);
         LogStderr($"MCP Server {SERVER_VERSION} starting on stdio...");
 
-        // MT-005: start SSE event server
+        // start SSE event server
         _sseServer = new SseEventServer(_events, _metrics);
         _sseServer.Start();
 
@@ -194,7 +194,7 @@ public sealed class McpServer
             }
             catch (Exception ex)
             {
-                // BUG-2 fix: recover the request id from the raw line so the
+                // Recover the request id from the raw line so the
                 // JSON-RPC error envelope echoes the caller's id instead of
                 // null. A null id breaks request/response correlation in
                 // compliant clients.
@@ -326,10 +326,10 @@ public sealed class McpServer
             return MakeErrorResponse(id, -32602, "Missing tool name.");
         }
         _metrics.RecordCall(toolName);
-        _rateLimits.RecordCall(toolName);       // MT-011
-        var _latencySw = System.Diagnostics.Stopwatch.StartNew(); // MT-022
+        _rateLimits.RecordCall(toolName);
+        var _latencySw = System.Diagnostics.Stopwatch.StartNew();
 
-        // MT-005: Event streaming tools — handled directly (no REPL dispatch)
+        // Event streaming tools — handled directly (no REPL dispatch)
         JObject? evtResponse = HandleEventTool(toolName, arguments);
         if (evtResponse != null)
         {
@@ -337,21 +337,19 @@ public sealed class McpServer
             return MakeResult(id, new JObject { ["content"] = evtContent, ["isError"] = false });
         }
 
-        // Stage 0.4: registry-driven ConfirmGate. Subsumes the prior
-        // hard-coded RequiresMcpConfirm() list (start_all / stop_all /
-        // fleet_disconnect) — those three tools' schemas declare confirm in
-        // inputSchema.required just like every other destructive tool, so
-        // the gate catches them by virtue of registry lookup. We surface
-        // rejections as -32602 (same shape ValidateRequiredArguments uses
-        // for missing-required-field errors) so every confirm-required
-        // tool returns a uniform JSON-RPC error envelope to callers.
+        // Registry-driven ConfirmGate. Confirm-required tools (start_all /
+        // stop_all / fleet_disconnect and every other destructive tool)
+        // declare confirm in inputSchema.required, so the gate catches them
+        // by virtue of registry lookup. We surface rejections as -32602
+        // (same shape ValidateRequiredArguments uses for missing-required-field
+        // errors) so every confirm-required tool returns a uniform JSON-RPC
+        // error envelope to callers.
         //
-        // Stage 6.6: ConfirmGate runs BEFORE HandleInternalTool so destructive
-        // internal tools (mt_core_shutdown, mt_vault_delete_profile, …) surface
-        // the same -32602 envelope as REPL-dispatched tools.  Before this
-        // reorder those tools relied on their own inline `confirm` checks and
-        // returned an inner-body { "error": ... } envelope, which violated the
-        // uniform-shape contract the gate's comment promises.
+        // ConfirmGate runs BEFORE HandleInternalTool so destructive internal
+        // tools (mt_core_shutdown, mt_vault_delete_profile, …) surface the
+        // same -32602 envelope as REPL-dispatched tools, instead of an
+        // inner-body { "error": ... } envelope that would violate the
+        // uniform-shape contract.
         string? confirmReject = ConfirmGate.RejectIfMissing(toolName, arguments);
         if (confirmReject != null)
         {
@@ -360,11 +358,11 @@ public sealed class McpServer
             return MakeErrorResponse(id, -32602, confirmReject);
         }
 
-        // MT-006/MT-009/MT-010: Internal tools with multi-step logic
+        // Internal tools with multi-step logic
         JObject? internalResponse = HandleInternalTool(toolName, arguments);
         if (internalResponse != null)
         {
-            _metrics.RecordLatency(toolName, _latencySw.ElapsedMilliseconds); // MT-022
+            _metrics.RecordLatency(toolName, _latencySw.ElapsedMilliseconds);
             var internalContent = new JArray { new JObject { ["type"] = "text", ["text"] = internalResponse.ToString(Newtonsoft.Json.Formatting.None) } };
             return MakeResult(id, new JObject { ["content"] = internalContent, ["isError"] = false });
         }
@@ -387,10 +385,9 @@ public sealed class McpServer
             return MakeErrorResponse(id, -32602, sanitizationError);
         }
 
-        // BUG-1 fix: reject missing required arguments BEFORE dispatch so we
-        // emit "-32602 Missing required argument: <name>" instead of the
-        // misleading "Unknown tool: …" produced by Build*Command helpers
-        // returning null.
+        // Reject missing required arguments BEFORE dispatch so we emit
+        // "-32602 Missing required argument: <name>" instead of the misleading
+        // "Unknown tool: …" produced by Build*Command helpers returning null.
         string? requiredError = ValidateRequiredArguments(toolName, arguments);
         if (requiredError != null)
         {
@@ -408,7 +405,7 @@ public sealed class McpServer
 
         // Execute via CommandRegistry
         CommandResult result = _registry.Dispatch(commandLine);
-        _metrics.RecordLatency(toolName, _latencySw.ElapsedMilliseconds); // MT-022
+        _metrics.RecordLatency(toolName, _latencySw.ElapsedMilliseconds);
         if (!result.Success) _metrics.RecordError(toolName);
 
         // Format response
@@ -448,11 +445,11 @@ public sealed class McpServer
         return ""; // silently ignore garbage; sanitizer handles \r/\n already
     }
 
-    // RequiresMcpConfirm() removed in Stage 0.4 — replaced by registry-driven
-    // ConfirmGate.IsConfirmRequired() (Core/ConfirmGate.cs). The three tools
-    // it gated (mt_algos_start_all, mt_algos_stop_all, mt_fleet_disconnect)
-    // already declare confirm in inputSchema.required, so the registry-driven
-    // gate catches them uniformly with every other destructive tool.
+    // Confirm checks for destructive tools are handled by the registry-driven
+    // ConfirmGate.IsConfirmRequired() (Core/ConfirmGate.cs). Tools like
+    // mt_algos_start_all, mt_algos_stop_all, mt_fleet_disconnect declare
+    // confirm in inputSchema.required, so the registry-driven gate catches
+    // them uniformly with every other destructive tool.
 
     /// <summary>
     /// EN review #8: validate tool arguments at the MCP boundary before they
@@ -508,7 +505,6 @@ public sealed class McpServer
     /// HttpClient defaults to 100 s — long enough that a network black-hole
     /// or unresponsive Vault instance can wedge the MCP request thread
     /// (which is invoked synchronously via .GetAwaiter().GetResult()).
-    /// EN-review item #7 / MCP-006.
     /// </summary>
     private static System.Net.Http.HttpClient BuildVaultHttpClient(string vaultToken)
     {
@@ -529,7 +525,7 @@ public sealed class McpServer
 
     /// <summary>Map an MCP tool name + arguments to a REPL command string.</summary>
     /// <summary>
-    /// Stage 0.3: exposed so the DispatcherSnapshotGenerator and the Static
+    /// Exposed so the DispatcherSnapshotGenerator and the Static
     /// DispatcherSnapshotTests can probe the CLI string each registry tool
     /// dispatches to with a deterministic argument set. Stays a static method
     /// — no McpServer instance is required to translate a tool/args pair to
@@ -549,7 +545,7 @@ public sealed class McpServer
             "mt_status" => "status",
             "mt_use" => $"use {arguments["profile"]?.Value<string>() ?? ""}",
 
-            // Account (Phase A)
+            // Account
             // Issue #16: surface CLI flags (-all / count) on MCP wrappers
             "mt_account_balance" => arguments["show_all"]?.Value<bool>() == true
                 ? $"account balance -all{profileSuffix}"
@@ -578,15 +574,15 @@ public sealed class McpServer
             "mt_exchange_search" => $"exchange search {arguments["query"]?.Value<string>() ?? ""}{profileSuffix}",
             "mt_exchange_pair_detail" => $"exchange detail {arguments["symbol"]?.Value<string>() ?? ""}{profileSuffix}",
 
-            // Exchange data queries (Phase K)
+            // Exchange data queries
             "mt_exchange_ticker24" => $"exchange ticker24 {arguments["symbol"]?.Value<string>() ?? ""}{ResolveTicker24Market(arguments)}{profileSuffix}",
             "mt_exchange_klines" => BuildKlinesCommand(arguments, profileSuffix),
             "mt_exchange_trades" => $"exchange trades {arguments["symbol"]?.Value<string>() ?? ""}{profileSuffix}",
-            // Stage 6.9 — funding rate + leverage brackets (read-only).
+            // Funding rate + leverage brackets (read-only).
             "mt_exchange_funding_rate" => BuildExchangeFundingRateCommand(arguments, profileSuffix),
             "mt_exchange_leverage_brackets" => BuildExchangeLeverageBracketsCommand(arguments, profileSuffix),
 
-            // Algorithms (Phase B)
+            // Algorithms
             "mt_algos_list" => $"algos list{profileSuffix}",
             "mt_algos_list_all" => "algos list-all",
             "mt_algos_search" => $"algos search {arguments["query"]?.Value<string>() ?? ""}{profileSuffix}",
@@ -595,12 +591,12 @@ public sealed class McpServer
             "mt_algos_stop" => $"algos stop {arguments["id"]?.Value<string>() ?? ""}{profileSuffix}",
             "mt_algos_start_all" => $"algos start-all{profileSuffix}",
 
-            // MT-012: Algo verification (BUG-13 detection)
+            // Algo verification
             "mt_algos_start_verified" => BuildStartVerifyCommand(arguments, profileSuffix),
             "mt_algos_verify"         => BuildVerifyCommand(arguments, profileSuffix),
             "mt_algos_stop_all" => $"algos stop-all{profileSuffix}",
 
-            // MT-008: Batch algo operations — start/stop/config across multiple servers
+            // Batch algo operations — start/stop/config across multiple servers
             "mt_algos_batch_start"  => BuildBatchAlgoCommand("batchstart", arguments),
             "mt_algos_batch_stop"   => BuildBatchAlgoCommand("batchstop",  arguments),
             "mt_algos_batch_config" => BuildBatchAlgoConfigCommand(arguments),
@@ -617,14 +613,14 @@ public sealed class McpServer
             "mt_algos_delete_group" => $"algos delete-group {arguments["group_id"]?.Value<string>() ?? ""}{profileSuffix}{confirm}",
             "mt_algos_copy" => BuildCopyCommand(arguments, confirm),
             "mt_algos_export" => $"algos export {arguments["id"]?.Value<string>() ?? ""}{profileSuffix}",
-            // Stage 4.1 — clipboard / paste / import-json.
+            // Clipboard / paste / import-json.
             "mt_algos_copy_to_clipboard" => $"algos copy-to-clipboard {arguments["id"]?.Value<string>() ?? ""}{profileSuffix}",
             "mt_algos_paste_from_clipboard" => BuildPasteFromClipboardCommand(arguments, confirm),
             "mt_algos_import_json" => BuildImportJsonCommand(arguments, confirm),
             "mt_algos_bulk_edit" => BuildBulkEditCommand(arguments, profileSuffix, confirm),
             "mt_algos_create" => BuildAlgosCreateCommand(arguments, profileSuffix, confirm),
 
-            // Settings (Phase B)
+            // Settings
             "mt_settings_get" => arguments.ContainsKey("key")
                 ? $"settings get {arguments["key"]?.Value<string>()}{profileSuffix}"
                 : $"settings get{profileSuffix}",
@@ -632,7 +628,7 @@ public sealed class McpServer
             "mt_settings_set" => $"settings set {arguments["key"]?.Value<string>() ?? ""} {arguments["value"]?.Value<string>() ?? ""}{profileSuffix}{confirm}",
             "mt_settings_groups" => $"settings groups{profileSuffix}",
 
-            // Import (Phase C)
+            // Import
             "mt_import_v2" => $"import v2 {arguments["path"]?.Value<string>() ?? ""}{profileSuffix}{confirm}",
             "mt_import_templates" => arguments["path"]?.Value<string>() is { Length: > 0 } templPath
                 ? $"import templates {templPath}"
@@ -640,7 +636,7 @@ public sealed class McpServer
             "mt_import_add_numeric" =>
                 $"import add-numeric {arguments["id"]?.Value<string>() ?? ""} {arguments["delta"]?.Value<string>() ?? ""}{profileSuffix}{confirm}",
 
-            // Orders (Phase D)
+            // Orders
             "mt_orders_list" => $"orders list{profileSuffix}",
             "mt_orders_positions" => $"orders positions{profileSuffix}",
             "mt_orders_cancel" => $"orders cancel {arguments["client_order_id"]?.Value<string>() ?? ""}{profileSuffix}{confirm}",
@@ -654,7 +650,7 @@ public sealed class McpServer
                     : $"orders close {arguments["symbol"]?.Value<string>() ?? ""}{profileSuffix}{confirm}",
             "mt_orders_close_all" => $"orders close-all{profileSuffix}{confirm}",
 
-            // Order operations (Phase K)
+            // Order operations
             "mt_orders_place" => BuildPlaceOrderCommand(arguments, profileSuffix, confirm),
             "mt_orders_move" => $"orders move {arguments["client_order_id"]?.Value<string>() ?? ""} {arguments["new_price"]?.Value<string>() ?? ""}{profileSuffix}{confirm}",
             "mt_orders_set_leverage" => $"orders set-leverage {arguments["symbol"]?.Value<string>() ?? ""} {arguments["leverage"]?.Value<string>() ?? ""}{profileSuffix}{confirm}",
@@ -669,12 +665,12 @@ public sealed class McpServer
             "mt_orders_set_multiasset" => $"orders set-multiasset {arguments["enabled"]?.Value<string>() ?? ""} {arguments["market"]?.Value<string>() ?? ""}{profileSuffix}{confirm}",
 
 
-            // Reports (Phase F) — historical trade data
+            // Reports — historical trade data
             "mt_reports_trades" => BuildReportsCommand(arguments, profileSuffix),
             "mt_reports_comments" => $"reports comments{profileSuffix}",
             "mt_reports_dates" => $"reports dates{profileSuffix}",
 
-            // Fleet (Phase E) — fleet-wide operations
+            // Fleet-wide operations
             "mt_fleet_connect" => arguments.ContainsKey("filter")
                 ? $"fleet connect {arguments["filter"]?.Value<string>()}"
                 : "fleet connect",
@@ -686,17 +682,17 @@ public sealed class McpServer
             "mt_fleet_summary" => "fleet summary",
             "mt_fleet_disconnect" => "fleet disconnect",
 
-            // MT-004: Batch connect to specific named profiles in parallel
+            // Batch connect to specific named profiles in parallel
             "mt_fleet_batch_connect" => BuildBatchConnectCommand(arguments),
 
-            // MT-003: Connection pool health — latency/error/reconnect metrics per profile
+            // Connection pool health — latency/error/reconnect metrics per profile
             "mt_connection_health" => "fleet connhealth",
 
-            // MT-007: Server tagging — set/get fleet orchestration labels
+            // Server tagging — set/get fleet orchestration labels
             "mt_connection_tag" => BuildTagCommand(arguments),
             "mt_connection_tags" => profile != null ? $"tag {profile}" : "tag",
 
-            // Monitor (Phase G) — real-time core monitoring via UDP
+            // Monitor — real-time core monitoring via UDP
             "mt_monitor_start" => $"monitor start{profileSuffix}",
             "mt_monitor_stop" => $"monitor stop{profileSuffix}",
             "mt_monitor_status" => $"monitor status{profileSuffix}",
@@ -709,7 +705,7 @@ public sealed class McpServer
             "mt_autostops_list" => $"autostops list{profileSuffix}",
             "mt_autostops_baseline" => $"autostops baseline{profileSuffix}",
             "mt_autostops_reports" => $"autostops reports {arguments["ids"]?.Value<string>() ?? ""}{profileSuffix}",
-            // Stage 3.1 — balance-filter CRUD
+            // Balance-filter CRUD
             "mt_autostops_add" => BuildAutoStopAddCommand(arguments, profileSuffix, confirm),
             "mt_autostops_edit" => BuildAutoStopEditCommand(arguments, profileSuffix, confirm),
             "mt_autostops_start" => BuildAutoStopToggleCommand("start", arguments, profileSuffix, confirm),
@@ -720,7 +716,7 @@ public sealed class McpServer
             "mt_blacklist_list" => $"blacklist list{profileSuffix}",
             "mt_blacklist_add" => BuildBlacklistMutationCommand("add", arguments, profileSuffix, confirm),
             "mt_blacklist_remove" => BuildBlacklistMutationCommand("remove", arguments, profileSuffix, confirm),
-            // Stage 5.2 — profile-level whitelist CRUD.
+            // Profile-level whitelist CRUD.
             "mt_whitelist_list" => $"whitelist list{profileSuffix}",
             "mt_whitelist_add" => BuildWhitelistMutationCommand("add", arguments, profileSuffix, confirm, bulk: false),
             "mt_whitelist_remove" => BuildWhitelistMutationCommand("remove", arguments, profileSuffix, confirm, bulk: false),
@@ -841,17 +837,17 @@ public sealed class McpServer
             "mt_fund_transfer" => $"orders fund-transfer {arguments["from_account"]?.Value<string>() ?? ""} {arguments["asset"]?.Value<string>() ?? ""} {arguments["amount"]?.Value<string>() ?? ""} {arguments["to_account"]?.Value<string>() ?? ""}{profileSuffix}{confirm}",
             "mt_profile_settings_get" => $"settings profile-get {arguments["profile_name"]?.Value<string>() ?? ""}{profileSuffix}",
             "mt_profile_settings_update" => BuildProfileSettingsUpdateCommand(arguments, profileSuffix, confirm),
-            // Stage 6.7 — list keys + bulk delete.
+            // List keys + bulk delete.
             "mt_profile_settings_list" => BuildProfileSettingsListCommand(arguments, profileSuffix),
             "mt_profile_settings_delete" => BuildProfileSettingsDeleteCommand(arguments, profileSuffix, confirm),
-            // Stage 5.3 — local profiles.json CRUD.
+            // Local profiles.json CRUD.
             "mt_profiles_list" => "profiles list",
             "mt_profiles_add" => BuildProfilesAddCommand(arguments, confirm),
             "mt_profiles_edit" => BuildProfilesEditCommand(arguments, confirm),
             "mt_profiles_delete" => $"profiles delete {SanitiseToken(arguments["name"]?.Value<string>())}{confirm}",
             "mt_profiles_move" => $"profiles move {SanitiseToken(arguments["name"]?.Value<string>())} {SanitiseToken(arguments["folder"]?.Value<string>())}{confirm}",
             "mt_profiles_import_csv" => $"profiles import-csv {SanitisePath(arguments["path"]?.Value<string>())}{confirm}",
-            // Stage 5.3 — local folders.json CRUD.
+            // Local folders.json CRUD.
             "mt_folders_list" => "folders list",
             "mt_folders_add" => $"folders add {SanitiseToken(arguments["name"]?.Value<string>())}{confirm}",
             "mt_folders_edit" => $"folders edit {SanitiseToken(arguments["old_name"]?.Value<string>())} {SanitiseToken(arguments["new_name"]?.Value<string>())}{confirm}",
@@ -861,22 +857,22 @@ public sealed class McpServer
             "mt_core_clear_orders" => $"core clear-orders{profileSuffix}{confirm}",
             "mt_core_clear_archive" => $"core clear-archive{profileSuffix}{confirm}",
 
-            // Stage 1.3: order_type is appended as `--order-type <type>` when provided.
+            // order_type is appended as `--order-type <type>` when provided.
             // The handler defaults to MARKET when the flag is absent — back-compat with
-            // pre-Stage-1 callers that didn't pass order_type.
+            // earlier callers that didn't pass order_type.
             "mt_orders_close_by_tpsl" => $"orders close-by-tpsl {arguments["symbol"]?.Value<string>() ?? ""} {arguments["market"]?.Value<string>() ?? ""} {arguments["side"]?.Value<string>() ?? ""}{BuildOrderTypeArg(arguments)}{profileSuffix}{confirm}",
             "mt_orders_reset_tpsl" => $"orders reset-tpsl {arguments["symbol"]?.Value<string>() ?? ""} {arguments["market"]?.Value<string>() ?? ""} {arguments["side"]?.Value<string>() ?? ""}{profileSuffix}{confirm}",
-            // Stage 2.1 — Active Order TP/SL/TS Update
+            // Active Order TP/SL/TS Update
             "mt_orders_update_tpsl" => BuildUpdateOrderTpslCommand(arguments, profileSuffix, confirm),
 
             "mt_tpsl_join" => $"tpsl join {BuildTpslJoinIds(arguments)}{profileSuffix}{confirm}",
             "mt_tpsl_split" => $"tpsl split {arguments["tpsl_id"]?.Value<string>() ?? ""}{profileSuffix}{confirm}",
-            // Stage 1.1 — TPSL bulk operations. The "many" tools accept tpsl_ids as an
+            // TPSL bulk operations. The "many" tools accept tpsl_ids as an
             // array; BuildTpslJoinIds happens to do exactly the right thing here too
             // (JArray → space-joined, with legacy string-form fallback).
             "mt_tpsl_cancel_many" => $"tpsl cancel-many {BuildTpslJoinIds(arguments)}{profileSuffix}{confirm}",
             "mt_tpsl_split_many"  => $"tpsl split-many {BuildTpslJoinIds(arguments)}{profileSuffix}{confirm}",
-            // Stage 1.2 — TPSL panic close (single + bulk).
+            // TPSL panic close (single + bulk).
             "mt_tpsl_panic"       => $"tpsl panic {arguments["tpsl_id"]?.Value<string>() ?? ""}{profileSuffix}{confirm}",
             "mt_tpsl_panic_many"  => $"tpsl panic-many {BuildTpslJoinIds(arguments)}{profileSuffix}{confirm}",
 
@@ -888,11 +884,11 @@ public sealed class McpServer
         };
     }
     /// <summary>
-    /// Build the REPL command string for mt_connection_tag (MT-007).
+    /// Build the REPL command string for mt_connection_tag.
     /// Format: tag <profile> <key> <value>
     /// </summary>
-    /// <summary>Build: algos start-verify <id> [wait_secs] [@profile] (MT-012)</summary>
-    /// <summary>Build: algos verify <id> [@profile] (MT-012)</summary>
+    /// <summary>Build: algos start-verify <id> [wait_secs] [@profile]</summary>
+    /// <summary>Build: algos verify <id> [@profile]</summary>
     private static string? BuildVerifyCommand(JObject arguments, string profileSuffix)
     {
         string? id = arguments["id"]?.Value<string>();
@@ -927,7 +923,7 @@ public sealed class McpServer
 
     /// <summary>
     /// <summary>
-    /// Build: fleet batchstart/batchstop <algo> [profile1 ...] (MT-008)
+    /// Build: fleet batchstart/batchstop <algo> [profile1 ...]
     /// </summary>
     private static string? BuildBatchAlgoCommand(string subcommand, JObject arguments)
     {
@@ -946,7 +942,7 @@ public sealed class McpServer
     }
 
     /// <summary>
-    /// Build: fleet batchconfig <algo> <key> <value> [profile1 ...] (MT-008)
+    /// Build: fleet batchconfig <algo> <key> <value> [profile1 ...]
     /// </summary>
     private static string? BuildBatchAlgoConfigCommand(JObject arguments)
     {
@@ -1033,7 +1029,7 @@ public sealed class McpServer
     }
 
     /// <summary>
-    /// Stage 1.3: render the optional <c>order_type</c> MCP arg as a
+    /// Render the optional <c>order_type</c> MCP arg as a
     /// <c>--order-type &lt;type&gt;</c> flag for <c>orders close-by-tpsl</c>.
     /// Returns empty string when absent so back-compat callers keep the
     /// MARKET default.
@@ -1048,7 +1044,7 @@ public sealed class McpServer
     }
 
     /// <summary>
-    /// Stage 2.1 — render the REPL command line for
+    /// Render the REPL command line for
     /// <c>orders update-tpsl &lt;symbol&gt; &lt;side&gt; …</c>.  Mirrors the
     /// schema in ToolRegistry; tolerates missing optional fields by omitting
     /// the corresponding flag.  Numeric fields are forwarded as strings; the
@@ -1136,7 +1132,7 @@ public sealed class McpServer
         return $"algos copy {id} to:{dest}{sourceSuffix}{confirm}";
     }
 
-    // ── Stage 4.1 paste-from-clipboard / import-json helpers ──
+    // ── Paste-from-clipboard / import-json helpers ──
 
     private static string BuildPasteFromClipboardCommand(JObject arguments, string confirm)
     {
@@ -1154,18 +1150,18 @@ public sealed class McpServer
         string? dest = arguments["destination_profile"]?.Value<string>();
         if (!string.IsNullOrWhiteSpace(dest)) parts.Add($"@{dest}");
         string? payload = arguments["payload"]?.Value<string>();
-        // Stage 6.8 — path argument overrides payload.  When the file exists,
+        // path argument overrides payload.  When the file exists,
         // read its content and inject as the payload.  Error markers are
         // embedded into the schema_version field so AlgosCommand's existing
         // schema_version_mismatch failure path carries the path/reason to
-        // the operator without needing a new parser branch.
+        // the caller without needing a new parser branch.
         string? path = arguments["path"]?.Value<string>();
         if (!string.IsNullOrWhiteSpace(path))
         {
             try
             {
                 if (!System.IO.File.Exists(path))
-                    payload = "{\"schema_version\":\"stage68-path-not-found:" +
+                    payload = "{\"schema_version\":\"path-not-found:" +
                               path.Replace("\\", "\\\\").Replace("\"", "\\\"") +
                               "\"}";
                 else
@@ -1173,7 +1169,7 @@ public sealed class McpServer
             }
             catch (System.Exception ex)
             {
-                payload = "{\"schema_version\":\"stage68-read-failed:" +
+                payload = "{\"schema_version\":\"read-failed:" +
                           ex.Message.Replace("\\", "\\\\").Replace("\"", "\\\"") +
                           "\"}";
             }
@@ -1190,7 +1186,7 @@ public sealed class McpServer
         return string.Join(" ", parts) + confirm;
     }
 
-    // Stage 5.1 — fleet set-margin-type with mandatory dry_run.
+    // fleet set-margin-type with mandatory dry_run.
     private static string BuildFleetSetMarginTypeCommand(JObject arguments, string confirm)
     {
         var parts = new List<string> { "fleet set-margin-type" };
@@ -1267,7 +1263,7 @@ public sealed class McpServer
         return count != null ? $" --count {count}" : "";
     }
 
-    // ── Stage 3.1 AutoStops balance-filter helpers ──
+    // ── AutoStops balance-filter helpers ──
 
     private static string BuildAutoStopAddCommand(JObject arguments, string profileSuffix, string confirm)
     {
@@ -1343,7 +1339,7 @@ public sealed class McpServer
         parts.Add($"{flag} {value}");
     }
 
-    // Stage 6.9 — funding rate + leverage brackets builders.
+    // Funding rate + leverage brackets builders.
     private static string BuildExchangeFundingRateCommand(JObject arguments, string profileSuffix)
     {
         var parts = new List<string> { "exchange funding-rate" };
@@ -1372,11 +1368,11 @@ public sealed class McpServer
         return string.Join(" ", parts) + profileSuffix;
     }
 
-    // Stage 6.7 fix — mt_profile_settings_update: base64-encode the JSON
-    // updates payload so the REPL tokenizer doesn't strip its double-quotes
-    // (without quotes, JSON keys with dots like "Core.LOG_LEVEL" parse as
-    // unquoted JS identifiers, which Newtonsoft rejects).  Same pattern Stage
-    // 4.1/4.2 already uses for inline-JSON tools.
+    // mt_profile_settings_update: base64-encode the JSON updates payload so
+    // the REPL tokenizer doesn't strip its double-quotes (without quotes, JSON
+    // keys with dots like "Core.LOG_LEVEL" parse as unquoted JS identifiers,
+    // which Newtonsoft rejects).  Same pattern already used for inline-JSON
+    // tools.
     private static string BuildProfileSettingsUpdateCommand(JObject arguments, string profileSuffix, string confirm)
     {
         string profileName = arguments["profile_name"]?.Value<string>() ?? "";
@@ -1387,7 +1383,7 @@ public sealed class McpServer
         return $"settings profile-update {profileName} {encoded}{profileSuffix}{confirm}";
     }
 
-    // Stage 6.7 — profile_settings list + delete builders.
+    // profile_settings list + delete builders.
     private static string BuildProfileSettingsListCommand(JObject arguments, string profileSuffix)
     {
         var parts = new List<string> { "settings profile-list" };
@@ -1411,7 +1407,7 @@ public sealed class McpServer
         return $"settings profile-delete {clean}{profileSuffix}{confirm}";
     }
 
-    // Stage 5.3 — profiles.json command builders.
+    // profiles.json command builders.
     private static string BuildProfilesAddCommand(JObject arguments, string confirm)
     {
         string name = SanitiseToken(arguments["name"]?.Value<string>());
@@ -1456,7 +1452,7 @@ public sealed class McpServer
         return new string(s.Where(c => char.IsLetterOrDigit(c) || c == '-' || c == '_' || c == '.' || c == '/').ToArray());
     }
 
-    // Stage 5.2 — whitelist CRUD command builder.  Mirrors BlackList shape:
+    // Whitelist CRUD command builder.  Mirrors BlackList shape:
     // typed entries {MarketType, QuoteAsset, Symbol?}.  bulk-variants take CSV.
     private static string BuildWhitelistMutationCommand(string verb, JObject arguments, string profileSuffix, string confirm, bool bulk)
     {
@@ -1699,7 +1695,7 @@ public sealed class McpServer
 
     private static string? BuildPlaceOrderCommand(JObject arguments, string profileSuffix, string confirm)
     {
-        // Defense in depth — BUG-1's required-args gate already rejects this
+        // Defense in depth — the required-args gate already rejects this
         // path, but never NRE here even if a future code path skips the gate.
         string? symbol = arguments["symbol"]?.Value<string>();
         string? side   = arguments["side"]?.Value<string>();
@@ -1738,7 +1734,7 @@ public sealed class McpServer
             parts.Add("--emulated");
         }
 
-        // Stage 6.11 — iceberg toggle (wires to OrderSettings.isIceberg).
+        // Iceberg toggle (wires to OrderSettings.isIceberg).
         bool iceberg = arguments["iceberg"]?.Value<bool>() ?? false;
         if (iceberg)
         {
@@ -1764,7 +1760,60 @@ public sealed class McpServer
                 parts.Add($"--client-order-id {safe}");
         }
 
+        // TPSL inline params — attached to OrderRequestData.takeProfitSettings /
+        // stopLossSettings on placement. The safe pattern: place + TPSL in one
+        // wire call. See docs/TPSL_SAFETY_GUIDE.md.
+        string? tpPercent = arguments["tp_percent"]?.Value<string>();
+        if (!string.IsNullOrWhiteSpace(tpPercent))
+        {
+            parts.Add($"--tp-percent {SanitizeNumeric(tpPercent)}");
+            string? tpType = arguments["tp_type"]?.Value<string>();
+            if (!string.IsNullOrWhiteSpace(tpType))
+            {
+                string norm = tpType.Trim().ToUpperInvariant();
+                if (norm == "LIMIT" || norm == "MARKET")
+                    parts.Add($"--tp-type {norm}");
+            }
+        }
+        string? slPercent = arguments["sl_percent"]?.Value<string>();
+        if (!string.IsNullOrWhiteSpace(slPercent))
+        {
+            parts.Add($"--sl-percent {SanitizeNumeric(slPercent)}");
+            string? slType = arguments["sl_type"]?.Value<string>();
+            if (!string.IsNullOrWhiteSpace(slType))
+            {
+                string norm = slType.Trim().ToUpperInvariant();
+                if (norm == "LIMIT" || norm == "MARKET")
+                    parts.Add($"--sl-type {norm}");
+            }
+            bool trailing = arguments["trailing_stop"]?.Value<bool>() ?? false;
+            if (trailing)
+            {
+                parts.Add("--trailing-stop");
+                string? trailSpread = arguments["trailing_spread"]?.Value<string>();
+                if (!string.IsNullOrWhiteSpace(trailSpread))
+                    parts.Add($"--trailing-spread {SanitizeNumeric(trailSpread)}");
+            }
+        }
+
         return string.Join(" ", parts) + profileSuffix + confirm;
+    }
+
+    /// <summary>Strip non-numeric characters so the CLI fragment can't be
+    /// hijacked through whitespace or shell metacharacters embedded in a
+    /// numeric MCP argument. Allows digits, '.', and a single leading '-'.</summary>
+    private static string SanitizeNumeric(string s)
+    {
+        var sb = new System.Text.StringBuilder();
+        bool sawDot = false;
+        for (int i = 0; i < s.Length && sb.Length < 16; i++)
+        {
+            char c = s[i];
+            if (char.IsDigit(c)) sb.Append(c);
+            else if (c == '.' && !sawDot) { sb.Append(c); sawDot = true; }
+            else if (c == '-' && sb.Length == 0) sb.Append(c);
+        }
+        return sb.Length == 0 ? "0" : sb.ToString();
     }
     #endregion
 
@@ -1801,7 +1850,7 @@ public sealed class McpServer
         _stdoutWriter.Flush();
     }
 
-    // ── MT-005: Event streaming tool handler ────────────────────────────────
+    // ── Event streaming tool handler ────────────────────────────────────────
 
     private JObject? HandleEventTool(string toolName, JObject arguments)
     {
@@ -1845,7 +1894,7 @@ public sealed class McpServer
     }
 
 
-    // ── MT-006/MT-009/MT-010: Internal multi-step tools ──────────────────────
+    // ── Internal multi-step tools ───────────────────────────────────────────
 
     private JObject? HandleInternalTool(string toolName, JObject arguments)
     {
@@ -1855,27 +1904,27 @@ public sealed class McpServer
             "mt_config_snapshot"    => HandleConfigSnapshot(arguments),
             "mt_config_restore"     => HandleConfigRestore(arguments),
             "mt_settings_diff"      => HandleSettingsDiff(arguments),
-            "mt_settings_diff_snapshots" => HandleSettingsDiffSnapshots(arguments),  // Stage 6.10
-            "mt_rate_status"        => HandleRateStatus(),    // MT-011
-            "mt_vault_store_profile" => HandleVaultStoreProfile(arguments),  // HK-001
-            "mt_vault_list_profiles" => HandleVaultListProfiles(arguments),  // HK-001
-            "mt_vault_get_profile"   => HandleVaultGetProfile(arguments),    // Stage 6.6
-            "mt_vault_delete_profile" => HandleVaultDeleteProfile(arguments),// Stage 6.6
-            "mt_notifications_config_groups"        => Core.NotificationConfigReflector.GroupsCatalog(),       // Stage 6.2
-            "mt_notifications_config_targets"       => Core.NotificationConfigReflector.TargetsCatalog(),      // Stage 6.2
-            "mt_notifications_config_descriptors"   => Core.NotificationConfigReflector.DescriptorsCatalog(),  // Stage 6.2
-            "mt_notifications_config_capabilities"  => Core.NotificationConfigReflector.CapabilitiesCatalog(), // Stage 6.2
-            "mt_alerts_save"                        => HandleAlertsSave(arguments),                            // Stage 6.3
-            "mt_alerts_delete"                      => HandleAlertsDelete(arguments),                          // Stage 6.3
-            "mt_alerts_set_running"                 => HandleAlertsSetRunning(arguments),                      // Stage 6.3
-            "mt_import_from_profile"                => HandleImportFromProfile(arguments),                     // Stage 6.8
-            "mt_reports_query"                      => HandleReportsQuery(arguments, asCsv: false),            // Stage 7.1
-            "mt_reports_csv_inline"                 => HandleReportsQuery(arguments, asCsv: true),             // Stage 7.1
-            "mt_reports_cancel"                     => HandleReportsCancel(arguments),                         // Stage 7.1
-            "mt_reports_status"                     => HandleReportsStatus(arguments),                         // Stage 7.1
-            "mt_core_shutdown"       => HandleCoreShutdown(arguments),         // MT-023
-            "mt_algos_tpsl_change"   => HandleAlgosTpslChange(arguments),       // MT-024
-            "mt_algos_profiling"     => HandleAlgosProfiling(arguments),        // MT-024
+            "mt_settings_diff_snapshots" => HandleSettingsDiffSnapshots(arguments),
+            "mt_rate_status"        => HandleRateStatus(),
+            "mt_vault_store_profile" => HandleVaultStoreProfile(arguments),
+            "mt_vault_list_profiles" => HandleVaultListProfiles(arguments),
+            "mt_vault_get_profile"   => HandleVaultGetProfile(arguments),
+            "mt_vault_delete_profile" => HandleVaultDeleteProfile(arguments),
+            "mt_notifications_config_groups"        => Core.NotificationConfigReflector.GroupsCatalog(),
+            "mt_notifications_config_targets"       => Core.NotificationConfigReflector.TargetsCatalog(),
+            "mt_notifications_config_descriptors"   => Core.NotificationConfigReflector.DescriptorsCatalog(),
+            "mt_notifications_config_capabilities"  => Core.NotificationConfigReflector.CapabilitiesCatalog(),
+            "mt_alerts_save"                        => HandleAlertsSave(arguments),
+            "mt_alerts_delete"                      => HandleAlertsDelete(arguments),
+            "mt_alerts_set_running"                 => HandleAlertsSetRunning(arguments),
+            "mt_import_from_profile"                => HandleImportFromProfile(arguments),
+            "mt_reports_query"                      => HandleReportsQuery(arguments, asCsv: false),
+            "mt_reports_csv_inline"                 => HandleReportsQuery(arguments, asCsv: true),
+            "mt_reports_cancel"                     => HandleReportsCancel(arguments),
+            "mt_reports_status"                     => HandleReportsStatus(arguments),
+            "mt_core_shutdown"       => HandleCoreShutdown(arguments),
+            "mt_algos_tpsl_change"   => HandleAlgosTpslChange(arguments),
+            "mt_algos_profiling"     => HandleAlgosProfiling(arguments),
             "mt_config_import_algos" => HandleConfigImportAlgos(arguments),      // Direct JSON import
             "mt_algos_snapshot"      => HandleAlgosSnapshot(arguments),         // State reconciliation
             "mt_algos_group_by_name" => HandleAlgosGroupByName(arguments),      // State reconciliation
@@ -1883,13 +1932,13 @@ public sealed class McpServer
         };
     }
 
-    // MT-006: Return metrics as JSON
+    // Return metrics as JSON
     private JObject HandleMetricsGet() => _metrics.ToJson();
 
-    // MT-011: Return rate limit status
+    // Return rate limit status
     private JObject HandleRateStatus() => _rateLimits.GetStatus();
 
-    // HK-001: Store an API profile in HashiCorp Vault
+    // Store an API profile in HashiCorp Vault
     private JObject HandleVaultStoreProfile(JObject arguments)
     {
         string? name      = arguments["name"]?.Value<string>();
@@ -1933,7 +1982,7 @@ public sealed class McpServer
         }
     }
 
-    // HK-001: List Vault profiles
+    // List Vault profiles
     private JObject HandleVaultListProfiles(JObject arguments)
     {
         string vaultAddr  = arguments["vault_addr"]?.Value<string>()  ?? Environment.GetEnvironmentVariable("VAULT_ADDR") ?? "http://127.0.0.1:8200";
@@ -1965,7 +2014,7 @@ public sealed class McpServer
         }
     }
 
-    // Stage 6.6 — Retrieve a stored API profile from Vault KV v2.
+    // Retrieve a stored API profile from Vault KV v2.
     //   GET /v1/secret/data/mt/profiles/{name} → { data: { data: {api_key, api_secret, stored_at}, metadata: ... } }
     // Returns: { name, api_key, api_secret, stored_at, version }.  api_secret
     // is surfaced in cleartext — Vault is the secret store; the caller's
@@ -2012,7 +2061,7 @@ public sealed class McpServer
         }
     }
 
-    // Stage 6.6 — Permanently delete an API profile via Vault KV v2 destroy-all-versions.
+    // Permanently delete an API profile via Vault KV v2 destroy-all-versions.
     //   DELETE /v1/secret/metadata/mt/profiles/{name}   (removes versions + metadata)
     // Requires confirm=true (also enforced by ConfirmGate at the registry layer).
     private JObject HandleVaultDeleteProfile(JObject arguments)
@@ -2047,7 +2096,7 @@ public sealed class McpServer
         }
     }
 
-    // Stage 7.1 — automation-friendly trade-reports query.  Returns either a
+    // Automation-friendly trade-reports query.  Returns either a
     // structured rows envelope or a CSV string in the body, with the same
     // rich-filter surface as mt_reports_trades (which only returns text).
     private JObject HandleReportsQuery(JObject arguments, bool asCsv)
@@ -2106,7 +2155,13 @@ public sealed class McpServer
             Core.ReportsRequestRegistry.Error(entry.RequestId, "wire_returned_null");
             return new JObject
             {
-                ["error"] = "reports_query_failed: wire returned null (timeout or no_connection)",
+                ["error"] = "reports_query_failed: MTCore did not respond on this profile. " +
+                            "Some MTCore builds (observed on freshly-initialised BYBIT bench) drop " +
+                            "ReportListRequest without firing a callback or push notification. " +
+                            "Fall back to: mt_reports_dates (lists available dates), " +
+                            "mt_account_executions (live fill stream), or mt_marketdata_trades_subscribe " +
+                            "for symbol-level trade history. Phase 4 (real-order placement) will populate " +
+                            "this profile's Firebird DB so future ReportListRequest calls succeed.",
                 ["request_id"] = entry.RequestId,
             };
         }
@@ -2258,7 +2313,7 @@ public sealed class McpServer
         };
     }
 
-    // Stage 7.1 helpers.
+    // Reports-query helpers.
     private static (long unixFrom, long unixTo, string label) ResolveDateRange(string period, string? from, string? to)
     {
         DateTime utcNow = DateTime.UtcNow;
@@ -2312,7 +2367,7 @@ public sealed class McpServer
         return "\"" + s.Replace("\"", "\"\"") + "\"";
     }
 
-    // Stage 6.8 — survey what would be imported from source_profile into
+    // Survey what would be imported from source_profile into
     // destination_profile.  Read-only on both sides; emits a structured list
     // entry per source algo with name/group/symbol/market and a duplicate
     // flag (same name present on destination).
@@ -2385,7 +2440,7 @@ public sealed class McpServer
         };
     }
 
-    // Stage 6.3 — build a populated AlertInfoData from typed MCP args and send.
+    // Build a populated AlertInfoData from typed MCP args and send.
     // Returns the structured envelope { ok, message, alert: { name, symbol, … } }
     // when the wire call resolves; surfaces 'no_connection' if the profile isn't connected.
     private JObject HandleAlertsSave(JObject arguments)
@@ -2526,7 +2581,7 @@ public sealed class McpServer
         return result;
     }
 
-    // MT-023: Send shutdown/restart service command to MTCore
+    // Send shutdown/restart service command to MTCore
     // command: "shutdown" | "restart" | "restart_update" | "restart_clear_orders" | "restart_clear_archive"
     private JObject HandleCoreShutdown(JObject arguments)
     {
@@ -2559,7 +2614,7 @@ public sealed class McpServer
         };
     }
 
-    // MT-024: Send a TP/SL algorithm change request
+    // Send a TP/SL algorithm change request
     // Builds a TPSLInfoData struct from the JSON arguments and sends it to MT-Core.
     private JObject HandleAlgosTpslChange(JObject arguments)
     {
@@ -2598,7 +2653,7 @@ public sealed class McpServer
         };
     }
 
-    // MT-024: Request algorithm profiling data (fire-and-forget; result comes via event stream)
+    // Request algorithm profiling data (fire-and-forget; result comes via event stream)
     private JObject HandleAlgosProfiling(JObject arguments)
     {
         string? profile    = arguments["profile"]?.Value<string>();
@@ -2762,7 +2817,7 @@ public sealed class McpServer
             ["profile"] = conn.Name
         };
     }
-    // MT-009: Snapshot all settings for a profile to a timestamped JSON file
+    // Snapshot all settings for a profile to a timestamped JSON file
     private JObject HandleConfigSnapshot(JObject arguments)
     {
         string? profile = arguments["profile"]?.Value<string>();
@@ -2811,7 +2866,7 @@ public sealed class McpServer
         };
     }
 
-    // MT-009: Restore settings from a snapshot file
+    // Restore settings from a snapshot file
     private JObject HandleConfigRestore(JObject arguments)
     {
         string? path = arguments["path"]?.Value<string>();
@@ -3075,9 +3130,9 @@ public sealed class McpServer
         };
     }
 
-    // MT-010: Diff settings between two profiles
+    // Diff settings between two profiles
     /// <summary>
-    /// Stage 6.10 — diff two snapshot files written by <c>mt_config_snapshot</c>.
+    /// Diff two snapshot files written by <c>mt_config_snapshot</c>.
     /// Pure client-side, no MTCore wire calls.  Snapshot path may be absolute
     /// or a bare filename relative to <c>~/.mt-snapshots/</c>.  Diffs the
     /// <c>settings</c> section of each snapshot (added / removed / changed).
@@ -3245,9 +3300,9 @@ public sealed class McpServer
         return result;
     }
 
-    // MT-006/MT-009/MT-010: Tool definitions
+    // Tool definitions
 
-    // ── MT-011: Sliding-window exchange rate limit tracker ──────────────────
+    // ── Sliding-window exchange rate limit tracker ──────────────────────────
     private sealed class RateLimitTracker
     {
         private readonly ConcurrentDictionary<string, Queue<long>> _windows =
