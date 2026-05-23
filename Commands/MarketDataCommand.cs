@@ -180,7 +180,9 @@ public sealed class MarketDataCommand : ICommand
         List<TradeUpdateData> tradeBuffer = conn.MarketDataStore.GetTradeBuffer(tradeKey);
         if (tradeBuffer.Count == 0)
         {
-            return CommandResult.Ok($"No trade data for {tradeKey}. Subscribe first.");
+            return CommandResult.Fail(
+                $"[{conn.Name}] No trade data for {tradeKey} — cache is empty. " +
+                $"Subscribe first with 'mt_marketdata_trades_subscribe symbol={symbol}'.");
         }
 
         StringBuilder sb2 = new StringBuilder();
@@ -270,7 +272,9 @@ public sealed class MarketDataCommand : ICommand
 
         if (!conn.MarketDataStore.TryGetDepth(depthKey, out DepthUpdateData depth))
         {
-            return CommandResult.Ok($"No depth data for {depthKey}. Subscribe first.");
+            return CommandResult.Fail(
+                $"[{conn.Name}] No depth data for {depthKey} — cache is empty. " +
+                $"Subscribe first with 'mt_marketdata_depth_subscribe symbol={symbol}'.");
         }
 
         StringBuilder sb = new StringBuilder();
@@ -392,7 +396,10 @@ public sealed class MarketDataCommand : ICommand
 
         if (!conn.MarketDataStore.TryGetMarkPrice(mpKey, out MarkPriceUpdateData markPrice))
         {
-            return CommandResult.Ok($"No mark price data for {mpKey}. Subscribe first.");
+            return CommandResult.Fail(
+                $"[{conn.Name}] No mark price data for {mpKey} — cache is empty. " +
+                $"Subscribe first with 'mt_marketdata_markprice_subscribe symbol={symbol}', " +
+                "or use mt_exchange_funding_rate for a one-shot snapshot.");
         }
 
         string funding = DateTimeOffset.FromUnixTimeMilliseconds(markPrice.fundingNextTime).UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss");
@@ -484,7 +491,10 @@ public sealed class MarketDataCommand : ICommand
 
         if (!conn.MarketDataStore.TryGetLastKline(klineKey, out KlineUpdateData kl))
         {
-            return CommandResult.Ok($"No kline data for {klineKey}. Subscribe first.");
+            return CommandResult.Fail(
+                $"[{conn.Name}] No kline data for {klineKey} — cache is empty. " +
+                $"Subscribe first with 'mt_marketdata_klines_subscribe symbol={symbol} interval={interval}', " +
+                "or use mt_exchange_klines for a one-shot OHLCV snapshot.");
         }
 
         string openTime = DateTimeOffset.FromUnixTimeMilliseconds(kl.openTime).UtcDateTime.ToString("yyyy-MM-dd HH:mm");
@@ -550,6 +560,70 @@ public sealed class MarketDataCommand : ICommand
             return error!;
         }
 
+        // Per-symbol path: <symbol> [<market>]. Two-tier fallback so the call
+        // returns real price data on every vendor build:
+        //   1. SendTickerPrice24Request — canonical 24h-ticker snapshot
+        //      (works on Binance/OKX; not implemented on BYBIT, which
+        //      throws NotImplementedException on TICKER_PRICE_24_REQUEST).
+        //   2. ExchangeInfoStore.GetTradePair — populated by the long-lived
+        //      exchange-info subscription on connect; carries the same
+        //      last-price/24h-volume fields BYBIT does expose.
+        // Only fail when BOTH paths come back empty.
+        if (parts.Length >= 1 && !LooksLikeMarketType(parts[0]))
+        {
+            string symbol = parts[0].ToUpperInvariant();
+            MarketType marketType = ParseMarketType(parts, 1);
+            TradePairSnapshot? pairInfo = conn.ExchangeInfoStore.GetTradePair(symbol);
+            if (pairInfo != null) { marketType = pairInfo.MarketType; }
+
+            var snap = conn.RequestTicker24(marketType, symbol);
+            var list = snap?.tickerPriceList;
+            if (list != null && list.Count > 0)
+            {
+                var t = list[0];
+                string text1 = $"## Ticker — {conn.Name} {symbol} ({marketType}) | source: ticker24\n\n" +
+                    $"| Symbol | LastPrice | Change | Change% | Open | High | Low | Volume | QuoteVolume |\n" +
+                    $"|--------|-----------|--------|---------|------|------|-----|--------|-------------|\n" +
+                    $"| {t.symbol ?? symbol} | {t.lastPrice} | {t.priceChange} | {t.priceChangePercent:F2}% | " +
+                    $"{t.openPrice} | {t.highPrice} | {t.lowPrice} | {t.volume:N2} | {t.quoteVolume:N2} |\n";
+                return CommandResult.Ok(text1, new
+                {
+                    Server = conn.Name, Symbol = t.symbol ?? symbol, Market = marketType.ToString(),
+                    Source = "ticker24",
+                    LastPrice = t.lastPrice, PriceChange = t.priceChange, PriceChangePercent = t.priceChangePercent,
+                    OpenPrice = t.openPrice, HighPrice = t.highPrice, LowPrice = t.lowPrice,
+                    Volume = t.volume, QuoteVolume = t.quoteVolume,
+                });
+            }
+
+            // ticker24 returned empty — fall back to ExchangeInfoStore.
+            if (pairInfo != null && pairInfo.TickerPrice > 0)
+            {
+                string text2 = $"## Ticker — {conn.Name} {symbol} ({marketType}) | source: exchange-info-cache\n\n" +
+                    $"| Symbol | LastPrice | 24hQuoteVolume | Base | Quote | Tradable |\n" +
+                    $"|--------|-----------|----------------|------|-------|----------|\n" +
+                    $"| {pairInfo.Symbol} | {pairInfo.TickerPrice} | {pairInfo.Qav24h:N0} | " +
+                    $"{pairInfo.BaseAsset} | {pairInfo.QuoteAsset} | {pairInfo.IsTradable} |\n" +
+                    $"\nNote: ticker24 returned empty on this vendor build; reading from the " +
+                    $"exchange-info cache instead (populated by the long-lived exchange-info " +
+                    $"subscription on connect — works on every supported exchange).\n";
+                return CommandResult.Ok(text2, new
+                {
+                    Server = conn.Name, Symbol = pairInfo.Symbol, Market = pairInfo.MarketType.ToString(),
+                    Source = "exchange-info-cache",
+                    LastPrice = pairInfo.TickerPrice, QuoteVolume24h = pairInfo.Qav24h,
+                    BaseAsset = pairInfo.BaseAsset, QuoteAsset = pairInfo.QuoteAsset,
+                    IsTradable = pairInfo.IsTradable,
+                });
+            }
+
+            return CommandResult.Fail(
+                $"[{conn.Name}] No ticker data for {symbol} ({marketType}) on either path: " +
+                "per-symbol ticker24 returned an empty envelope AND the exchange-info cache " +
+                "has no entry for this symbol. The symbol may be invalid for this market, " +
+                "or the connection hasn't received its initial exchange-info snapshot yet.");
+        }
+
         IReadOnlyList<string> subs = conn.MarketDataStore.GetTickerSubscriptions();
         if (subs.Count == 0)
         {
@@ -561,11 +635,16 @@ public sealed class MarketDataCommand : ICommand
             subs = conn.MarketDataStore.GetTickerSubscriptions();
             if (subs.Count == 0)
             {
-                return CommandResult.Ok(
-                    $"No ticker data on {conn.Name} for {primeMarket} — transient subscribe " +
-                    $"yielded {received} entries within timeout. Either the venue is quiet or " +
-                    "the wire is not ready. For a single-pair last-price snapshot without " +
-                    "subscription, use mt_exchange_pair_detail.");
+                // Honest failure — the bulk subscribe really did yield nothing.
+                // Return Fail() so dashboards/tests can see isError=true rather
+                // than treating an empty-data response as success.
+                return CommandResult.Fail(
+                    $"[{conn.Name}] No ticker data for bulk {primeMarket} subscribe — " +
+                    $"transient subscribe yielded {received} entries within timeout. " +
+                    "The venue's bulk ticker stream may not push frames on this build " +
+                    "(known on BYBIT). For a per-symbol last-price snapshot, call " +
+                    "mt_marketdata_ticker symbol=<SYMBOL> (routes to per-symbol ticker24) " +
+                    "or mt_exchange_pair_detail symbol=<SYMBOL>.");
             }
         }
 
@@ -645,6 +724,17 @@ public sealed class MarketDataCommand : ICommand
             }
         }
         return MarketType.FUTURES;
+    }
+
+    /// <summary>Heuristic: a CLI arg is a market type label (FUTURES / SPOT /
+    /// MARGIN / DELIVERY) rather than a symbol. Used by HandleTicker to
+    /// disambiguate "marketdata ticker FUTURES" (bulk-read, market type) from
+    /// "marketdata ticker BTCUSDT" (per-symbol one-shot via ticker24).</summary>
+    private static bool LooksLikeMarketType(string arg)
+    {
+        if (string.IsNullOrEmpty(arg)) return false;
+        string up = arg.ToUpperInvariant();
+        return up == "FUTURES" || up == "SPOT" || up == "MARGIN" || up == "DELIVERY";
     }
 
     private KlineInterval ParseKlineInterval(string value)

@@ -1005,12 +1005,19 @@ public static class ToolRegistry
             Prop("market", "string", "Market type: FUTURES, SPOT (default: FUTURES)"),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_marketdata_ticker",
-            "View ticker data (last price, volume) for all symbols on a market. " +
-            "On a cold cache the tool transparently opens a transient ticker subscribe " +
-            "to prime the store with one snapshot, then unsubscribes — so the first " +
-            "call returns within the wire timeout. For per-symbol last-price without " +
-            "any subscription, mt_exchange_pair_detail is the cheaper single-symbol path.",
-            Prop("market", "string", "Market type: FUTURES, SPOT (default: FUTURES)"),
+            "View ticker data (last price, 24h volume, OHLC) for a symbol or for all " +
+            "symbols on a market. Two modes:\n" +
+            " - symbol=BTCUSDT  → per-symbol one-shot via ticker24; ALWAYS returns " +
+            "fresh data without subscription (uses the same wire path as " +
+            "mt_exchange_ticker24).  This is the path that works on every vendor " +
+            "build, including BYBIT bench where the bulk SUBSCRIBE_TICKER stream " +
+            "does not push frames.\n" +
+            " - no symbol      → bulk cache-read for ALL symbols on the requested " +
+            "market type; auto-primes the cache with a transient subscribe if cold. " +
+            "Returns a clear FAIL response (isError=true) when the bulk subscribe " +
+            "yields no data within the wire timeout.",
+            Prop("symbol", "string", "Trading pair (e.g. BTCUSDT). When set, the tool returns a per-symbol one-shot snapshot."),
+            Prop("market", "string", "Market type: FUTURES, SPOT, MARGIN, DELIVERY (default: FUTURES)"),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_marketdata_ticker_subscribe",
             "Subscribe to real-time ticker updates for ALL symbols on a market.",

@@ -196,7 +196,7 @@
   "mt_marketdata_klines": "marketdata klines <symbol> <interval> <market> @<profile>",
   "mt_marketdata_klines_subscribe": "marketdata klines-subscribe <symbol> <interval> <market> @<profile>",
   "mt_marketdata_klines_unsubscribe": "marketdata klines-unsubscribe <symbol> <interval> <market> @<profile>",
-  "mt_marketdata_ticker": "marketdata ticker <market> @<profile>",
+  "mt_marketdata_ticker": "marketdata ticker <symbol> <market> @<profile>",
   "mt_marketdata_ticker_subscribe": "marketdata ticker-subscribe <market> @<profile>",
   "mt_marketdata_ticker_unsubscribe": "marketdata ticker-unsubscribe <market> @<profile>",
   "mt_alerts_list": "alerts list @<profile>",
