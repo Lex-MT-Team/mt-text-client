@@ -774,6 +774,43 @@ public sealed class OrdersCommand : ICommand
 
         NotificationMessageData? notification = conn.PlaceOrder(orderRequest);
 
+        // BYBIT venue-drift recovery: the venue can reject with
+        // retCode 10001 "position idx not match position mode" when the
+        // account-wide PositionMode flag we derived from disagrees with the
+        // per-symbol mode the venue actually enforces (some venues advertise
+        // an account-wide PositionMode that disagrees with the per-symbol
+        // mode actually enforced). When auto-derive picked the wrong side AND
+        // no override was supplied, retry once with the alternate side.
+        if (notification != null
+            && !hasPositionSideOverride
+            && marketType == MarketType.FUTURES
+            && notification.msgString != null
+            && notification.msgString.IndexOf("position idx not match position mode", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            PositionSide retrySide = positionSide == PositionSide.BOTH
+                ? (side == OrderSideType.BUY ? PositionSide.LONG : PositionSide.SHORT)
+                : PositionSide.BOTH;
+            orderRequest.positionSide = retrySide;
+            NotificationMessageData? retryNotif = conn.PlaceOrder(orderRequest);
+            if (retryNotif != null && retryNotif.IsOk)
+            {
+                notification = retryNotif;
+                positionSide = retrySide;
+            }
+            else if (retryNotif != null)
+            {
+                // Retry also failed — surface BOTH attempts in the message so
+                // the operator can see the venue-drift signal clearly.
+                notification = new NotificationMessageData
+                {
+                    notificationCode = retryNotif.notificationCode,
+                    msgString = $"position_side retry FAILED on both sides. " +
+                        $"first({positionSide})={notification.msgString}; " +
+                        $"second({retrySide})={retryNotif.msgString}",
+                };
+            }
+        }
+
         if (notification == null)
         {
             return CommandResult.Ok($"[{conn.Name}] Place {side} {qty} {symbol}: sent (response timed out).");
