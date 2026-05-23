@@ -103,7 +103,7 @@ public sealed class PerformanceCommand : ICommand
         TradingPerformanceStore? store = conn.TradingPerfStore;
         if (store == null || !store.HasData)
         {
-            return CommandResult.Ok($"[{conn.Name}] No performance data. Use 'perf subscribe' first.");
+            return CommandResult.Ok($"[{conn.Name}] Trading Performance (0 entries).");
         }
 
         IReadOnlyList<TradingPerformanceSnapshot> entries = store.GetAll();

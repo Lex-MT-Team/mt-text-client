@@ -68,7 +68,7 @@ public sealed class GraphToolCommand : ICommand
         var entries = conn.GraphToolStore.GetRecent(count);
         if (entries.Count == 0)
         {
-            return CommandResult.Ok("No graph tool events. Subscribe first with 'graphtool subscribe'.");
+            return CommandResult.Ok($"[{conn.Name}] GraphTool events (0 entries).");
         }
 
         var sb = new StringBuilder();

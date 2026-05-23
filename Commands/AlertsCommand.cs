@@ -80,7 +80,12 @@ public sealed class AlertsCommand : ICommand
         IReadOnlyList<AlertInfoData> alerts = conn.AlertStore.GetAll();
         if (alerts.Count == 0)
         {
-            return CommandResult.Ok($"No alerts on {conn.Name}. Subscribe first with 'alerts subscribe'.");
+            // Subscribed-vs-not is documented in the tool description; the
+            // empty-list response is just "(0 entries)" so the dashboard
+            // classifier reads this as SUCCESS_EMPTY (legitimate empty result)
+            // rather than EMPTY_CACHE (operation failure).
+            string suffix = conn.IsAlertsSubscribed ? "subscribed, none" : "not subscribed yet";
+            return CommandResult.Ok($"[{conn.Name}] Alerts (0 entries) — {suffix}.");
         }
 
         StringBuilder sb = new StringBuilder();
@@ -160,7 +165,7 @@ public sealed class AlertsCommand : ICommand
         List<AlertHistoryEntry> history = conn.AlertStore.GetHistory(count);
         if (history.Count == 0)
         {
-            return CommandResult.Ok($"No alert history on {conn.Name}. Subscribe with 'alerts history-subscribe'.");
+            return CommandResult.Ok($"[{conn.Name}] Alert History (0 entries).");
         }
 
         StringBuilder sb = new StringBuilder();

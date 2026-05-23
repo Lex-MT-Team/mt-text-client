@@ -72,7 +72,7 @@ public sealed class AutoBuyCommand : ICommand
         var entries = conn.AutoBuyStore.GetRecent(count);
         if (entries.Count == 0)
         {
-            return CommandResult.Ok("No AutoBuy events. Subscribe first with 'autobuy subscribe'.");
+            return CommandResult.Ok($"[{conn.Name}] AutoBuy events (0 entries).");
         }
 
         var sb = new StringBuilder();

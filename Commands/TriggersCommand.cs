@@ -73,7 +73,7 @@ public sealed class TriggersCommand : ICommand
         var entries = conn.TriggerStore.GetRecent(count);
         if (entries.Count == 0)
         {
-            return CommandResult.Ok("No trigger events received. Subscribe first with 'triggers subscribe'.");
+            return CommandResult.Ok($"[{conn.Name}] Trigger events (0 entries).");
         }
 
         var sb = new StringBuilder();

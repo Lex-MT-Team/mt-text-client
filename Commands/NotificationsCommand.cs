@@ -82,7 +82,7 @@ public sealed class NotificationsCommand : ICommand
         List<NotificationEntry> entries = conn.NotificationStore.GetRecent(count);
         if (entries.Count == 0)
         {
-            return CommandResult.Ok($"No notifications cached for {conn.Name}. Subscribe first with 'notifications subscribe'.");
+            return CommandResult.Ok($"[{conn.Name}] Notifications (0 entries).");
         }
 
         StringBuilder sb = new StringBuilder();

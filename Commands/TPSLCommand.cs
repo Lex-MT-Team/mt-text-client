@@ -119,7 +119,7 @@ public sealed class TPSLCommand : ICommand
         TPSLStore? store = conn.TPSLStore;
         if (store == null || !store.HasData)
         {
-            return CommandResult.Ok($"[{conn.Name}] No TPSL data. Use 'tpsl subscribe' first.");
+            return CommandResult.Ok($"[{conn.Name}] TPSL Positions (0 entries).");
         }
 
         IReadOnlyList<TPSLPositionSnapshot> positions = store.GetAll();
