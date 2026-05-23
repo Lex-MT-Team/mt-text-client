@@ -61,21 +61,48 @@ public sealed class CommandRegistry
     }
 
     /// <summary>
-    /// Simple command line parser that handles quoted strings.
+    /// Simple command line parser that handles quoted strings and embedded
+    /// JSON payloads. Outside a JSON block, a bare " is a quote-toggle that
+    /// disables space-splitting (so 'algos start "my algo name"' yields one
+    /// arg). Inside a {...} or [...] block (depth tracked across the input),
+    /// quotes are preserved literally and spaces are non-splitting — that
+    /// keeps JSON args like {"k":"v"} intact across the MCP→REPL boundary,
+    /// where the McpServer interpolates JSON dataJson values verbatim into
+    /// a REPL command line.
     /// </summary>
     private static string[] ParseCommandLine(string input)
     {
         var parts = new List<string>();
         var current = new System.Text.StringBuilder();
         bool inQuotes = false;
+        int braceDepth = 0;
 
         foreach (char c in input)
         {
             if (c == '"')
             {
-                inQuotes = !inQuotes;
+                if (braceDepth > 0)
+                {
+                    // Inside a JSON block: preserve the quote character as-is
+                    // so the resulting token is still parseable JSON.
+                    current.Append(c);
+                }
+                else
+                {
+                    inQuotes = !inQuotes;
+                }
             }
-            else if (c == ' ' && !inQuotes)
+            else if ((c == '{' || c == '[') && !inQuotes)
+            {
+                braceDepth++;
+                current.Append(c);
+            }
+            else if ((c == '}' || c == ']') && !inQuotes && braceDepth > 0)
+            {
+                braceDepth--;
+                current.Append(c);
+            }
+            else if (c == ' ' && !inQuotes && braceDepth == 0)
             {
                 if (current.Length > 0)
                 {

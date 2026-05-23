@@ -394,11 +394,34 @@ public sealed class ExchangeCommand : ICommand
             });
         if (result.tickerPriceList == null || result.tickerPriceList.Count == 0)
         {
-            return CommandResult.Ok(
-                $"[{conn.Name}] No ticker data for {symbol}. " +
-                "The one-shot ticker24 API may not respond on this MTCore version. " +
-                "Use mt_marketdata_ticker_subscribe + mt_marketdata_ticker for live price data.",
-                new { Server = conn.Name, Symbol = symbol, Tickers = new List<object>() });
+            // ticker24 is NotImplemented on some venue/MTCore combinations
+            // (notably BYBIT bench). Fall back to ExchangeInfoStore, which
+            // is populated by the long-lived exchange-info subscription on
+            // connect and carries the same last-price + 24h-volume fields.
+            if (pairInfo != null && pairInfo.TickerPrice > 0)
+            {
+                string fallbackText = $"[{conn.Name}] 24h Ticker for {symbol} (source: exchange-info-cache):\n" +
+                    $"  Last Price: {pairInfo.TickerPrice}\n" +
+                    $"  24h Quote Volume: {pairInfo.Qav24h:N0}\n" +
+                    $"  Base: {pairInfo.BaseAsset} | Quote: {pairInfo.QuoteAsset}\n" +
+                    $"  Tradable: {pairInfo.IsTradable}\n" +
+                    $"  Note: per-symbol ticker24 returned empty on this vendor build; " +
+                    $"reading from the exchange-info cache instead.";
+                return CommandResult.Ok(fallbackText, new
+                {
+                    Server = conn.Name, Symbol = pairInfo.Symbol, MarketType = pairInfo.MarketType.ToString(),
+                    Source = "exchange-info-cache",
+                    LastPrice = pairInfo.TickerPrice, QuoteVolume24h = pairInfo.Qav24h,
+                    BaseAsset = pairInfo.BaseAsset, QuoteAsset = pairInfo.QuoteAsset,
+                    IsTradable = pairInfo.IsTradable,
+                });
+            }
+            return CommandResult.Fail(
+                $"[{conn.Name}] No ticker data for {symbol} on either path: per-symbol " +
+                "ticker24 returned an empty envelope AND the exchange-info cache has no " +
+                "entry for this symbol. Use mt_marketdata_ticker_subscribe + " +
+                "mt_marketdata_ticker for live price data, or mt_exchange_pair_detail " +
+                "for one-shot symbol metadata.");
         }
 
         var tickers = new List<object>(result.tickerPriceList.Count);

@@ -99,6 +99,27 @@
           ContinueOnError="WarnAndContinue" />
   </Target>
 
+  <!-- Vendored algoConfigs.json template file.
+       mt_algos_create is clone-from-existing only: it scans the target
+       AlgoStore for a matching group_type and clones from there. On a
+       freshly-provisioned bench with zero algos loaded there is nothing
+       to clone, so we ship a starter template file the helper can fall
+       back to.
+
+       templates/algoConfigs.json — 5 canonical algorithm templates (one
+       per group_type: SG=Shots, AG=Averages, MW=Markets Watcher,
+       MS=Markets Saver, VG=Vector Group), derived from a known-good
+       algorithms.config with profile-specific IDs and names sanitized
+       to generic labels. Copied flat into the build output so
+       mt_import_templates finds it at AppContext.BaseDirectory on
+       first call, with no per-user setup required. -->
+  <ItemGroup>
+    <Content Include="templates/algoConfigs.json">
+      <Link>algoConfigs.json</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <!-- BouncyCastle.Cryptography is the AES256 implementation that

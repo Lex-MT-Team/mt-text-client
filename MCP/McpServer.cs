@@ -445,6 +445,27 @@ public sealed class McpServer
         return ""; // silently ignore garbage; sanitizer handles \r/\n already
     }
 
+    /// <summary>Two-mode dispatch for mt_marketdata_ticker:
+    ///   - symbol present → "marketdata ticker &lt;SYMBOL&gt; [&lt;MARKET&gt;]"
+    ///     routes HandleTicker through the per-symbol one-shot ticker24 path
+    ///     which works on every vendor build.
+    ///   - no symbol     → "marketdata ticker [&lt;MARKET&gt;]" bulk cache-read
+    ///     for ALL symbols on the requested market type.</summary>
+    private static string BuildMarketdataTicker(JObject arguments, string profileSuffix)
+    {
+        string symbol = (arguments["symbol"]?.Value<string>() ?? "").Trim();
+        string market = (arguments["market"]?.Value<string>() ?? "").Trim();
+        if (symbol.Length > 0)
+        {
+            return market.Length > 0
+                ? $"marketdata ticker {symbol} {market}{profileSuffix}"
+                : $"marketdata ticker {symbol}{profileSuffix}";
+        }
+        return market.Length > 0
+            ? $"marketdata ticker {market}{profileSuffix}"
+            : $"marketdata ticker{profileSuffix}";
+    }
+
     // Confirm checks for destructive tools are handled by the registry-driven
     // ConfirmGate.IsConfirmRequired() (Core/ConfirmGate.cs). Tools like
     // mt_algos_start_all, mt_algos_stop_all, mt_fleet_disconnect declare
@@ -771,7 +792,7 @@ public sealed class McpServer
             "mt_marketdata_klines" => $"marketdata klines {arguments["symbol"]?.Value<string>() ?? ""} {arguments["interval"]?.Value<string>() ?? "1m"} {arguments["market"]?.Value<string>() ?? ""}{profileSuffix}",
             "mt_marketdata_klines_subscribe" => $"marketdata klines-subscribe {arguments["symbol"]?.Value<string>() ?? ""} {arguments["interval"]?.Value<string>() ?? "1m"} {arguments["market"]?.Value<string>() ?? ""}{profileSuffix}",
             "mt_marketdata_klines_unsubscribe" => $"marketdata klines-unsubscribe {arguments["symbol"]?.Value<string>() ?? ""} {arguments["interval"]?.Value<string>() ?? "1m"} {arguments["market"]?.Value<string>() ?? ""}{profileSuffix}",
-            "mt_marketdata_ticker" => $"marketdata ticker {arguments["market"]?.Value<string>() ?? ""}{profileSuffix}",
+            "mt_marketdata_ticker" => BuildMarketdataTicker(arguments, profileSuffix),
             "mt_marketdata_ticker_subscribe" => $"marketdata ticker-subscribe {arguments["market"]?.Value<string>() ?? ""}{profileSuffix}",
             "mt_marketdata_ticker_unsubscribe" => $"marketdata ticker-unsubscribe {arguments["market"]?.Value<string>() ?? ""}{profileSuffix}",
 
