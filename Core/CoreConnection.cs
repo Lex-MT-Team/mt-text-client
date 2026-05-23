@@ -1690,6 +1690,54 @@ public sealed class CoreConnection : IDisposable
             _tickerSubscriptionId);
     }
 
+    /// <summary>Snapshot-prime the ticker cache for a market without leaving
+    /// a long-lived subscription open. Opens a transient SendTickerSubscribe,
+    /// awaits the first TickerListData drop (which carries every symbol's
+    /// last price), feeds it into MarketDataStore via UpdateTicker, then
+    /// unsubscribes. Returns the count of tickers received (0 = wire still
+    /// not responding within timeoutMs).
+    ///
+    /// Used by HandleTicker as the fallback when the cache is empty — the
+    /// long-lived subscribe is best-effort and never warms a cold cache
+    /// quickly, so an explicit prime is the only path to a one-shot snapshot.</summary>
+    public int ForceRefreshTicker(ExchangeType exchange, MarketType marketType, int timeoutMs = 5_000)
+    {
+        if (_udpClient == null) { return 0; }
+        int subId = -1;
+        var done = new System.Threading.ManualResetEventSlim(false);
+        int received = 0;
+        try
+        {
+            subId = _udpClient.SendTickerSubscribe(
+                exchange, marketType,
+                (NetworkMessageType _, NetworkData data) =>
+                {
+                    if (data is TickerListData tickerList && tickerList.tickers != null)
+                    {
+                        foreach (KeyValuePair<string, TickerUpdateData> kvp in tickerList.tickers)
+                        {
+                            string key = $"{exchange}:{marketType}:{kvp.Key}";
+                            MarketDataStore.UpdateTicker(key, kvp.Value);
+                            System.Threading.Interlocked.Increment(ref received);
+                        }
+                        done.Set();
+                    }
+                },
+                -1);
+            done.Wait(timeoutMs);
+            return received;
+        }
+        finally
+        {
+            if (subId != -1 && _udpClient != null)
+            {
+                try { _udpClient.SendTickerUnsubscribe(ref subId, exchange, marketType); }
+                catch { /* best-effort */ }
+            }
+            done.Dispose();
+        }
+    }
+
     public void UnsubscribeTicker(ExchangeType exchange, MarketType marketType)
     {
         if (_udpClient != null && _tickerSubscriptionId != 0)
