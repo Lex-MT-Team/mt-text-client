@@ -2055,14 +2055,30 @@ public sealed class AlgosCommand : ICommand
                 source = a;
                 break;
             }
-            if (source == null)
-                return CommandResult.Fail(
-                    $"template_not_available: no algorithm of group_type={wantGroupType}" +
-                    (sigFilter != null ? $" + signature={sigFilter}" : "") +
-                    $" found on {conn.Name}.  " +
-                    "Either (a) specify --source-id N to clone a specific algorithm, " +
-                    "or (b) create at least one algorithm of this type manually via the GUI / paste-from-clipboard first.");
-            presetSource = $"auto_discover_on_target_profile (group_type={wantGroupType}, signature={sigFilter ?? source.signature ?? "?"}, sample_id={source.id})";
+            if (source != null)
+            {
+                presetSource = $"auto_discover_on_target_profile (group_type={wantGroupType}, signature={sigFilter ?? source.signature ?? "?"}, sample_id={source.id})";
+            }
+            else
+            {
+                // Fall back to the bundled algoConfigs.json templates. The vendor
+                // mtclient ships a templates file with its desktop distribution
+                // and clones from it on first use — same pattern here. Without
+                // this fallback a freshly-provisioned bench (no algos loaded
+                // yet) had no MCP path to create the first algo at all.
+                source = TryLoadAlgoTemplateFromConfig(wantGroupType, sigFilter, out var templatePath);
+                if (source == null)
+                {
+                    return CommandResult.Fail(
+                        $"template_not_available: no algorithm of group_type={wantGroupType}" +
+                        (sigFilter != null ? $" + signature={sigFilter}" : "") +
+                        $" found on {conn.Name} and no matching template in algoConfigs.json. " +
+                        "Either (a) specify --source-id N to clone a specific algorithm, " +
+                        "(b) create at least one algorithm of this type manually via the GUI / paste-from-clipboard first, " +
+                        "or (c) drop an algoConfigs.json template at <app-dir>/algoConfigs.json, ~/Documents/algoConfigs.json, or /tmp/algoConfigs.json.");
+                }
+                presetSource = $"clone_from_template_file (path={templatePath}, group_type={wantGroupType}, signature={source.signature ?? "?"})";
+            }
         }
 
         // Clone the source — preserves whole argsJson verbatim (Layer 1 + 3).
@@ -2254,6 +2270,74 @@ public sealed class AlgosCommand : ICommand
         foreach (var p in args.Properties())
             if (!KnownArgKeys.Contains(p.Name)) count++;
         return count;
+    }
+
+    // Bundled-template fallback for mt_algos_create. Searches the same three
+    // paths as Commands.ImportCommand.FindAlgoConfigs:
+    //   1. <app-dir>/algoConfigs.json   — shipped with the build output via .csproj
+    //   2. ~/Documents/algoConfigs.json — operator-supplied override
+    //   3. <temp>/algoConfigs.json      — ad-hoc location
+    // Returns an AlgorithmData populated from the template's groupType/signature/
+    // name and argsJson (the latter serialized verbatim from the template's args
+    // object). Caller treats the returned AlgorithmData exactly like a source
+    // cloned from AlgoStore — same downstream pipeline.
+    private static AlgorithmData? TryLoadAlgoTemplateFromConfig(
+        AlgorithmGroupType wantGroupType, string? sigFilter, out string? configPath)
+    {
+        configPath = null;
+        string[] candidates = new[]
+        {
+            System.IO.Path.Combine(AppContext.BaseDirectory, "algoConfigs.json"),
+            System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Documents", "algoConfigs.json"),
+            System.IO.Path.Combine(System.IO.Path.GetTempPath(), "algoConfigs.json"),
+        };
+        string? found = null;
+        foreach (var c in candidates) { if (System.IO.File.Exists(c)) { found = c; break; } }
+        if (found == null) { return null; }
+
+        try
+        {
+            string json = System.IO.File.ReadAllText(found);
+            JObject obj = JObject.Parse(json);
+            JArray? algos = obj["algorithms"] as JArray;
+            if (algos == null) { return null; }
+
+            foreach (JToken token in algos)
+            {
+                if (token is not JObject t) continue;
+                int groupTypeInt = t["groupType"]?.Value<int>() ?? -1;
+                if ((int)wantGroupType != groupTypeInt) continue;
+                if (sigFilter != null)
+                {
+                    string templateSig = t["signature"]?.Value<string>() ?? "";
+                    if (!string.Equals(templateSig, sigFilter, StringComparison.OrdinalIgnoreCase)) continue;
+                }
+
+                // Materialise as AlgorithmData. argsJson is the serialized form
+                // of the template's 'args' object; AlgorithmDialogVE in the
+                // vendor UI deserializes the same shape via JsonConvert.
+                var data = new AlgorithmData
+                {
+                    id = -1,
+                    name = t["name"]?.Value<string>() ?? "Template",
+                    signature = t["signature"]?.Value<string>() ?? "",
+                    groupType = (AlgorithmGroupType)groupTypeInt,
+                    isTradingAlgo = t["isTradingAlgo"]?.Value<bool>() ?? false,
+                    description = t["description"]?.Value<string>() ?? "",
+                    argsJson = (t["args"] as JObject)?.ToString(Newtonsoft.Json.Formatting.None) ?? "{}",
+                    isRunning = false,
+                    isProcessing = false,
+                };
+                configPath = found;
+                return data;
+            }
+        }
+        catch
+        {
+            // Best-effort. If the file is corrupt the caller falls through to
+            // its existing template_not_available error.
+        }
+        return null;
     }
 
     #endregion
