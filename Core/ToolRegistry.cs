@@ -934,7 +934,9 @@ public static class ToolRegistry
             "Show all active market data subscriptions (trades, depth, mark price, klines, tickers).",
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_marketdata_trades",
-            "View recent trade data for a symbol. Requires active trade subscription.",
+            "View recent trade data for a symbol. Requires active trade subscription " +
+            "(use mt_marketdata_trades_subscribe first, or mt_exchange_trades for a " +
+            "one-shot snapshot without subscription).",
             Prop("symbol", "string", "Trading pair (e.g. BTCUSDT)", required: true),
             Prop("market", "string", "Market type: FUTURES, SPOT (default: FUTURES)"),
             Prop("profile", "string", "Target server profile"));
@@ -949,7 +951,9 @@ public static class ToolRegistry
             Prop("market", "string", "Market type: FUTURES, SPOT (default: FUTURES)"),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_marketdata_depth",
-            "View order book (top 10 bids/asks) for a symbol. Requires active depth subscription.",
+            "View order book (top 10 bids/asks) for a symbol. Requires active depth subscription " +
+            "(use mt_marketdata_depth_subscribe first; there is no one-shot snapshot equivalent " +
+            "in the exchange family for orderbook depth).",
             Prop("symbol", "string", "Trading pair (e.g. BTCUSDT)", required: true),
             Prop("market", "string", "Market type: FUTURES, SPOT (default: FUTURES)"),
             Prop("profile", "string", "Target server profile"));
@@ -964,7 +968,9 @@ public static class ToolRegistry
             Prop("market", "string", "Market type: FUTURES, SPOT (default: FUTURES)"),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_marketdata_markprice",
-            "View mark price, funding rate, and next funding time for a symbol.",
+            "View mark price, funding rate, and next funding time for a symbol. Requires " +
+            "active mark price subscription (use mt_marketdata_markprice_subscribe first, " +
+            "or mt_exchange_funding_rate for a one-shot snapshot without subscription).",
             Prop("symbol", "string", "Trading pair (e.g. BTCUSDT)", required: true),
             Prop("market", "string", "Market type: FUTURES, SPOT (default: FUTURES)"),
             Prop("profile", "string", "Target server profile"));
@@ -979,7 +985,9 @@ public static class ToolRegistry
             Prop("market", "string", "Market type: FUTURES, SPOT (default: FUTURES)"),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_marketdata_klines",
-            "View last kline (candlestick) data for a symbol and interval. Requires active kline subscription.",
+            "View last kline (candlestick) data for a symbol and interval. Requires active " +
+            "kline subscription (use mt_marketdata_klines_subscribe first, or mt_exchange_klines " +
+            "for a one-shot OHLCV snapshot without subscription).",
             Prop("symbol", "string", "Trading pair (e.g. BTCUSDT)", required: true),
             Prop("interval", "string", "Kline interval: 1s, 1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 6h, 12h, 1d, 3d, 1w, 1mo", required: true),
             Prop("market", "string", "Market type: FUTURES, SPOT (default: FUTURES)"),
@@ -997,7 +1005,11 @@ public static class ToolRegistry
             Prop("market", "string", "Market type: FUTURES, SPOT (default: FUTURES)"),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_marketdata_ticker",
-            "View ticker data (last price, volume) for all symbols. Requires active ticker subscription.",
+            "View ticker data (last price, volume) for all symbols on a market. " +
+            "On a cold cache the tool transparently opens a transient ticker subscribe " +
+            "to prime the store with one snapshot, then unsubscribes — so the first " +
+            "call returns within the wire timeout. For per-symbol last-price without " +
+            "any subscription, mt_exchange_pair_detail is the cheaper single-symbol path.",
             Prop("market", "string", "Market type: FUTURES, SPOT (default: FUTURES)"),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_marketdata_ticker_subscribe",

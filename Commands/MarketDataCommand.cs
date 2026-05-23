@@ -553,7 +553,20 @@ public sealed class MarketDataCommand : ICommand
         IReadOnlyList<string> subs = conn.MarketDataStore.GetTickerSubscriptions();
         if (subs.Count == 0)
         {
-            return CommandResult.Ok($"No ticker data on {conn.Name}. Subscribe first.");
+            // Cold cache — open a transient ticker subscribe to prime the store
+            // with a one-shot snapshot, then re-read. Matches the cache-prime
+            // pattern used by ForceRefreshAlgos / ForceRefreshAccount.
+            MarketType primeMarket = ParseMarketType(parts, 0);
+            int received = conn.ForceRefreshTicker(conn.Profile.Exchange, primeMarket);
+            subs = conn.MarketDataStore.GetTickerSubscriptions();
+            if (subs.Count == 0)
+            {
+                return CommandResult.Ok(
+                    $"No ticker data on {conn.Name} for {primeMarket} — transient subscribe " +
+                    $"yielded {received} entries within timeout. Either the venue is quiet or " +
+                    "the wire is not ready. For a single-pair last-price snapshot without " +
+                    "subscription, use mt_exchange_pair_detail.");
+            }
         }
 
         StringBuilder sb = new StringBuilder();

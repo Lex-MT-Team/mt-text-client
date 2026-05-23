@@ -1062,19 +1062,19 @@ MIT — see [LICENSE](LICENSE).
 | `mt_notifications_config_descriptors` | List every toggleable notification descriptor with its group, id, data type, and per-target default-enabled flags. | — | — |
 | `mt_notifications_config_capabilities` | Combined notifications-config envelope: groups + targets + descriptors + a mutation_supported flag and an honest notice when notification-config mutation is not yet available. | — | — |
 | `mt_marketdata_status` | Show all active market data subscriptions (trades, depth, mark price, klines, tickers). | — | — |
-| `mt_marketdata_trades` | View recent trade data for a symbol. Requires active trade subscription. | `symbol` | — |
+| `mt_marketdata_trades` | View recent trade data for a symbol. Requires active trade subscription (use mt_marketdata_trades_subscribe first, or mt_exchange_trades for a one-shot snapshot without subscription). | `symbol` | — |
 | `mt_marketdata_trades_subscribe` | Subscribe to real-time trade feed for a symbol. | `symbol` | — |
 | `mt_marketdata_trades_unsubscribe` | Unsubscribe from trade feed for a symbol. | `symbol` | — |
-| `mt_marketdata_depth` | View order book (top 10 bids/asks) for a symbol. Requires active depth subscription. | `symbol` | — |
+| `mt_marketdata_depth` | View order book (top 10 bids/asks) for a symbol. Requires active depth subscription (use mt_marketdata_depth_subscribe first; there is no one-shot snapshot equivalent in the exchange family for orderbook depth). | `symbol` | — |
 | `mt_marketdata_depth_subscribe` | Subscribe to real-time order book (depth) feed for a symbol. | `symbol` | — |
 | `mt_marketdata_depth_unsubscribe` | Unsubscribe from depth feed for a symbol. | `symbol` | — |
-| `mt_marketdata_markprice` | View mark price, funding rate, and next funding time for a symbol. | `symbol` | — |
+| `mt_marketdata_markprice` | View mark price, funding rate, and next funding time for a symbol. Requires active mark price subscription (use mt_marketdata_markprice_subscribe first, or mt_exchange_funding_rate for a one-shot snapshot without subscription). | `symbol` | — |
 | `mt_marketdata_markprice_subscribe` | Subscribe to real-time mark price and funding rate updates for a symbol. | `symbol` | — |
 | `mt_marketdata_markprice_unsubscribe` | Unsubscribe from mark price feed for a symbol. | `symbol` | — |
-| `mt_marketdata_klines` | View last kline (candlestick) data for a symbol and interval. Requires active kline subscription. | `symbol`, `interval` | — |
+| `mt_marketdata_klines` | View last kline (candlestick) data for a symbol and interval. Requires active kline subscription (use mt_marketdata_klines_subscribe first, or mt_exchange_klines for a one-shot OHLCV snapshot without subscription). | `symbol`, `interval` | — |
 | `mt_marketdata_klines_subscribe` | Subscribe to real-time kline (candlestick) updates for a symbol and interval. | `symbol`, `interval` | — |
 | `mt_marketdata_klines_unsubscribe` | Unsubscribe from kline feed for a symbol and interval. | `symbol`, `interval` | — |
-| `mt_marketdata_ticker` | View ticker data (last price, volume) for all symbols. Requires active ticker subscription. | — | — |
+| `mt_marketdata_ticker` | View ticker data (last price, volume) for all symbols on a market. On a cold cache the tool transparently opens a transient ticker subscribe to prime the store with one snapshot, then unsubscribes — so the first call returns within the wire timeout. For per-symbol last-price without any subscription, mt_exchange_pair_detail is the cheaper single-symbol path. | — | — |
 | `mt_marketdata_ticker_subscribe` | Subscribe to real-time ticker updates for ALL symbols on a market. | — | — |
 | `mt_marketdata_ticker_unsubscribe` | Unsubscribe from ticker feed. | — | — |
 | `mt_alerts_list` | List active price alerts with conditions and status. | — | — |
