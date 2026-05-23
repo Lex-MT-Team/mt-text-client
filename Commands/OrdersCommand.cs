@@ -629,17 +629,73 @@ public sealed class OrdersCommand : ICommand
         // Determine position side: explicit override > auto-derive (FUTURES + HEDGE only).
         // SPOT / MARGIN orders always use BOTH on Bybit even if the account is
         // flagged HEDGE — the hedge flag only governs derivatives.
-        PositionSide positionSide = PositionSide.BOTH;
+        //
+        // The auto-derive path used to default to BOTH when AccountStore was cold
+        // (no AccountInfoData yet on a fresh connect), which is silently WRONG on
+        // a HEDGE-mode account: BYBIT rejects with "position idx not match position
+        // mode" (retCode 10001). Prime the cache via ForceRefreshAccount on the
+        // first auto-derive miss so the second read returns the real mode, and
+        // surface a clear error if the prime still doesn't yield a snapshot.
+        PositionSide positionSide;
         if (hasPositionSideOverride)
         {
             positionSide = positionSideOverride;
         }
-        else if (marketType == MarketType.FUTURES)
+        else if (marketType != MarketType.FUTURES)
         {
-            AccountInfoSnapshot? accountInfo = conn.AccountStore.GetAccountInfo();
-            if (accountInfo != null && accountInfo.PositionMode.ToString().Contains("HEDGE", StringComparison.OrdinalIgnoreCase))
+            // Spot / margin: position mode does not apply.
+            positionSide = PositionSide.BOTH;
+        }
+        else
+        {
+            // Auto-derive priority:
+            //   1. An open position for this symbol — match its positionSide
+            //      (the venue's own state of truth; survives mismatches between
+            //      MTCore's reported PositionMode and the per-symbol mode that
+            //      BYBIT may have overridden).
+            //   2. The per-market AccountInfo.PositionMode snapshot.
+            //
+            // BYBIT sends one AccountInfoData drop per market; the SPOT drop's
+            // positionModeType is meaningless and defaults to HEDGE=0. Use the
+            // per-market accessor so we read FUTURES positionMode, not whichever
+            // market happened to land last in the long-lived store.
+            PositionSnapshot? openForSymbol = null;
+            foreach (var p in conn.AccountStore.GetPositions(openOnly: true))
             {
-                positionSide = side == OrderSideType.BUY ? PositionSide.LONG : PositionSide.SHORT;
+                if (p.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase) && p.MarketType == marketType)
+                {
+                    openForSymbol = p;
+                    break;
+                }
+            }
+            if (openForSymbol != null)
+            {
+                positionSide = openForSymbol.PositionSide;
+            }
+            else
+            {
+                AccountInfoSnapshot? accountInfo = conn.AccountStore.GetAccountInfo(marketType);
+                if (accountInfo == null)
+                {
+                    conn.ForceRefreshAccount();
+                    accountInfo = conn.AccountStore.GetAccountInfo(marketType);
+                }
+
+                if (accountInfo == null)
+                {
+                    return CommandResult.Fail(
+                        $"[{conn.Name}] Cannot auto-derive position_side for {marketType}: " +
+                        "AccountInfo cache is empty for that market and the force-refresh " +
+                        "transient subscribe yielded no AccountInfoData. Pass --position-side " +
+                        "BOTH|LONG|SHORT explicitly, or retry once the connection has settled.");
+                }
+
+                positionSide = accountInfo.PositionMode switch
+                {
+                    PositionModeType.HEDGE   => (side == OrderSideType.BUY ? PositionSide.LONG : PositionSide.SHORT),
+                    PositionModeType.ONE_WAY => PositionSide.BOTH,
+                    _                        => PositionSide.BOTH,
+                };
             }
         }
 
@@ -1029,11 +1085,14 @@ public sealed class OrdersCommand : ICommand
         // Prime the AccountStore on first call so a cold-connect read still
         // returns the real mode rather than null. ForceRefreshAccount opens a
         // transient UDS subscribe and returns once AccountInfoData arrives.
-        AccountInfoSnapshot? snapshot = conn.AccountStore.GetAccountInfo();
+        // Bybit's position mode is account-wide, but the FUTURES drop is the
+        // one that carries the meaningful value (SPOT drop reports HEDGE=0
+        // default for an unused field). Read the FUTURES snapshot specifically.
+        AccountInfoSnapshot? snapshot = conn.AccountStore.GetAccountInfo(MarketType.FUTURES);
         if (snapshot == null)
         {
             conn.ForceRefreshAccount();
-            snapshot = conn.AccountStore.GetAccountInfo();
+            snapshot = conn.AccountStore.GetAccountInfo(MarketType.FUTURES);
         }
 
         if (snapshot == null)
