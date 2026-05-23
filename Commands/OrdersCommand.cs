@@ -39,7 +39,7 @@ public sealed class OrdersCommand : ICommand
 
     public string Name => "orders";
     public string Description => "Order & position management (place, cancel, close, leverage, margin, transfer)";
-    public string Usage => @"orders list|cancel|cancel-all|close|close-all|positions|place|move|set-leverage|set-margin-type|set-position-mode|get-position-mode|panic-sell|change-margin|transfer";
+    public string Usage => @"orders list|cancel|cancel-all|close|close-all|positions|place|move|set-leverage|set-margin-type|set-position-mode|get-position-mode|get-position-mode-account|panic-sell|change-margin|transfer";
 
     public CommandResult Execute(string[] args)
     {
@@ -85,6 +85,7 @@ public sealed class OrdersCommand : ICommand
             "set-margin-type" => SetMarginType(subArgs, targetProfile, confirmFlag),
             "set-position-mode" => SetPositionMode(subArgs, targetProfile, confirmFlag),
             "get-position-mode" => GetPositionMode(subArgs, targetProfile),
+            "get-position-mode-account" => GetPositionModeAccount(targetProfile),
             "panic-sell" => PanicSell(subArgs, targetProfile, confirmFlag),
             "change-margin" => ChangeMargin(subArgs, targetProfile, confirmFlag),
             "transfer" => TransferFunds(subArgs, targetProfile, confirmFlag),
@@ -978,6 +979,16 @@ public sealed class OrdersCommand : ICommand
             return CommandResult.Fail("Usage: orders get-position-mode <symbol>");
         }
 
+        // Bybit's vendor SDK does not implement GetPositionModeType per symbol —
+        // a SendGetPositionModeType call times out (5+s). Redirect callers
+        // to the account-wide tool instead of paying that timeout.
+        if (conn.Profile.Exchange == ExchangeType.BYBIT)
+        {
+            return CommandResult.Fail(
+                $"[{conn.Name}] Position mode on Bybit is account-wide, not per-symbol. " +
+                "Use 'orders get-position-mode-account' (MCP: mt_orders_get_position_mode_account) instead.");
+        }
+
         string? symbol = args[0].ToUpperInvariant();
         MarketType marketType = MarketType.FUTURES;
         TradePairSnapshot? pairInfo = conn.ExchangeInfoStore.GetTradePair(symbol);
@@ -995,6 +1006,48 @@ public sealed class OrdersCommand : ICommand
 
         return CommandResult.Ok($"[{conn.Name}] Position mode for {symbol}: {notification}",
             new { Server = conn.Name, Symbol = symbol, Response = notification });
+    }
+
+    private CommandResult GetPositionModeAccount(string? targetProfile)
+    {
+        CoreConnection? conn = ResolveConnection(targetProfile, out CommandResult? error);
+        if (conn == null)
+        {
+            return error!;
+        }
+
+        // Per-symbol exchanges: redirect to the symbol-keyed tool. The account-wide
+        // snapshot's PositionMode field is not meaningful on Binance/OKX (mode
+        // varies per pair), so we don't return a value that would mislead.
+        if (conn.Profile.Exchange != ExchangeType.BYBIT)
+        {
+            return CommandResult.Fail(
+                $"[{conn.Name}] Position mode on {conn.Profile.Exchange} is per-symbol, not account-wide. " +
+                "Use 'orders get-position-mode <symbol>' (MCP: mt_orders_get_position_mode) instead.");
+        }
+
+        // Prime the AccountStore on first call so a cold-connect read still
+        // returns the real mode rather than null. ForceRefreshAccount opens a
+        // transient UDS subscribe and returns once AccountInfoData arrives.
+        AccountInfoSnapshot? snapshot = conn.AccountStore.GetAccountInfo();
+        if (snapshot == null)
+        {
+            conn.ForceRefreshAccount();
+            snapshot = conn.AccountStore.GetAccountInfo();
+        }
+
+        if (snapshot == null)
+        {
+            return CommandResult.Fail(
+                $"[{conn.Name}] Position mode unknown — AccountInfo cache is empty and the " +
+                "force-refresh transient subscribe did not yield a snapshot. Try again after the " +
+                "connection settles.");
+        }
+
+        string mode = snapshot.PositionMode.ToString();
+        return CommandResult.Ok(
+            $"[{conn.Name}] Account-wide position mode: {mode}",
+            new { Server = conn.Name, Mode = mode, Exchange = conn.Profile.Exchange.ToString() });
     }
 
     private CommandResult PanicSell(string[] args, string? targetProfile, bool confirmed)
