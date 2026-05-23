@@ -46,7 +46,15 @@ public sealed class AccountStore
     private readonly ConcurrentDictionary<string, PositionData> _positionsRaw = new();
 
     // ── Account Info ─────────────────────────────────────────
+    // Most-recent snapshot — overwritten on every AccountInfoData drop.
+    // Useful for "what did we just see" queries; do NOT use for market-specific
+    // fields like PositionMode (BYBIT sends one drop per market, and the SPOT
+    // drop's positionModeType is meaningless and defaults to HEDGE=0).
     private volatile AccountInfoSnapshot? _accountInfo;
+    // Per-market snapshots — preserved across drops so callers can look up the
+    // mode for the specific MarketType they care about (e.g. FUTURES position
+    // mode for order placement).
+    private readonly ConcurrentDictionary<MarketType, AccountInfoSnapshot> _accountInfoByMarket = new();
 
     // ── Executions (recent fills) ────────────────────────────
     // Ring buffer of recent executions for display
@@ -162,6 +170,7 @@ public sealed class AccountStore
         }
 
         _accountInfo = snapshot;
+        _accountInfoByMarket[info.marketType] = snapshot;
         LastAccountInfoUpdate = DateTime.UtcNow;
         OnAccountInfoChanged?.Invoke();
     }
@@ -453,6 +462,16 @@ public sealed class AccountStore
     // ── Queries ──────────────────────────────────────────────
 
     public AccountInfoSnapshot? GetAccountInfo() => _accountInfo;
+
+    /// <summary>Get the most-recent snapshot for a SPECIFIC market type.
+    /// BYBIT sends one AccountInfoData drop per market, and the SPOT drop's
+    /// positionModeType is meaningless (defaults to HEDGE=0). Callers reading
+    /// position-mode-sensitive fields MUST use this accessor, not the
+    /// market-agnostic GetAccountInfo().</summary>
+    public AccountInfoSnapshot? GetAccountInfo(MarketType marketType)
+    {
+        return _accountInfoByMarket.TryGetValue(marketType, out var snap) ? snap : null;
+    }
 
     /// <summary>Get all balances, optionally excluding dust.</summary>
     public IReadOnlyList<BalanceSnapshot> GetBalances(bool includeDust = false)
