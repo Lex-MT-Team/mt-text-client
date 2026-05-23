@@ -1,6 +1,6 @@
 {
   "_comment": "Locked baseline as of repo @ 0604e31. PR-gate CI fails if any name disappears or any 'required' array shrinks. Generated from tools_catalog_v3.json.",
-  "tool_count_minimum": 258,
+  "tool_count_minimum": 259,
   "tools": [
     {
       "name": "mt_account_balance",
@@ -922,6 +922,10 @@
       "required": [
         "symbol"
       ]
+    },
+    {
+      "name": "mt_orders_get_position_mode_account",
+      "required": []
     },
     {
       "name": "mt_orders_join",

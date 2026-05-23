@@ -657,6 +657,7 @@ public sealed class McpServer
             "mt_orders_set_margin_type" => $"orders set-margin-type {arguments["symbol"]?.Value<string>() ?? ""} {arguments["margin_type"]?.Value<string>() ?? ""}{profileSuffix}{confirm}",
             "mt_orders_set_position_mode" => $"orders set-position-mode {arguments["symbol"]?.Value<string>() ?? ""} {arguments["mode"]?.Value<string>() ?? ""}{profileSuffix}{confirm}",
             "mt_orders_get_position_mode" => $"orders get-position-mode {arguments["symbol"]?.Value<string>() ?? ""}{profileSuffix}",
+            "mt_orders_get_position_mode_account" => $"orders get-position-mode-account{profileSuffix}",
             "mt_orders_panic_sell" => $"orders panic-sell {arguments["symbol"]?.Value<string>() ?? ""}{profileSuffix}{confirm}",
             "mt_orders_change_margin" => $"orders change-margin {arguments["symbol"]?.Value<string>() ?? ""} {arguments["position_side"]?.Value<string>() ?? "BOTH"} {arguments["amount"]?.Value<string>() ?? ""} {arguments["action"]?.Value<string>() ?? "add"}{profileSuffix}{confirm}",
             "mt_orders_transfer" => $"orders transfer {arguments["asset"]?.Value<string>() ?? ""} {arguments["amount"]?.Value<string>() ?? ""} {arguments["from"]?.Value<string>() ?? ""} {arguments["to"]?.Value<string>() ?? ""}{profileSuffix}{confirm}",
