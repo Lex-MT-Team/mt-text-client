@@ -446,10 +446,18 @@ public static class ToolRegistry
             Prop("confirm", "boolean", "Must be true to actually change"),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_orders_get_position_mode",
-            "Get current position mode (HEDGE/ONE_WAY) for a symbol. " +
-            "Note: position mode is per-symbol on Binance/OKX but per-account on Bybit; " +
-            "on Bybit the symbol argument is forwarded but does not affect the result.",
-            Prop("symbol", "string", "Symbol (e.g. BTCUSDT) — used by Binance/OKX; ignored by Bybit", required: true),
+            "Get current position mode (HEDGE/ONE_WAY) for a SYMBOL. " +
+            "Per-symbol query — use this on Binance/OKX where position mode is configured per pair. " +
+            "On Bybit, position mode is account-wide and the per-symbol query is not supported by the " +
+            "vendor SDK; this tool returns a clear redirect to mt_orders_get_position_mode_account.",
+            Prop("symbol", "string", "Symbol (e.g. BTCUSDT) — required for per-symbol exchanges (Binance/OKX)", required: true),
+            Prop("profile", "string", "Target server profile"));
+        yield return Tool("mt_orders_get_position_mode_account",
+            "Get current account-wide position mode (HEDGE/ONE_WAY). " +
+            "Use this on Bybit, where position mode is configured per account rather than per symbol. " +
+            "Reads the cached AccountInfo (priming the cache on first call so a cold connect still " +
+            "returns the real mode). On per-symbol exchanges (Binance/OKX) this tool returns a clear " +
+            "redirect to mt_orders_get_position_mode <symbol>.",
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_orders_panic_sell",
             "EMERGENCY: Market-close all positions for a symbol immediately (requires confirm=true)",

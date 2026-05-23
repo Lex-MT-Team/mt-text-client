@@ -108,6 +108,7 @@
   "mt_orders_set_margin_type": "orders set-margin-type <symbol> <margin_type> @<profile> --confirm",
   "mt_orders_set_position_mode": "orders set-position-mode <symbol> <mode> @<profile> --confirm",
   "mt_orders_get_position_mode": "orders get-position-mode <symbol> @<profile>",
+  "mt_orders_get_position_mode_account": "orders get-position-mode-account @<profile>",
   "mt_orders_panic_sell": "orders panic-sell <symbol> @<profile> --confirm",
   "mt_orders_change_margin": "orders change-margin <symbol> <position_side> <amount> <action> @<profile> --confirm",
   "mt_orders_transfer": "orders transfer <asset> <amount> <from> <to> @<profile> --confirm",
