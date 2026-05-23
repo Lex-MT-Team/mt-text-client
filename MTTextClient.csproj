@@ -99,6 +99,27 @@
           ContinueOnError="WarnAndContinue" />
   </Target>
 
+  <!-- Vendored algoConfigs.json template file.
+       The vendor mtclient UI has no "create from scratch" code path for
+       algorithms — every algo creation in the vendor UI clones from
+       an existing AlgorithmData (see DLT.UIVisualElement.AlgorithmDialogVE
+       and DLT.UIVisualElement.QuickAlgoStartManagerVE). Templates live in
+       a config file shipped with the desktop client distribution.
+
+       We ship the equivalent at templates/algoConfigs.json — 5 canonical
+       algorithm templates (one per group_type: SG=Shots, AG=Averages,
+       MW=Markets Watcher, MS=Markets Saver, VG=Vector Group), derived
+       mechanically from a known-good bench algorithms.config (operator-
+       specific IDs and names sanitized to generic labels). Copied into
+       the build output so mt_import_templates finds it at
+       AppContext.BaseDirectory on first call, with no operator setup. -->
+  <ItemGroup>
+    <Content Include="templates/algoConfigs.json">
+      <Link>algoConfigs.json</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <!-- BouncyCastle.Cryptography is the AES256 implementation that
