@@ -1070,7 +1070,7 @@ MIT — see [LICENSE](LICENSE).
 | `mt_marketdata_markprice` | View mark price, funding rate, and next funding time for a symbol. | `symbol` | — |
 | `mt_marketdata_markprice_subscribe` | Subscribe to real-time mark price and funding rate updates for a symbol. | `symbol` | — |
 | `mt_marketdata_markprice_unsubscribe` | Unsubscribe from mark price feed for a symbol. | `symbol` | — |
-| `mt_marketdata_klines` | View last kline (candlestick) data for a symbol and interval. | `symbol`, `interval` | — |
+| `mt_marketdata_klines` | View last kline (candlestick) data for a symbol and interval. Requires active kline subscription. | `symbol`, `interval` | — |
 | `mt_marketdata_klines_subscribe` | Subscribe to real-time kline (candlestick) updates for a symbol and interval. | `symbol`, `interval` | — |
 | `mt_marketdata_klines_unsubscribe` | Unsubscribe from kline feed for a symbol and interval. | `symbol`, `interval` | — |
 | `mt_marketdata_ticker` | View ticker data (last price, volume) for all symbols. Requires active ticker subscription. | — | — |

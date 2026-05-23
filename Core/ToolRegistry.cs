@@ -971,7 +971,7 @@ public static class ToolRegistry
             Prop("market", "string", "Market type: FUTURES, SPOT (default: FUTURES)"),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_marketdata_klines",
-            "View last kline (candlestick) data for a symbol and interval.",
+            "View last kline (candlestick) data for a symbol and interval. Requires active kline subscription.",
             Prop("symbol", "string", "Trading pair (e.g. BTCUSDT)", required: true),
             Prop("interval", "string", "Kline interval: 1s, 1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 6h, 12h, 1d, 3d, 1w, 1mo", required: true),
             Prop("market", "string", "Market type: FUTURES, SPOT (default: FUTURES)"),
