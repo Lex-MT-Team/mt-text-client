@@ -513,7 +513,7 @@ public static class ToolRegistry
             Prop("metrics", "boolean", "Include market context snapshots per trade (depth, deltas, funding, mark price at trigger/fill time)"),
             Prop("exclude_emulated", "boolean", "Exclude emulated/paper trades"),
             Prop("closed_by", "string", "Filter by close reason: TP,SL,TS,LIQ,PANIC,AUTO,MARKET,LIMIT,FUNDING,LICENSE (comma-separated)"),
-            Prop("market", "string", "Filter by market type: FUTURES,SPOT (comma-separated)"),
+            Prop("market", "string", "Filter by market type: FUTURES,SPOT,MARGIN (comma-separated). Empty/omitted defaults to all three (vendor: CommandReports.cs:195-200)."),
             Prop("side", "string", "Filter by order side: BUY,SELL"),
             Prop("mode", "string", "Filter by trade mode: REAL or EMULATED"),
             Prop("profile", "string", "Target server profile"));
