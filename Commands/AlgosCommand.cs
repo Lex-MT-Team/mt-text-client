@@ -433,7 +433,17 @@ public sealed class AlgosCommand : ICommand
                 return CommandResult.Fail($"[{conn.Name}] Algorithm {id} not found.");
             }
 
-            var request = new AlgorithmData(algo) { actionType = actionType };
+            // Build the START/STOP request shape
+            // produces the START/STOP request payload by round-tripping the cached
+            // AlgorithmData through the wire serializer: new() + Deserialize(Serialize()).
+            // The copy constructor leaves typed sub-structs in whatever state the cached
+            // object held them (e.g. null List<T> on template-derived algos), which trips
+            // the START handler with `Value cannot be null. (Parameter 'obj')`. The
+            // Deserialize path default-inits collection fields on the wire, matching the
+            // normal-form the server expects.
+            var request = new AlgorithmData();
+            ((NetworkData)request).Deserialize(((NetworkData)algo).Serialize());
+            request.actionType = actionType;
 
             // BUG FIX: Core uses AlgorithmData.name in a switch to instantiate the correct
             // algorithm class (e.g. "Shot", "Shots Group"). After rename, name may be a
