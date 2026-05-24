@@ -104,15 +104,14 @@ public sealed class AccountCommand : ICommand
     private CommandResult HandleBalance(CoreConnection conn, string[] args)
     {
         bool includeDust = ContainsIgnoreCase(args, "-all");
-        IReadOnlyList<BalanceSnapshot>? balances = conn.AccountStore.GetBalances(includeDust);
 
-        // Transient UDS read to force the snapshot when the long-lived
-        // subscription hasn't pushed anything yet (fresh connect, no events).
-        if (balances.Count == 0 && conn.AccountStore.LastBalanceUpdate == default)
-        {
-            conn.ForceRefreshAccount();
-            balances = conn.AccountStore.GetBalances(includeDust);
-        }
+        // ALWAYS open a transient UDS read before returning. The long-lived
+        // AccountInfoData subscription only pushes on balance-change events,
+        // so any post-trade snapshot lags reality by however long the venue
+        // takes to settle. Mirrors HandleOrders + the vendor BotClient
+        // pattern (ServicesController.GetBalanceData fetches fresh per call).
+        conn.ForceRefreshAccount();
+        IReadOnlyList<BalanceSnapshot>? balances = conn.AccountStore.GetBalances(includeDust);
 
         if (balances.Count == 0)
         {
@@ -248,14 +247,12 @@ public sealed class AccountCommand : ICommand
     private CommandResult HandlePositions(CoreConnection conn, string[] args)
     {
         bool showAll = ContainsIgnoreCase(args, "-all");
-        IReadOnlyList<PositionSnapshot>? positions = conn.AccountStore.GetPositions(openOnly: !showAll);
 
-        // Force a transient UDS read when the long-lived store hasn't pushed.
-        if (positions.Count == 0 && conn.AccountStore.LastPositionUpdate == default)
-        {
-            conn.ForceRefreshAccount();
-            positions = conn.AccountStore.GetPositions(openOnly: !showAll);
-        }
+        // Always force a transient UDS read — see HandleBalance / HandleOrders.
+        // Positions ride the same AccountInfoData drop as balance, so a single
+        // ForceRefreshAccount primes both stores.
+        conn.ForceRefreshAccount();
+        IReadOnlyList<PositionSnapshot>? positions = conn.AccountStore.GetPositions(openOnly: !showAll);
 
         if (positions.Count == 0)
         {
