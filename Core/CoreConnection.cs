@@ -2841,6 +2841,25 @@ public sealed class CoreConnection : IDisposable
         TPSLInfoListData tpslData, int timeoutMs = 10_000)
     {
         if (_udpClient == null) { return null; }
+        // Vendor's wire layer binds each entry by the full identity tuple
+        // (marketType / symbol / side / qty / entryPrice / settings), not the
+        // id alone — same constraint already documented on CancelTPSL.
+        // Echo the cached record for any id-only stub so a JOIN request issued
+        // straight from the CLI succeeds without the caller having to assemble
+        // the full payload.
+        if (tpslData.infoData != null)
+        {
+            for (int i = 0; i < tpslData.infoData.Count; i++)
+            {
+                var entry = tpslData.infoData[i];
+                TPSLInfoData? cached = TPSLStore.GetRawById(entry.id);
+                if (cached != null)
+                {
+                    cached.requestExchangeType = Profile.Exchange;
+                    tpslData.infoData[i] = cached;
+                }
+            }
+        }
         // TPSL join response reuses OrderJoinNotificationData (per BotClient ServicesController).
         return SendAndAwaitNotification<OrderJoinNotificationData>(
             send: () => _udpClient.SendJoinRequest(tpslData, NetworkMessagePriority.HIGH),
@@ -2856,9 +2875,14 @@ public sealed class CoreConnection : IDisposable
         TPSLInfoData tpslData, int timeoutMs = 10_000)
     {
         if (_udpClient == null) { return null; }
+        // Echo the cached TPSLInfoData when the caller passed an id-only stub —
+        // same reasoning as CancelTPSL / JoinTPSL.
+        TPSLInfoData? cached = TPSLStore.GetRawById(tpslData.id);
+        TPSLInfoData payload = cached ?? tpslData;
+        payload.requestExchangeType = Profile.Exchange;
         // TPSL split response is OrderSplitNotificationData (per BotClient ServicesController).
         return SendAndAwaitNotification<OrderSplitNotificationData>(
-            send: () => _udpClient.SendSplitRequest(tpslData, NetworkMessagePriority.HIGH),
+            send: () => _udpClient.SendSplitRequest(payload, NetworkMessagePriority.HIGH),
             build: n => new NotificationMessageData
             {
                 notificationCode = n.success ? NotificationCode.OK : NotificationCode.ERROR,
