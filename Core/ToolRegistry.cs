@@ -749,7 +749,9 @@ public static class ToolRegistry
 
         // ── TPSL (Take Profit / Stop Loss) ──
         yield return Tool("mt_tpsl_list",
-            "List all TPSL (Take Profit / Stop Loss) positions. Requires active TPSL subscription.",
+            "List all TPSL (Take Profit / Stop Loss) positions. Auto-primes the TPSL cache via a " +
+            "transient AlgorithmTPSLs subscribe on each call (vendor V2 pattern), so no explicit " +
+            "mt_tpsl_subscribe is required for read-only listing.",
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_tpsl_subscribe",
             "Subscribe to TPSL position updates from Core. Data available via mt_tpsl_list.",
@@ -1592,13 +1594,15 @@ public static class ToolRegistry
         yield return Tool("mt_tpsl_cancel_many",
             "Cancel multiple TPSL positions by ID. Loops the existing single-item cancel wire " +
             "method; per-ID results are returned in the response so a single bad ID doesn't abort " +
-            "the rest. Requires an active TPSL subscription. Requires confirm=true.",
+            "the rest. Auto-primes the TPSL cache so per-ID lookups find the full vendor payload " +
+            "(server binds by full identity tuple, not just id). Requires confirm=true.",
             Prop("tpsl_ids", "array", "Array of TPSL ID strings to cancel", required: true),
             Prop("profile", "string", "Target server profile"),
             Prop("confirm", "boolean", "Safety confirmation", required: true));
         yield return Tool("mt_tpsl_split_many",
             "Split multiple TPSL positions, one wire call per ID. Per-ID results returned. " +
-            "Requires an active TPSL subscription. Requires confirm=true.",
+            "Auto-primes the TPSL cache so per-ID lookups carry the full vendor payload " +
+            "(prevents silent split-rejection on cold connections). Requires confirm=true.",
             Prop("tpsl_ids", "array", "Array of TPSL ID strings to split", required: true),
             Prop("profile", "string", "Target server profile"),
             Prop("confirm", "boolean", "Safety confirmation", required: true));
@@ -1613,7 +1617,8 @@ public static class ToolRegistry
             Prop("confirm", "boolean", "Safety confirmation", required: true));
         yield return Tool("mt_tpsl_panic_many",
             "Bulk panic-close: MARKET-close each named TPSL's underlying position. Loop wrapper " +
-            "with per-ID results. Requires an active TPSL subscription. Requires confirm=true.",
+            "with per-ID results. Auto-primes the TPSL cache so per-ID lookups resolve. " +
+            "Requires confirm=true.",
             Prop("tpsl_ids", "array", "Array of TPSL ID strings to MARKET-close", required: true),
             Prop("profile", "string", "Target server profile"),
             Prop("confirm", "boolean", "Safety confirmation", required: true));
