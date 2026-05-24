@@ -2284,9 +2284,9 @@ public sealed class AlgosCommand : ICommand
 
     // Bundled-template fallback for mt_algos_create. Searches the same three
     // paths as Commands.ImportCommand.FindAlgoConfigs:
-    //   1. <app-dir>/algoConfigs.json   — shipped with the build output via .csproj
-    //   2. ~/Documents/algoConfigs.json — operator-supplied override
-    //   3. <temp>/algoConfigs.json      — ad-hoc location
+    //   1. <app-dir>/algorithms.json or algoConfigs.json   — shipped via .csproj
+    //   2. ~/Documents/algorithms.json or algoConfigs.json — operator override
+    //   3. <temp>/algorithms.json or algoConfigs.json      — ad-hoc location
     // Returns an AlgorithmData populated from the template's groupType/signature/
     // name and argsJson (the latter serialized verbatim from the template's args
     // object). Caller treats the returned AlgorithmData exactly like a source
@@ -2297,8 +2297,11 @@ public sealed class AlgosCommand : ICommand
         configPath = null;
         string[] candidates = new[]
         {
+            System.IO.Path.Combine(AppContext.BaseDirectory, "algorithms.json"),
             System.IO.Path.Combine(AppContext.BaseDirectory, "algoConfigs.json"),
+            System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Documents", "algorithms.json"),
             System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Documents", "algoConfigs.json"),
+            System.IO.Path.Combine(System.IO.Path.GetTempPath(), "algorithms.json"),
             System.IO.Path.Combine(System.IO.Path.GetTempPath(), "algoConfigs.json"),
         };
         string? found = null;
@@ -2443,11 +2446,19 @@ public sealed class AlgosCommand : ICommand
                           || (int)algo.marketType == 0;
         bool   isTradingAlgo = algo.isTradingAlgo;
 
-        // Silent init failure pattern: reports running, but no symbol/market resolved (Init failed)
-        bool bug13Detected = algo.isRunning && isTradingAlgo && symEmpty && mktUnknown;
+        // SG/SHOTS algorithms are market scanners. The parent algo row can stay
+        // symbol-less while the per-market work happens underneath the group, so
+        // do not apply the single-symbol silent-init heuristic to them.
+        bool isShotGroup = string.Equals(algo.signature, "SG", StringComparison.OrdinalIgnoreCase)
+                        || algo.groupType == AlgorithmGroupType.SHOTS;
 
-        // Verified: running AND (not a trading algo, OR has resolved symbol+market)
-        bool verified = algo.isRunning && (!isTradingAlgo || (!symEmpty && !mktUnknown));
+        // Silent init failure pattern: a single-market trading algo reports
+        // running, but no symbol/market resolved (Init failed).
+        bool bug13Detected = algo.isRunning && isTradingAlgo && !isShotGroup && symEmpty && mktUnknown;
+
+        // Verified: running AND (not a trading algo, a group scanner, or has a
+        // resolved single symbol+market).
+        bool verified = algo.isRunning && (!isTradingAlgo || isShotGroup || (!symEmpty && !mktUnknown));
 
         string status = bug13Detected      ? "BUG13_SUSPECTED"
                       : verified           ? "VERIFIED"
@@ -2459,6 +2470,8 @@ public sealed class AlgosCommand : ICommand
         if (algo.isProcessing)                   evidence.Add("isProcessing=true");
         if (!symEmpty)                           evidence.Add($"symbol={algo.symbol}");
         if (!mktUnknown && !symEmpty)            evidence.Add($"market={marketStr}");
+        if (algo.isRunning && isShotGroup && (symEmpty || mktUnknown))
+                                                  evidence.Add("SG scanner: parent row may stay symbol/market unresolved while running");
         if (bug13Detected)                       evidence.Add("WARN: isRunning=true but symbol/market unresolved — silent init failure pattern");
         if (!algo.isRunning)                     evidence.Add("isRunning=false — algo is not running");
 
