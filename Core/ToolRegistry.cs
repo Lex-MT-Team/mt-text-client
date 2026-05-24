@@ -1529,6 +1529,17 @@ public static class ToolRegistry
             "Restart core and clear archive data (requires --confirm)",
             Prop("profile", "string", "Target server profile"),
             Prop("confirm", "boolean", "Safety confirmation", required: true));
+        yield return Tool("mt_core_advanced_restart",
+            "Composite restart that combines update behaviour with cache-clearing in one cycle. " +
+            "Mirrors vendor BotClient's CommandAdvancedRestart (single CORE_ADVANCED_RESTART payload " +
+            "carrying a CoreServiceCommand HashSet). Use when a feed wedge AND archive staleness " +
+            "need to be cleared in one operator action — saves two separate restart cycles. " +
+            "Requires --confirm.",
+            Prop("include_update", "boolean", "If true, the restart includes a software-update step (RESTART_WITH_UPDATE); otherwise plain RESTART."),
+            Prop("clear_orders_cache", "boolean", "If true, also clears the orders cache as part of the restart cycle (RESTART_WITH_CLEAR_ORDERS_CACHE)."),
+            Prop("clear_data_archive", "boolean", "If true, also clears archived data as part of the restart cycle (RESTART_WITH_CLEAR_ARCHIVE_DATA)."),
+            Prop("profile", "string", "Target server profile"),
+            Prop("confirm", "boolean", "Safety confirmation", required: true));
 
         // Position Close/Reset by TPSL
         yield return Tool("mt_orders_close_by_tpsl",

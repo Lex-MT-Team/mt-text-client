@@ -2960,6 +2960,35 @@ public sealed class CoreConnection : IDisposable
         SendServiceCommand(CoreServiceCommand.RESTART_WITH_CLEAR_ARCHIVE_DATA);
     }
 
+    /// <summary>
+    /// Composite restart matching the vendor CommandAdvancedRestart shape.
+    /// Builds a CoreServiceControllerData with an advancedCommands HashSet and
+    /// sends via the SendCoreServiceCommand(CoreServiceControllerData) overload,
+    /// so a single restart cycle can combine update behaviour with
+    /// clear-orders-cache and clear-data-archive in one operator command.
+    /// </summary>
+    /// <param name="includeUpdate">If true, includes RESTART_WITH_UPDATE in the
+    /// command set; otherwise plain RESTART. Matches vendor's NO_UPDATE step
+    /// (value=true picks plain RESTART (2); value=false picks RESTART_WITH_UPDATE (3)).</param>
+    /// <param name="clearOrdersCache">If true, adds
+    /// RESTART_WITH_CLEAR_ORDERS_CACHE (4) to the command set.</param>
+    /// <param name="clearDataArchive">If true, adds
+    /// RESTART_WITH_CLEAR_ARCHIVE_DATA (5) to the command set.</param>
+    public void SendCoreAdvancedRestart(bool includeUpdate, bool clearOrdersCache, bool clearDataArchive)
+    {
+        if (_udpClient == null) { return; }
+        var data = new CoreServiceControllerData
+        {
+            advancedCommands = new System.Collections.Generic.HashSet<CoreServiceCommand>
+            {
+                includeUpdate ? CoreServiceCommand.RESTART_WITH_UPDATE : CoreServiceCommand.RESTART
+            }
+        };
+        if (clearOrdersCache)  { data.advancedCommands.Add(CoreServiceCommand.RESTART_WITH_CLEAR_ORDERS_CACHE); }
+        if (clearDataArchive)  { data.advancedCommands.Add(CoreServiceCommand.RESTART_WITH_CLEAR_ARCHIVE_DATA); }
+        _udpClient.SendCoreServiceCommand(data);
+    }
+
     #endregion
 
 #region Connection Lifecycle

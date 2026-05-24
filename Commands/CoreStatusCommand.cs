@@ -98,7 +98,8 @@ public sealed class CoreStatusCommand : ICommand
             "restart-update" => HandleRestartUpdate(conn, confirmFlag),
             "clear-orders" => HandleClearOrders(conn, confirmFlag),
             "clear-archive" => HandleClearArchive(conn, confirmFlag),
-            _ => CommandResult.Fail($"Unknown subcommand: '{subcommand}'. Use: status, license, health, restart, restart-update, clear-orders, clear-archive")
+            "advanced-restart" => HandleAdvancedRestart(conn, argsList, confirmFlag),
+            _ => CommandResult.Fail($"Unknown subcommand: '{subcommand}'. Use: status, license, health, restart, restart-update, clear-orders, clear-archive, advanced-restart")
         };
     }
 
@@ -521,6 +522,36 @@ public sealed class CoreStatusCommand : ICommand
 
         conn.SendCoreClearArchiveData();
         return CommandResult.Ok($"[{conn.Name}] Core clear-archive-data and restart command sent.");
+    }
+
+    /// <summary>
+    /// Composite restart — mirrors vendor BotClient's CommandAdvancedRestart.
+    /// Accepts three flag-style args (or no flags for "plain restart with no
+    /// extras"):
+    ///   --update            include RESTART_WITH_UPDATE in the cycle
+    ///   --clear-orders      add RESTART_WITH_CLEAR_ORDERS_CACHE
+    ///   --clear-archive     add RESTART_WITH_CLEAR_ARCHIVE_DATA
+    /// Sends a single CoreServiceControllerData payload with the matching
+    /// advancedCommands HashSet (vendor CommandType.CORE_ADVANCED_RESTART).
+    /// </summary>
+    private CommandResult HandleAdvancedRestart(CoreConnection conn, List<string> argsList, bool confirmed)
+    {
+        if (!confirmed)
+        {
+            return CommandResult.Fail(
+                "Core advanced-restart requires --confirm flag. This will restart " +
+                "with the combined options. Flags: --update, --clear-orders, --clear-archive.");
+        }
+        bool includeUpdate = argsList.Any(a => a.Equals("--update", StringComparison.OrdinalIgnoreCase));
+        bool clearOrders   = argsList.Any(a => a.Equals("--clear-orders", StringComparison.OrdinalIgnoreCase));
+        bool clearArchive  = argsList.Any(a => a.Equals("--clear-archive", StringComparison.OrdinalIgnoreCase));
+
+        string descriptor = (includeUpdate ? "RESTART_WITH_UPDATE" : "RESTART")
+            + (clearOrders ? " + CLEAR_ORDERS_CACHE" : string.Empty)
+            + (clearArchive ? " + CLEAR_DATA_ARCHIVE" : string.Empty);
+
+        return ExecuteRestartWithProbe(conn, $"advanced-restart [{descriptor}]",
+            () => conn.SendCoreAdvancedRestart(includeUpdate, clearOrders, clearArchive));
     }
 
 }
