@@ -971,7 +971,7 @@ MIT — see [LICENSE](LICENSE).
 | `mt_settings_search` | Search settings by keyword | `query` | — |
 | `mt_settings_set` | Set a profile setting (requires confirm=true) | `key`, `value`, `confirm` | ✓ |
 | `mt_settings_groups` | List settings grouped by prefix | — | — |
-| `mt_import_templates` | List available algorithm templates from algoConfigs.json. If 'path' is provided, reads from that file. Otherwise searches the default locations: <app-dir>/algoConfigs.json, ~/Documents/algoConfigs.json, /tmp/algoConfigs.json. | — | — |
+| `mt_import_templates` | List available algorithm templates from algorithms.json / algoConfigs.json. If 'path' is provided, reads from that file. Otherwise searches the default locations: <app-dir>/algorithms.json, <app-dir>/algoConfigs.json, ~/Documents/algorithms.json, ~/Documents/algoConfigs.json, /tmp/algorithms.json, /tmp/algoConfigs.json. | — | — |
 | `mt_import_v2` | Import algorithms from V2 text format file | `path` | — |
 | `mt_import_add_numeric` | Add numeric delta to all numeric params of an algorithm | `id`, `delta` | — |
 | `mt_import_from_profile` | Survey what would be imported from source_profile to destination_profile. Returns one entry per source algorithm with its name, group, symbol, market, and a duplicate_on_destination flag.  Read-only — no mutation.  Use mt_algos_copy per-id or mt_algos_paste_from_clipboard / mt_algos_import_json to actually transfer. | `source_profile`, `destination_profile` | — |

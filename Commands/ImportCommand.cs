@@ -285,7 +285,7 @@ public sealed class ImportCommand : ICommand
         {
             if (!File.Exists(explicitPath))
             {
-                return CommandResult.Fail($"algoConfigs.json not found at explicit path: {explicitPath}");
+                return CommandResult.Fail($"algorithm template JSON not found at explicit path: {explicitPath}");
             }
             configPath = explicitPath;
         }
@@ -294,10 +294,11 @@ public sealed class ImportCommand : ICommand
             configPath = FindAlgoConfigs();
             if (configPath == null || !File.Exists(configPath))
             {
-                return CommandResult.Fail("algoConfigs.json not found. Searched: " +
-                    "(1) <app-dir>/algoConfigs.json, " +
-                    "(2) ~/Documents/algoConfigs.json, " +
-                    "(3) " + System.IO.Path.GetTempPath() + "algoConfigs.json. " +
+                return CommandResult.Fail("Algorithm template JSON not found. Searched: " +
+                    "(1) <app-dir>/algorithms.json, <app-dir>/algoConfigs.json, " +
+                    "(2) ~/Documents/algorithms.json, ~/Documents/algoConfigs.json, " +
+                    "(3) " + System.IO.Path.GetTempPath() + "algorithms.json, " +
+                    System.IO.Path.GetTempPath() + "algoConfigs.json. " +
                     "Pass an explicit path via --path, or copy the file into one of those locations.");
             }
         }
@@ -309,7 +310,7 @@ public sealed class ImportCommand : ICommand
             Newtonsoft.Json.Linq.JArray? algos = obj["algorithms"] as Newtonsoft.Json.Linq.JArray;
             if (algos == null)
             {
-                return CommandResult.Fail("Invalid algoConfigs.json format.");
+                return CommandResult.Fail("Invalid algorithm template JSON format: missing top-level 'algorithms' array.");
             }
 
             var data = new List<object>(algos.Count);
@@ -459,8 +460,11 @@ public sealed class ImportCommand : ICommand
     {
         string[] candidates = new[]
         {
+            Path.Combine(AppContext.BaseDirectory, "algorithms.json"),
             Path.Combine(AppContext.BaseDirectory, "algoConfigs.json"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Documents", "algorithms.json"),
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Documents", "algoConfigs.json"),
+            Path.Combine(Path.GetTempPath(), "algorithms.json"),
             Path.Combine(Path.GetTempPath(), "algoConfigs.json")
         };
 

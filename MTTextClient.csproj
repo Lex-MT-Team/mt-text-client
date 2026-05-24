@@ -99,7 +99,7 @@
           ContinueOnError="WarnAndContinue" />
   </Target>
 
-  <!-- Vendored algoConfigs.json template file.
+  <!-- Vendored algorithm template JSON file.
        The vendor mtclient UI has no "create from scratch" code path for
        algorithms — every algo creation in the vendor UI clones from
        an existing AlgorithmData (see DLT.UIVisualElement.AlgorithmDialogVE
@@ -111,9 +111,15 @@
        MW=Markets Watcher, MS=Markets Saver, VG=Vector Group), derived
        mechanically from a known-good bench algorithms.config (operator-
        specific IDs and names sanitized to generic labels). Copied into
-       the build output so mt_import_templates finds it at
-       AppContext.BaseDirectory on first call, with no operator setup. -->
+       the build output under both algorithms.json (current operator
+       convention) and algoConfigs.json (legacy client convention), so
+       mt_import_templates finds it at AppContext.BaseDirectory on first
+       call, with no operator setup. -->
   <ItemGroup>
+    <Content Include="templates/algoConfigs.json">
+      <Link>algorithms.json</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
     <Content Include="templates/algoConfigs.json">
       <Link>algoConfigs.json</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

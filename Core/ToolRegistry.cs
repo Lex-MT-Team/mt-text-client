@@ -313,10 +313,11 @@ public static class ToolRegistry
 
         // ── Import ──
         yield return Tool("mt_import_templates",
-            "List available algorithm templates from algoConfigs.json. " +
+            "List available algorithm templates from algorithms.json / algoConfigs.json. " +
             "If 'path' is provided, reads from that file. Otherwise searches the default locations: " +
-            "<app-dir>/algoConfigs.json, ~/Documents/algoConfigs.json, /tmp/algoConfigs.json.",
-            Prop("path", "string", "Explicit path to algoConfigs.json (overrides default search)"));
+            "<app-dir>/algorithms.json, <app-dir>/algoConfigs.json, ~/Documents/algorithms.json, " +
+            "~/Documents/algoConfigs.json, /tmp/algorithms.json, /tmp/algoConfigs.json.",
+            Prop("path", "string", "Explicit path to algorithm template JSON (overrides default search)"));
         yield return Tool("mt_import_v2", "Import algorithms from V2 text format file",
             Prop("path", "string", "Path to V2 format file", required: true),
             Prop("confirm", "boolean", "Must be true to actually create on server"),
