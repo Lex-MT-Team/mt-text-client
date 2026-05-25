@@ -713,51 +713,6 @@ public sealed class CoreConnection : IDisposable
         }
     }
 
-    /// <summary>Force-refresh the TPSL cache by opening a transient
-    /// SendAlgorithmTPSLsSubscribe and feeding any drops back through
-    /// TPSLStore. Mirrors the vendor `GetTPSLInfoListData` shape:
-    /// fresh subscribe with sentinel id (-1), take the first list, unsubscribe in
-    /// finally. Used by `mt_tpsl_list` and the `*_many` variants so the first
-    /// call on a cold connection primes the store without requiring an
-    /// explicit `mt_tpsl_subscribe` first. Returns true if at least one
-    /// TPSLInfoListData drop arrived. Lazily creates TPSLStore if absent so
-    /// the cancel/split/join paths can read the cached vendor payload.</summary>
-    public bool ForceRefreshTPSL(int timeoutMs = 5_000)
-    {
-        if (_udpClient == null) { return false; }
-        if (TPSLStore == null) { TPSLStore = new TPSLStore(); }
-        int subId = -1;
-        var done = new System.Threading.ManualResetEventSlim(false);
-        int dropsReceived = 0;
-        try
-        {
-            subId = _udpClient.SendAlgorithmTPSLsSubscribe(
-                (TPSLInfoListData data) =>
-                {
-                    TPSLStore.ProcessData(data);
-                    System.Threading.Interlocked.Increment(ref dropsReceived);
-                    done.Set();
-                },
-                -1);
-            if (done.Wait(timeoutMs))
-            {
-                // Grace window for the rest of the snapshot to arrive
-                // (multi-market initial-list comes in segments on some venues).
-                System.Threading.Thread.Sleep(500);
-            }
-            return dropsReceived > 0;
-        }
-        finally
-        {
-            if (subId != -1 && _udpClient != null)
-            {
-                try { _udpClient.SendAlgorithmTPSLsUnsubscribe(ref subId); }
-                catch { /* best-effort */ }
-            }
-            done.Dispose();
-        }
-    }
-
     #region Algorithm Lifecycle Requests
 
     /// <summary>
@@ -2185,8 +2140,8 @@ public sealed class CoreConnection : IDisposable
         return r?.msgString ?? "Timeout";
     }
 
-    // Vendor request shape:
-    // each action gets a dedicated AutoBuyRequest*Data subtype
+    // Per-action subtype pattern: each RequestActionType maps to a
+    // dedicated AutoBuyRequest*Data subtype
     // with the per-action payload populated via object initializer. Sending
     // the base AutoBuyRequestData(action) leaves MTCore reading past EOF on
     // the deserialise side — instantiate the subtype.

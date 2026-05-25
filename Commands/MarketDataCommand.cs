@@ -563,7 +563,7 @@ public sealed class MarketDataCommand : ICommand
         // Per-symbol path: <symbol> [<market>]. Two-tier fallback so the call
         // returns real price data on every vendor build:
         //   1. SendTickerPrice24Request — canonical 24h-ticker snapshot
-        //      (works on Binance/OKX; not implemented on BYBIT bench, which
+        //      (works on Binance/OKX; not implemented on BYBIT, which
         //      throws NotImplementedException on TICKER_PRICE_24_REQUEST).
         //   2. ExchangeInfoStore.GetTradePair — populated by the long-lived
         //      exchange-info subscription on connect; carries the same

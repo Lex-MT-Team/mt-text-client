@@ -153,10 +153,9 @@ public sealed class AccountCommand : ICommand
         // OrderUpdate subscription on MTCore 0.7.23902 is racy after a
         // freshly-placed order — the snapshot in AccountStore can lag the
         // venue by several seconds, so write-then-read sequences (place →
-        // immediately query orders) see stale data. Mirrors the vendor
-        // BotClient pattern in MTBotClient.Client.ServicesController.
-        // GetOrdersListData which fetches a fresh snapshot on every call
-        // and does not trust the cache.
+        // immediately query orders) see stale data. Matches the vendor
+        // BotClient read pattern: fetch a fresh snapshot on every call
+        // rather than trusting the cache.
         conn.ForceRefreshOrders();
         IReadOnlyList<OrderSnapshot>? orders = conn.AccountStore.GetOrders(activeOnly: !showAll);
 
