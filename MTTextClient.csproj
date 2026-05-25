@@ -115,6 +115,10 @@
        first call, with no per-user setup required. -->
   <ItemGroup>
     <Content Include="templates/algoConfigs.json">
+      <Link>algorithms.json</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="templates/algoConfigs.json">
       <Link>algoConfigs.json</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

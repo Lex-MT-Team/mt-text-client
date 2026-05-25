@@ -2282,11 +2282,12 @@ public sealed class AlgosCommand : ICommand
         return count;
     }
 
-    // Bundled-template fallback for mt_algos_create. Searches the same three
-    // paths as Commands.ImportCommand.FindAlgoConfigs:
-    //   1. <app-dir>/algoConfigs.json   — shipped with the build output via .csproj
-    //   2. ~/Documents/algoConfigs.json — operator-supplied override
-    //   3. <temp>/algoConfigs.json      — ad-hoc location
+    // Bundled-template fallback for mt_algos_create. Searches the same
+    // paths as Commands.ImportCommand.FindAlgoConfigs, accepting either
+    // `algorithms.json` (canonical) or `algoConfigs.json` (legacy):
+    //   1. <app-dir>/algorithms.json or algoConfigs.json   — shipped via .csproj
+    //   2. ~/Documents/algorithms.json or algoConfigs.json — operator override
+    //   3. <temp>/algorithms.json or algoConfigs.json      — ad-hoc location
     // Returns an AlgorithmData populated from the template's groupType/signature/
     // name and argsJson (the latter serialized verbatim from the template's args
     // object). Caller treats the returned AlgorithmData exactly like a source
@@ -2297,8 +2298,11 @@ public sealed class AlgosCommand : ICommand
         configPath = null;
         string[] candidates = new[]
         {
+            System.IO.Path.Combine(AppContext.BaseDirectory, "algorithms.json"),
             System.IO.Path.Combine(AppContext.BaseDirectory, "algoConfigs.json"),
+            System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Documents", "algorithms.json"),
             System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Documents", "algoConfigs.json"),
+            System.IO.Path.Combine(System.IO.Path.GetTempPath(), "algorithms.json"),
             System.IO.Path.Combine(System.IO.Path.GetTempPath(), "algoConfigs.json"),
         };
         string? found = null;
