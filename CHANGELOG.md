@@ -9,6 +9,53 @@ Versions follow [SemVer](https://semver.org).
 
 ## Unreleased
 
+### Algos lifecycle refresh
+
+* **`mt_algos_start`/`mt_algos_stop` request wire-shape** now mirrors the
+  vendor request shape: the request is built via `new AlgorithmData() +
+  Deserialize(Serialize())` instead of the shared-library copy constructor,
+  so collection fields land in the on-wire normal form. Necessary but not
+  sufficient for the template-derived-NRE case; durable persistence-side
+  fix queued separately.
+* **SHOTS-group verification carve-out.** The start-time silent-init
+  heuristic in `EvaluateVerification` now excludes signature=SG /
+  groupType=SHOTS algorithms whose parent row legitimately stays
+  symbol-less while child markets run beneath. Clears the
+  silent-init-suspected false-flag on every Shots Group START.
+* **Dual-name template support.** Build output ships
+  `templates/algoConfigs.json` under both `algorithms.json` (canonical)
+  and the legacy `algoConfigs.json` names. `mt_import_templates` and the
+  algo-create fallback (`AlgosCommand.FindAlgoTemplate`) search both
+  filenames under each of `<app-dir>` / `~/Documents/` / `<tmp>`.
+
+### TPSL lifecycle
+
+* **`ForceRefreshTPSL` sibling of `ForceRefreshAlgos` / `ForceRefreshAccount`.**
+  Mirrors the vendor `GetTPSLInfoListData` shape: open a transient
+  `SendAlgorithmTPSLsSubscribe` on every read, take the first list,
+  unsubscribe in finally. Wired into `mt_tpsl_list`,
+  `mt_tpsl_cancel_many`, `mt_tpsl_split_many`, `mt_tpsl_panic_many` —
+  callers no longer need an explicit `mt_tpsl_subscribe` first.
+
+### Core
+
+* **`mt_core_advanced_restart`** — new composite restart tool. Combines
+  `--update` / `--clear-orders` / `--clear-archive` in a single restart
+  cycle (vendor `CommandAdvancedRestart` payload: one
+  `CoreServiceControllerData` with a `CoreServiceCommand` HashSet).
+  Saves the two-restart workaround when a wedge requires both feed
+  recovery and archive clearing.
+
+### Registry
+
+* `mt_reports_trades` `market` filter doc now mentions MARGIN and the
+  vendor `[SPOT, FUTURES, MARGIN]` empty-list default. Wire shape
+  unchanged.
+
+### Notes
+
+* MCP tool catalog: 259 → 260.
+
 ### Added
 
 * Algorithm-request path now waits on a `TaskCompletionSource` queue and
