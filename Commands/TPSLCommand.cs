@@ -116,10 +116,16 @@ public sealed class TPSLCommand : ICommand
             return error!;
         }
 
+        // Open a transient SendAlgorithmTPSLsSubscribe on every read
+        // Mirrors the vendor read pattern. Replaces the prior "subscribe first then list"
+        // pattern that left cold connections returning an empty stub. Lazily
+        // creates TPSLStore inside ForceRefreshTPSL.
+        conn.ForceRefreshTPSL();
+
         TPSLStore? store = conn.TPSLStore;
         if (store == null || !store.HasData)
         {
-            return CommandResult.Ok($"[{conn.Name}] No TPSL data. Use 'tpsl subscribe' first.");
+            return CommandResult.Ok($"[{conn.Name}] TPSL Positions (0 entries).");
         }
 
         IReadOnlyList<TPSLPositionSnapshot> positions = store.GetAll();
@@ -308,6 +314,11 @@ public sealed class TPSLCommand : ICommand
         CoreConnection? conn = ResolveConnection(targetProfile, out CommandResult? error);
         if (conn == null) return error!;
 
+        // Prime the cache via a transient subscribe so the per-id
+        // CancelTPSL path finds the full TPSLInfoData (cancel binds by full
+        // identity tuple).
+        conn.ForceRefreshTPSL();
+
         var rows = new List<object>();
         int ok = 0, fail = 0;
         for (int i = 1; i < args.Count; i++)
@@ -346,6 +357,10 @@ public sealed class TPSLCommand : ICommand
         }
         CoreConnection? conn = ResolveConnection(targetProfile, out CommandResult? error);
         if (conn == null) return error!;
+
+        // Prime the cache so SplitTPSL can resolve the full cached TPSLInfoData
+        // by id instead of falling back to an id-only stub.
+        conn.ForceRefreshTPSL();
 
         var rows = new List<object>();
         int ok = 0, fail = 0;
@@ -418,6 +433,10 @@ public sealed class TPSLCommand : ICommand
         }
         CoreConnection? conn = ResolveConnection(targetProfile, out CommandResult? error);
         if (conn == null) return error!;
+
+        // Prime the cache; PanicSingle requires a cached TPSLInfoData lookup
+        // (otherwise short-circuits with NOT_FOUND + "subscribe first" hint).
+        conn.ForceRefreshTPSL();
 
         var rows = new List<object>();
         int ok = 0, fail = 0;

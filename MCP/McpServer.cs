@@ -878,6 +878,11 @@ public sealed class McpServer
             "mt_core_restart_update" => $"core restart-update{profileSuffix}{confirm}",
             "mt_core_clear_orders" => $"core clear-orders{profileSuffix}{confirm}",
             "mt_core_clear_archive" => $"core clear-archive{profileSuffix}{confirm}",
+            "mt_core_advanced_restart" => $"core advanced-restart" +
+                (arguments["include_update"]?.Value<bool>() == true ? " --update" : string.Empty) +
+                (arguments["clear_orders_cache"]?.Value<bool>() == true ? " --clear-orders" : string.Empty) +
+                (arguments["clear_data_archive"]?.Value<bool>() == true ? " --clear-archive" : string.Empty) +
+                profileSuffix + confirm,
 
             // order_type is appended as `--order-type <type>` when provided.
             // The handler defaults to MARKET when the flag is absent — back-compat with

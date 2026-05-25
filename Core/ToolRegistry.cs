@@ -313,10 +313,11 @@ public static class ToolRegistry
 
         // ── Import ──
         yield return Tool("mt_import_templates",
-            "List available algorithm templates from algoConfigs.json. " +
+            "List available algorithm templates from algorithms.json / algoConfigs.json. " +
             "If 'path' is provided, reads from that file. Otherwise searches the default locations: " +
-            "<app-dir>/algoConfigs.json, ~/Documents/algoConfigs.json, /tmp/algoConfigs.json.",
-            Prop("path", "string", "Explicit path to algoConfigs.json (overrides default search)"));
+            "<app-dir>/algorithms.json, <app-dir>/algoConfigs.json, ~/Documents/algorithms.json, " +
+            "~/Documents/algoConfigs.json, /tmp/algorithms.json, /tmp/algoConfigs.json.",
+            Prop("path", "string", "Explicit path to algorithm template JSON (overrides default search)"));
         yield return Tool("mt_import_v2", "Import algorithms from V2 text format file",
             Prop("path", "string", "Path to V2 format file", required: true),
             Prop("confirm", "boolean", "Must be true to actually create on server"),
@@ -513,7 +514,7 @@ public static class ToolRegistry
             Prop("metrics", "boolean", "Include market context snapshots per trade (depth, deltas, funding, mark price at trigger/fill time)"),
             Prop("exclude_emulated", "boolean", "Exclude emulated/paper trades"),
             Prop("closed_by", "string", "Filter by close reason: TP,SL,TS,LIQ,PANIC,AUTO,MARKET,LIMIT,FUNDING,LICENSE (comma-separated)"),
-            Prop("market", "string", "Filter by market type: FUTURES,SPOT (comma-separated)"),
+            Prop("market", "string", "Filter by market type: FUTURES,SPOT,MARGIN (comma-separated). Empty/omitted defaults to all three (vendor: CommandReports.cs:195-200)."),
             Prop("side", "string", "Filter by order side: BUY,SELL"),
             Prop("mode", "string", "Filter by trade mode: REAL or EMULATED"),
             Prop("profile", "string", "Target server profile"));
@@ -749,7 +750,9 @@ public static class ToolRegistry
 
         // ── TPSL (Take Profit / Stop Loss) ──
         yield return Tool("mt_tpsl_list",
-            "List all TPSL (Take Profit / Stop Loss) positions. Requires active TPSL subscription.",
+            "List all TPSL (Take Profit / Stop Loss) positions. Auto-primes the TPSL cache via a " +
+            "transient AlgorithmTPSLs subscribe on each call (vendor V2 pattern), so no explicit " +
+            "mt_tpsl_subscribe is required for read-only listing.",
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_tpsl_subscribe",
             "Subscribe to TPSL position updates from Core. Data available via mt_tpsl_list.",
@@ -1527,6 +1530,17 @@ public static class ToolRegistry
             "Restart core and clear archive data (requires --confirm)",
             Prop("profile", "string", "Target server profile"),
             Prop("confirm", "boolean", "Safety confirmation", required: true));
+        yield return Tool("mt_core_advanced_restart",
+            "Composite restart that combines update behaviour with cache-clearing in one cycle. " +
+            "Mirrors vendor BotClient's CommandAdvancedRestart (single CORE_ADVANCED_RESTART payload " +
+            "carrying a CoreServiceCommand HashSet). Use when a feed wedge AND archive staleness " +
+            "need to be cleared in one operator action — saves two separate restart cycles. " +
+            "Requires --confirm.",
+            Prop("include_update", "boolean", "If true, the restart includes a software-update step (RESTART_WITH_UPDATE); otherwise plain RESTART."),
+            Prop("clear_orders_cache", "boolean", "If true, also clears the orders cache as part of the restart cycle (RESTART_WITH_CLEAR_ORDERS_CACHE)."),
+            Prop("clear_data_archive", "boolean", "If true, also clears archived data as part of the restart cycle (RESTART_WITH_CLEAR_ARCHIVE_DATA)."),
+            Prop("profile", "string", "Target server profile"),
+            Prop("confirm", "boolean", "Safety confirmation", required: true));
 
         // Position Close/Reset by TPSL
         yield return Tool("mt_orders_close_by_tpsl",
@@ -1592,13 +1606,15 @@ public static class ToolRegistry
         yield return Tool("mt_tpsl_cancel_many",
             "Cancel multiple TPSL positions by ID. Loops the existing single-item cancel wire " +
             "method; per-ID results are returned in the response so a single bad ID doesn't abort " +
-            "the rest. Requires an active TPSL subscription. Requires confirm=true.",
+            "the rest. Auto-primes the TPSL cache so per-ID lookups find the full vendor payload " +
+            "(server binds by full identity tuple, not just id). Requires confirm=true.",
             Prop("tpsl_ids", "array", "Array of TPSL ID strings to cancel", required: true),
             Prop("profile", "string", "Target server profile"),
             Prop("confirm", "boolean", "Safety confirmation", required: true));
         yield return Tool("mt_tpsl_split_many",
             "Split multiple TPSL positions, one wire call per ID. Per-ID results returned. " +
-            "Requires an active TPSL subscription. Requires confirm=true.",
+            "Auto-primes the TPSL cache so per-ID lookups carry the full vendor payload " +
+            "(prevents silent split-rejection on cold connections). Requires confirm=true.",
             Prop("tpsl_ids", "array", "Array of TPSL ID strings to split", required: true),
             Prop("profile", "string", "Target server profile"),
             Prop("confirm", "boolean", "Safety confirmation", required: true));
@@ -1613,7 +1629,8 @@ public static class ToolRegistry
             Prop("confirm", "boolean", "Safety confirmation", required: true));
         yield return Tool("mt_tpsl_panic_many",
             "Bulk panic-close: MARKET-close each named TPSL's underlying position. Loop wrapper " +
-            "with per-ID results. Requires an active TPSL subscription. Requires confirm=true.",
+            "with per-ID results. Auto-primes the TPSL cache so per-ID lookups resolve. " +
+            "Requires confirm=true.",
             Prop("tpsl_ids", "array", "Array of TPSL ID strings to MARKET-close", required: true),
             Prop("profile", "string", "Target server profile"),
             Prop("confirm", "boolean", "Safety confirmation", required: true));

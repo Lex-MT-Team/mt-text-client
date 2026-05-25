@@ -2841,6 +2841,25 @@ public sealed class CoreConnection : IDisposable
         TPSLInfoListData tpslData, int timeoutMs = 10_000)
     {
         if (_udpClient == null) { return null; }
+        // Vendor's wire layer binds each entry by the full identity tuple
+        // (marketType / symbol / side / qty / entryPrice / settings), not the
+        // id alone — same constraint already documented on CancelTPSL.
+        // Echo the cached record for any id-only stub so a JOIN request issued
+        // straight from the CLI succeeds without the caller having to assemble
+        // the full payload.
+        if (tpslData.infoData != null)
+        {
+            for (int i = 0; i < tpslData.infoData.Count; i++)
+            {
+                var entry = tpslData.infoData[i];
+                TPSLInfoData? cached = TPSLStore.GetRawById(entry.id);
+                if (cached != null)
+                {
+                    cached.requestExchangeType = Profile.Exchange;
+                    tpslData.infoData[i] = cached;
+                }
+            }
+        }
         // TPSL join response reuses OrderJoinNotificationData (per BotClient ServicesController).
         return SendAndAwaitNotification<OrderJoinNotificationData>(
             send: () => _udpClient.SendJoinRequest(tpslData, NetworkMessagePriority.HIGH),
@@ -2856,9 +2875,14 @@ public sealed class CoreConnection : IDisposable
         TPSLInfoData tpslData, int timeoutMs = 10_000)
     {
         if (_udpClient == null) { return null; }
+        // Echo the cached TPSLInfoData when the caller passed an id-only stub —
+        // same reasoning as CancelTPSL / JoinTPSL.
+        TPSLInfoData? cached = TPSLStore.GetRawById(tpslData.id);
+        TPSLInfoData payload = cached ?? tpslData;
+        payload.requestExchangeType = Profile.Exchange;
         // TPSL split response is OrderSplitNotificationData (per BotClient ServicesController).
         return SendAndAwaitNotification<OrderSplitNotificationData>(
-            send: () => _udpClient.SendSplitRequest(tpslData, NetworkMessagePriority.HIGH),
+            send: () => _udpClient.SendSplitRequest(payload, NetworkMessagePriority.HIGH),
             build: n => new NotificationMessageData
             {
                 notificationCode = n.success ? NotificationCode.OK : NotificationCode.ERROR,
@@ -2889,6 +2913,35 @@ public sealed class CoreConnection : IDisposable
     public void SendCoreClearArchiveData()
     {
         SendServiceCommand(CoreServiceCommand.RESTART_WITH_CLEAR_ARCHIVE_DATA);
+    }
+
+    /// <summary>
+    /// Composite restart matching the vendor CommandAdvancedRestart shape.
+    /// Builds a CoreServiceControllerData with an advancedCommands HashSet and
+    /// sends via the SendCoreServiceCommand(CoreServiceControllerData) overload,
+    /// so a single restart cycle can combine update behaviour with
+    /// clear-orders-cache and clear-data-archive in one operator command.
+    /// </summary>
+    /// <param name="includeUpdate">If true, includes RESTART_WITH_UPDATE in the
+    /// command set; otherwise plain RESTART. Matches vendor's NO_UPDATE step
+    /// (value=true picks plain RESTART (2); value=false picks RESTART_WITH_UPDATE (3)).</param>
+    /// <param name="clearOrdersCache">If true, adds
+    /// RESTART_WITH_CLEAR_ORDERS_CACHE (4) to the command set.</param>
+    /// <param name="clearDataArchive">If true, adds
+    /// RESTART_WITH_CLEAR_ARCHIVE_DATA (5) to the command set.</param>
+    public void SendCoreAdvancedRestart(bool includeUpdate, bool clearOrdersCache, bool clearDataArchive)
+    {
+        if (_udpClient == null) { return; }
+        var data = new CoreServiceControllerData
+        {
+            advancedCommands = new System.Collections.Generic.HashSet<CoreServiceCommand>
+            {
+                includeUpdate ? CoreServiceCommand.RESTART_WITH_UPDATE : CoreServiceCommand.RESTART
+            }
+        };
+        if (clearOrdersCache)  { data.advancedCommands.Add(CoreServiceCommand.RESTART_WITH_CLEAR_ORDERS_CACHE); }
+        if (clearDataArchive)  { data.advancedCommands.Add(CoreServiceCommand.RESTART_WITH_CLEAR_ARCHIVE_DATA); }
+        _udpClient.SendCoreServiceCommand(data);
     }
 
     #endregion

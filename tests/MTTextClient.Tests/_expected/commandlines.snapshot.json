@@ -6,6 +6,7 @@
   "mt_core_restart_update": "core restart-update @<profile> --confirm",
   "mt_core_clear_orders": "core clear-orders @<profile> --confirm",
   "mt_core_clear_archive": "core clear-archive @<profile> --confirm",
+  "mt_core_advanced_restart": "core advanced-restart --update --clear-orders --clear-archive @<profile> --confirm",
   "mt_orders_close_by_tpsl": "orders close-by-tpsl <symbol> <market> <side> @<profile> --confirm",
   "mt_orders_reset_tpsl": "orders reset-tpsl <symbol> <market> <side> @<profile> --confirm",
   "mt_orders_update_tpsl": "orders update-tpsl <symbol> <side> --tp <take_profit_percent> --sl <stop_loss_percent> --trailing-spread <trailing_spread> --client-order-id client_order_id @<profile> --confirm",

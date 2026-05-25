@@ -433,7 +433,17 @@ public sealed class AlgosCommand : ICommand
                 return CommandResult.Fail($"[{conn.Name}] Algorithm {id} not found.");
             }
 
-            var request = new AlgorithmData(algo) { actionType = actionType };
+            // Build the START/STOP request shape
+            // produces the START/STOP request payload by round-tripping the cached
+            // AlgorithmData through the wire serializer: new() + Deserialize(Serialize()).
+            // The copy constructor leaves typed sub-structs in whatever state the cached
+            // object held them (e.g. null List<T> on template-derived algos), which trips
+            // the START handler with `Value cannot be null. (Parameter 'obj')`. The
+            // Deserialize path default-inits collection fields on the wire, matching the
+            // normal-form the server expects.
+            var request = new AlgorithmData();
+            ((NetworkData)request).Deserialize(((NetworkData)algo).Serialize());
+            request.actionType = actionType;
 
             // BUG FIX: Core uses AlgorithmData.name in a switch to instantiate the correct
             // algorithm class (e.g. "Shot", "Shots Group"). After rename, name may be a
@@ -2433,11 +2443,19 @@ public sealed class AlgosCommand : ICommand
                           || (int)algo.marketType == 0;
         bool   isTradingAlgo = algo.isTradingAlgo;
 
-        // Silent init failure pattern: reports running, but no symbol/market resolved (Init failed)
-        bool bug13Detected = algo.isRunning && isTradingAlgo && symEmpty && mktUnknown;
+        // SG/SHOTS algorithms are market scanners. The parent algo row can stay
+        // symbol-less while the per-market work happens underneath the group, so
+        // do not apply the single-symbol silent-init heuristic to them.
+        bool isShotGroup = string.Equals(algo.signature, "SG", StringComparison.OrdinalIgnoreCase)
+                        || algo.groupType == AlgorithmGroupType.SHOTS;
 
-        // Verified: running AND (not a trading algo, OR has resolved symbol+market)
-        bool verified = algo.isRunning && (!isTradingAlgo || (!symEmpty && !mktUnknown));
+        // Silent init failure pattern: a single-market trading algo reports
+        // running, but no symbol/market resolved (Init failed).
+        bool bug13Detected = algo.isRunning && isTradingAlgo && !isShotGroup && symEmpty && mktUnknown;
+
+        // Verified: running AND (not a trading algo, a group scanner, or has a
+        // resolved single symbol+market).
+        bool verified = algo.isRunning && (!isTradingAlgo || isShotGroup || (!symEmpty && !mktUnknown));
 
         string status = bug13Detected      ? "BUG13_SUSPECTED"
                       : verified           ? "VERIFIED"
@@ -2449,6 +2467,8 @@ public sealed class AlgosCommand : ICommand
         if (algo.isProcessing)                   evidence.Add("isProcessing=true");
         if (!symEmpty)                           evidence.Add($"symbol={algo.symbol}");
         if (!mktUnknown && !symEmpty)            evidence.Add($"market={marketStr}");
+        if (algo.isRunning && isShotGroup && (symEmpty || mktUnknown))
+                                                  evidence.Add("SG scanner: parent row may stay symbol/market unresolved while running");
         if (bug13Detected)                       evidence.Add("WARN: isRunning=true but symbol/market unresolved — silent init failure pattern");
         if (!algo.isRunning)                     evidence.Add("isRunning=false — algo is not running");
 

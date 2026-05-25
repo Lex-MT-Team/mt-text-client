@@ -60,7 +60,7 @@ public sealed class LiveMarketsCommand : ICommand
         var entries = conn.LiveMarketStore.GetAll();
         if (entries.Count == 0)
         {
-            return CommandResult.Ok("No live market data. Subscribe first with 'livemarkets subscribe'.");
+            return CommandResult.Ok($"[{conn.Name}] Live markets (0 entries).");
         }
 
         var sb = new StringBuilder();
