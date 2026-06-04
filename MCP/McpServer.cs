@@ -153,6 +153,8 @@ public sealed class McpServer
             _events.Publish("core_status_received", conn.Name);
         _manager.OnAccountDataReceived += conn =>
             _events.Publish("account_data_received", conn.Name);
+        _manager.OnProfilingDataReceived += (conn, data) =>
+            _events.Publish("algo_profiling", conn.Name, data);
     }
 
     /// <summary>Run the MCP server loop over stdio.</summary>

@@ -66,6 +66,7 @@ public sealed class CoreConnection : IDisposable
     private readonly ConcurrentDictionary<string, int> _klineSubscriptionIds = new ConcurrentDictionary<string, int>();
     private int _tickerSubscriptionId;
     private int _profilingSubscriptionId;
+    private Action<MTShared.Network.AlgorithmProfilingData>? _profilingCallback;
 
     private bool _isConnected;
     private bool _disposed;
@@ -150,6 +151,7 @@ public sealed class CoreConnection : IDisposable
     public event Action<CoreConnection>? OnCoreStatusReceived;
     public event Action<CoreConnection, int>? OnTradePairsLoaded;
     public event Action<CoreConnection>? OnAccountDataReceived;
+    public event Action<CoreConnection, MTShared.Network.AlgorithmProfilingData>? OnProfilingDataReceived;
     /// <summary>
     /// Fired when MTCore restarts while the UDP connection stays alive.
     /// Detected via connectionId or serverStartTime change in ConnectionInfoData.
@@ -2032,12 +2034,10 @@ public sealed class CoreConnection : IDisposable
             return;
         }
 
+        _profilingCallback = data => OnProfilingDataReceived?.Invoke(this, data);
         _profilingSubscriptionId = _udpClient.SendAlgorithmProfilingDataSubscribe(
             Profile.Exchange, marketType, symbol, algorithmId,
-            (AlgorithmProfilingData data) =>
-            {
-                // Store latest profiling data - reuse existing store or log
-            },
+            _profilingCallback,
             _profilingSubscriptionId);
     }
 
@@ -3140,6 +3140,7 @@ public sealed class CoreConnection : IDisposable
         OnCoreStatusReceived = null;
         OnTradePairsLoaded = null;
         OnAccountDataReceived = null;
+        OnProfilingDataReceived = null;
     }
 
     /// <summary>
