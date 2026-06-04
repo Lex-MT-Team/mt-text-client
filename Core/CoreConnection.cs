@@ -2034,6 +2034,7 @@ public sealed class CoreConnection : IDisposable
             return;
         }
 
+        symbol = (symbol ?? string.Empty).ToLowerInvariant();
         _profilingCallback = data => OnProfilingDataReceived?.Invoke(this, data);
         _profilingSubscriptionId = _udpClient.SendAlgorithmProfilingDataSubscribe(
             Profile.Exchange, marketType, symbol, algorithmId,
@@ -2043,6 +2044,7 @@ public sealed class CoreConnection : IDisposable
 
     public void UnsubscribeProfiling(MarketType marketType, string symbol, long algorithmId)
     {
+        symbol = (symbol ?? string.Empty).ToLowerInvariant();
         if (_udpClient != null && _profilingSubscriptionId != 0)
         {
             _udpClient.SendAlgorithmProfilingDataUnsubscribe(
