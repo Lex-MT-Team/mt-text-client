@@ -1968,6 +1968,7 @@ public sealed class McpServer
             "mt_core_shutdown"       => HandleCoreShutdown(arguments),
             "mt_algos_tpsl_change"   => HandleAlgosTpslChange(arguments),
             "mt_algos_profiling"     => HandleAlgosProfiling(arguments),
+            "mt_market_live_algorithms" => HandleMarketLiveAlgorithms(arguments),
             "mt_config_import_algos" => HandleConfigImportAlgos(arguments),      // Direct JSON import
             "mt_algos_snapshot"      => HandleAlgosSnapshot(arguments),         // State reconciliation
             "mt_algos_group_by_name" => HandleAlgosGroupByName(arguments),      // State reconciliation
@@ -2722,6 +2723,36 @@ public sealed class McpServer
             ["algo_id"] = algoId,
             ["market"]  = market.ToString(),
             ["note"]    = "Results will be delivered via mt_events_poll when Core responds",
+        };
+    }
+
+    // Which algorithms are active on which market symbols (Markets Overview mapping).
+    private JObject HandleMarketLiveAlgorithms(JObject arguments)
+    {
+        string? profile = arguments["profile"]?.Value<string>();
+        CoreConnection? conn = _manager.Resolve(profile);
+        if (conn == null)
+            return new JObject { ["error"] = "No active connection" };
+
+        string marketStr = arguments["market"]?.Value<string>() ?? "FUTURES";
+        if (!Enum.TryParse<MarketType>(marketStr, ignoreCase: true, out var market))
+            market = MarketType.FUTURES;
+
+        string symbol = arguments["symbol"]?.Value<string>() ?? "";
+        var algoIds = new System.Collections.Generic.List<long>();
+        string idsStr = arguments["algo_ids"]?.Value<string>() ?? "";
+        foreach (var part in idsStr.Split(',', StringSplitOptions.RemoveEmptyEntries))
+            if (long.TryParse(part.Trim(), out long v)) algoIds.Add(v);
+
+        string json = conn.RequestMarketLiveAlgorithms(market, symbol, algoIds);
+        JToken parsed;
+        try { parsed = JToken.Parse(json); }
+        catch { parsed = json; }
+        return new JObject
+        {
+            ["market"] = market.ToString(),
+            ["symbol"] = symbol,
+            ["result"] = parsed,
         };
     }
 
