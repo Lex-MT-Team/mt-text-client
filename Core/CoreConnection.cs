@@ -151,7 +151,7 @@ public sealed class CoreConnection : IDisposable
     public event Action<CoreConnection>? OnCoreStatusReceived;
     public event Action<CoreConnection, int>? OnTradePairsLoaded;
     public event Action<CoreConnection>? OnAccountDataReceived;
-    public event Action<CoreConnection, MTShared.Network.AlgorithmProfilingData>? OnProfilingDataReceived;
+    public event Action<CoreConnection, string, MTShared.Network.AlgorithmProfilingData>? OnProfilingDataReceived;
     /// <summary>
     /// Fired when MTCore restarts while the UDP connection stays alive.
     /// Detected via connectionId or serverStartTime change in ConnectionInfoData.
@@ -2043,7 +2043,7 @@ public sealed class CoreConnection : IDisposable
         symbol = (symbol ?? string.Empty).ToLowerInvariant();
         string key = $"{marketType}:{symbol}:{algorithmId}";
         // Strong ref to the callback so the SDK's WeakDelegate isn't GC'd.
-        Action<MTShared.Network.AlgorithmProfilingData> cb = data => OnProfilingDataReceived?.Invoke(this, data);
+        Action<MTShared.Network.AlgorithmProfilingData> cb = data => OnProfilingDataReceived?.Invoke(this, symbol, data);
         _profilingCallbacks[key] = cb;
         int existing = _profilingSubscriptionIds.TryGetValue(key, out int prev) ? prev : -1;
         int newId = _udpClient.SendAlgorithmProfilingDataSubscribe(

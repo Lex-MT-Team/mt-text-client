@@ -112,7 +112,7 @@ public sealed class ConnectionManager : IDisposable
     public event Action<CoreConnection>? OnCoreStatusReceived;
     public event Action<CoreConnection, int>? OnTradePairsLoaded;
     public event Action<CoreConnection>? OnAccountDataReceived;
-    public event Action<CoreConnection, MTShared.Network.AlgorithmProfilingData>? OnProfilingDataReceived;
+    public event Action<CoreConnection, string, MTShared.Network.AlgorithmProfilingData>? OnProfilingDataReceived;
 
     /// <summary>
     /// Connect to a server profile. Creates and starts a new CoreConnection.
@@ -185,7 +185,7 @@ public sealed class ConnectionManager : IDisposable
         conn.OnCoreStatusReceived += c => OnCoreStatusReceived?.Invoke(c);
         conn.OnTradePairsLoaded += (c, count) => OnTradePairsLoaded?.Invoke(c, count);
         conn.OnAccountDataReceived += c => OnAccountDataReceived?.Invoke(c);
-        conn.OnProfilingDataReceived += (c, d) => OnProfilingDataReceived?.Invoke(c, d);
+        conn.OnProfilingDataReceived += (c, s, d) => OnProfilingDataReceived?.Invoke(c, s, d);
 
         // Wire health metric updates
         conn.OnConnected += c =>
