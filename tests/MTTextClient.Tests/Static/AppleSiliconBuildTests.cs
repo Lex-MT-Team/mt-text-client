@@ -71,9 +71,9 @@ public sealed class AppleSiliconBuildTests
         byte[] before = File.ReadAllBytes(LibDllPath);
 
         // Run the script once. lib/MTShared.dll should already be ARM64
-        // (the post-build target ran during the test-project build).
-        // Therefore the script's report line must say "already patched",
-        // and the file bytes must match before/after exactly.
+        // (the committed baseline ships pre-patched). Therefore the
+        // script's report line must say "already at 0xAA64", and the
+        // file bytes must match before/after exactly.
         var psi = new System.Diagnostics.ProcessStartInfo
         {
             FileName = "python3",
@@ -87,8 +87,8 @@ public sealed class AppleSiliconBuildTests
         string stdout = proc.StandardOutput.ReadToEnd();
         proc.WaitForExit(10_000);
         proc.ExitCode.Should().Be(0, because: $"script must succeed; stdout: {stdout}");
-        stdout.Should().Contain("already patched",
-            because: "the file was already 0xAA64 (post-build target already ran); " +
+        stdout.Should().Contain("already at",
+            because: "the file was already 0xAA64 (committed baseline is pre-patched); " +
                      $"second-run output should report idempotent-no-op. Got: {stdout}");
 
         byte[] after = File.ReadAllBytes(LibDllPath);

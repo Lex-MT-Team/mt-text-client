@@ -9,6 +9,19 @@ Versions follow [SemVer](https://semver.org).
 
 ## Unreleased
 
+### Build
+
+* **Linux test runs can now load the vendor assembly.** The committed
+  `lib/MTShared.dll` carries PE Machine=ARM64 (Apple Silicon hosts load
+  it natively), which the CLR on linux-x64 rejects during probing — the
+  unit tests that construct vendor wire types failed on Linux CI with
+  `FileNotFoundException`. The patch script now takes `--machine
+  x64|arm64`, and Linux builds flip the *build-output* copy back to x64
+  post-build (the committed file is never modified). The test project's
+  vendor reference also uses a cross-platform path and explicit
+  copy-local, fixing the DLL missing from the Linux test output
+  entirely.
+
 ### Snapshot freshness (issue #40)
 
 * **`mt_algos_snapshot` no longer serves a possibly-stale cache.** The
