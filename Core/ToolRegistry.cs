@@ -99,7 +99,7 @@ public static class ToolRegistry
             "Get recent trades for a symbol from the exchange.",
             Prop("symbol", "string", "Symbol (e.g. BTCUSDT)", required: true),
             Prop("profile", "string", "Target server profile"));
-        // Funding rate + leverage brackets (read-only from cached subscription state).
+        // Funding rate + leverage info (read-only from cached subscription state).
         yield return Tool("mt_exchange_funding_rate",
             "Get the funding-rate fields for a symbol (last funding rate/time, next funding rate/time, mark price, last price). " +
             "Read-only; no confirm. Returns whatever the symbol's live-markets cache currently holds, " +
@@ -107,12 +107,18 @@ public static class ToolRegistry
             Prop("symbol", "string", "Trading symbol (lowercase, e.g. btcusdt)", required: true),
             Prop("market_type", "string", "Market type (default FUTURES — SPOT typically has no funding rate)"),
             Prop("profile", "string", "Target server profile"));
+        yield return Tool("mt_exchange_leverage_info",
+            "Get configured/effective leverage, max leverage, and risk-limit data for a symbol from MTCore's " +
+            "LeverageInfoUpdateData cache. Read-only; no confirm. Does not require an open position, but the " +
+            "cache must have observed a core leverage refresh in this mt-text-client session.",
+            Prop("symbol", "string", "Trading symbol (lowercase, e.g. btcusdt)", required: true),
+            Prop("market_type", "string", "Market type (default FUTURES)"),
+            Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_exchange_leverage_brackets",
-            "Return locally-observable leverage info for a symbol — the current effective leverage on any open " +
-            "position for the symbol. " +
-            "Read-only; no confirm. NOTE: full bracket-tier tables (notional-range → max-leverage map) " +
-            "are not exposed by the current vendor library; this tool surfaces only what the position cache reports, " +
-            "with a structured leverage_brackets_not_available notice when no richer source is on the wire.",
+            "Compatibility alias for leverage info. Returns configured/effective leverage, max leverage, and risk-limit " +
+            "data from MTCore's LeverageInfoUpdateData cache when available, with open-position leverage only as " +
+            "a fallback. Read-only; no confirm. NOTE: full bracket-tier tables (notional-range → max-leverage map) " +
+            "are not exposed as separate MTShared rows.",
             Prop("symbol", "string", "Trading symbol (lowercase, e.g. btcusdt)", required: true),
             Prop("market_type", "string", "Market type (default FUTURES)"),
             Prop("profile", "string", "Target server profile"));

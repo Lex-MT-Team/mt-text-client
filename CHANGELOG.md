@@ -9,6 +9,19 @@ Versions follow [SemVer](https://semver.org).
 
 ## Unreleased
 
+### Leverage info
+
+* **New `mt_exchange_leverage_info` tool** (CLI: `exchange leverage-info`,
+  aliases `leverage` / `get-leverage`): surfaces configured/effective
+  leverage per leverage type (Cross / IsolatedNet / IsolatedLong /
+  IsolatedShort), max leverage, and risk-limit data for a symbol from
+  MTCore's `LeverageInfoUpdateData` cache — no open position required.
+  Each call primes the cache via a transient fresh read; open-position
+  leverage is kept only as a fallback source.
+* `mt_exchange_leverage_brackets` is now a compatibility alias backed by
+  the same cache (bracket-tier tables are still not modelled as separate
+  rows by the shared library). MCP tool catalog: 260 → 261.
+
 ### Autostops schema fix (issue #34)
 
 * **`mt_autostops_*` / `autostops` now read and write the real

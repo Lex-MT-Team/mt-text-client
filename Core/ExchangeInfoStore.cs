@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Threading;
 using MTShared;
 using MTShared.Network;
+using MTShared.Structs;
 using MTShared.Types;
 namespace MTTextClient.Core;
 
@@ -15,6 +16,7 @@ namespace MTTextClient.Core;
 ///   TRADE_PAIR_LIST_RESULT       (9)  → TradePairListData    — full list of trade pairs with rules
 ///   TRADE_PAIR_PRICE_LIST_RESULT (10) → TradePairPriceListData — price updates for all pairs
 ///   MAX_API_LIMIT_RESULT         (11) → MaxApiLimitData       — API weight/rate limit loading %
+///   LEVERAGE_INFO_UPDATE_DATA    (6)  → LeverageInfoUpdateData — leverage/max-leverage/risk limits
 ///   TICKER_LIST_DATA_RESULT      (81) → (future) 24h ticker stats
 ///   TRADE_PAIR_LISTING_RESULT    (96) → (future) new pair listings
 /// </summary>
@@ -26,9 +28,14 @@ public sealed class ExchangeInfoStore
     // API loading % per market type (from MaxApiLimitData)
     private readonly ConcurrentDictionary<MarketType, short> _apiLoading = new();
 
+    // Leverage information keyed by "{market}:{symbol}:{leverageType}".
+    private readonly ConcurrentDictionary<string, LeverageEntrySnapshot> _leverages = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, MaxLeverageSnapshot> _maxLeverages = new(StringComparer.OrdinalIgnoreCase);
+
     public DateTime LastTradePairUpdate { get; private set; }
     public DateTime LastPriceUpdate { get; private set; }
     public DateTime LastApiLimitUpdate { get; private set; }
+    public DateTime LastLeverageInfoUpdate { get; private set; }
 
     // Events
     public event Action<int>? OnTradePairsLoaded;
@@ -51,6 +58,10 @@ public sealed class ExchangeInfoStore
 
             case NetworkMessageType.MAX_API_LIMIT_RESULT:
                 ProcessApiLimit(data);
+                break;
+
+            case NetworkMessageType.LEVERAGE_INFO_UPDATE_DATA:
+                ProcessLeverageInfo(data);
                 break;
 
                 // TICKER_LIST_DATA_RESULT (81) — 24h ticker stats (volume, high/low, change%)
@@ -203,6 +214,94 @@ public sealed class ExchangeInfoStore
         LastApiLimitUpdate = DateTime.UtcNow;
     }
 
+    /// <summary>
+    /// Process configured leverage / max leverage / risk-limit updates.
+    /// MTCore emits this independently of open positions, so flat symbols can
+    /// still have exchange leverage state.
+    /// </summary>
+    private void ProcessLeverageInfo(NetworkData data)
+    {
+        if (data is not LeverageInfoUpdateData leverageData)
+        {
+            return;
+        }
+
+        DateTime now = DateTime.UtcNow;
+
+        if (leverageData.maxLeverages != null)
+        {
+            foreach (KeyValuePair<MarketDataKey, int> kvp in leverageData.maxLeverages)
+            {
+                MarketType marketType = (MarketType)kvp.Key.marketType;
+                string symbol = NormalizeSymbol(kvp.Key.symbol);
+                if (string.IsNullOrEmpty(symbol))
+                {
+                    continue;
+                }
+
+                _maxLeverages[MarketKey(marketType, symbol)] = new MaxLeverageSnapshot
+                {
+                    Symbol = symbol,
+                    MarketType = marketType,
+                    MaxLeverage = kvp.Value,
+                    Timestamp = now,
+                };
+            }
+        }
+
+        if (leverageData.leverages != null)
+        {
+            foreach (KeyValuePair<LeverageDataKey, int> kvp in leverageData.leverages)
+            {
+                UpsertLeverageEntry(kvp.Key.marketType, kvp.Key.symbol, kvp.Key.leverageType, kvp.Value, null, now);
+            }
+        }
+
+        if (leverageData.riskLimits != null)
+        {
+            foreach (KeyValuePair<LeverageDataKey, double> kvp in leverageData.riskLimits)
+            {
+                UpsertLeverageEntry(kvp.Key.marketType, kvp.Key.symbol, kvp.Key.leverageType, null, kvp.Value, now);
+            }
+        }
+
+        LastLeverageInfoUpdate = now;
+    }
+
+    private void UpsertLeverageEntry(
+        MarketType marketType,
+        string? symbolRaw,
+        LeverageType leverageType,
+        int? leverage,
+        double? riskLimit,
+        DateTime timestamp)
+    {
+        string symbol = NormalizeSymbol(symbolRaw);
+        if (string.IsNullOrEmpty(symbol))
+        {
+            return;
+        }
+
+        string key = LeverageKey(marketType, symbol, leverageType);
+        _leverages.AddOrUpdate(
+            key,
+            _ => new LeverageEntrySnapshot
+            {
+                Symbol = symbol,
+                MarketType = marketType,
+                LeverageType = leverageType,
+                Leverage = leverage,
+                RiskLimit = riskLimit,
+                Timestamp = timestamp,
+            },
+            (_, existing) => existing with
+            {
+                Leverage = leverage ?? existing.Leverage,
+                RiskLimit = riskLimit ?? existing.RiskLimit,
+                Timestamp = timestamp,
+            });
+    }
+
     // ── Queries ──────────────────────────────────────────────
 
     /// <summary>Get all trade pairs.</summary>
@@ -257,6 +356,53 @@ public sealed class ExchangeInfoStore
         return new Dictionary<MarketType, short>(_apiLoading);
     }
 
+    /// <summary>Get cached leverage info for a symbol/market pair.</summary>
+    public LeverageInfoSnapshot GetLeverageInfo(string symbol, MarketType marketType)
+    {
+        string normalizedSymbol = NormalizeSymbol(symbol);
+        var leverages = new Dictionary<LeverageType, int>();
+        var riskLimits = new Dictionary<LeverageType, double>();
+        DateTime? latest = null;
+
+        foreach (LeverageEntrySnapshot entry in _leverages.Values)
+        {
+            if (entry.MarketType != marketType ||
+                !entry.Symbol.Equals(normalizedSymbol, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (entry.Leverage.HasValue)
+            {
+                leverages[entry.LeverageType] = entry.Leverage.Value;
+            }
+
+            if (entry.RiskLimit.HasValue)
+            {
+                riskLimits[entry.LeverageType] = entry.RiskLimit.Value;
+            }
+
+            latest = latest.HasValue && latest.Value > entry.Timestamp ? latest : entry.Timestamp;
+        }
+
+        MaxLeverageSnapshot? max = null;
+        if (_maxLeverages.TryGetValue(MarketKey(marketType, normalizedSymbol), out MaxLeverageSnapshot? maxSnapshot))
+        {
+            max = maxSnapshot;
+            latest = latest.HasValue && latest.Value > maxSnapshot.Timestamp ? latest : maxSnapshot.Timestamp;
+        }
+
+        return new LeverageInfoSnapshot
+        {
+            Symbol = normalizedSymbol,
+            MarketType = marketType,
+            MaxLeverage = max?.MaxLeverage,
+            Leverages = leverages,
+            RiskLimits = riskLimits,
+            LastUpdatedUtc = latest,
+        };
+    }
+
     /// <summary>Total number of known trade pairs.</summary>
     public int TradePairCount => _tradePairs.Count;
 
@@ -283,7 +429,19 @@ public sealed class ExchangeInfoStore
     {
         _tradePairs.Clear();
         _apiLoading.Clear();
+        _leverages.Clear();
+        _maxLeverages.Clear();
+        LastLeverageInfoUpdate = default;
     }
+
+    private static string NormalizeSymbol(string? symbol) =>
+        (symbol ?? string.Empty).Trim().ToLowerInvariant();
+
+    private static string MarketKey(MarketType marketType, string symbol) =>
+        $"{marketType}:{NormalizeSymbol(symbol)}";
+
+    private static string LeverageKey(MarketType marketType, string symbol, LeverageType leverageType) =>
+        $"{MarketKey(marketType, symbol)}:{leverageType}";
 }
 
 // ── Snapshot DTOs ────────────────────────────────────────────
@@ -317,5 +475,36 @@ public sealed record TradePairSnapshot
     public bool IsTradable { get; init; }
     public double TickerPrice { get; init; }
     public long TickerEventTime { get; init; }
+    public DateTime Timestamp { get; init; }
+}
+
+public sealed record LeverageInfoSnapshot
+{
+    public string Symbol { get; init; } = "";
+    public MarketType MarketType { get; init; }
+    public int? MaxLeverage { get; init; }
+    public IReadOnlyDictionary<LeverageType, int> Leverages { get; init; } = new Dictionary<LeverageType, int>();
+    public IReadOnlyDictionary<LeverageType, double> RiskLimits { get; init; } = new Dictionary<LeverageType, double>();
+    public DateTime? LastUpdatedUtc { get; init; }
+
+    public bool HasWireData =>
+        MaxLeverage.HasValue || Leverages.Count > 0 || RiskLimits.Count > 0;
+}
+
+public sealed record LeverageEntrySnapshot
+{
+    public string Symbol { get; init; } = "";
+    public MarketType MarketType { get; init; }
+    public LeverageType LeverageType { get; init; }
+    public int? Leverage { get; init; }
+    public double? RiskLimit { get; init; }
+    public DateTime Timestamp { get; init; }
+}
+
+public sealed record MaxLeverageSnapshot
+{
+    public string Symbol { get; init; } = "";
+    public MarketType MarketType { get; init; }
+    public int MaxLeverage { get; init; }
     public DateTime Timestamp { get; init; }
 }

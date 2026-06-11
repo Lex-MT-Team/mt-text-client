@@ -314,6 +314,10 @@ public sealed class CoreConnection : IDisposable
             (msgType, data) =>
             {
                 AccountStore.ProcessData(msgType, data);
+                if (msgType == NetworkMessageType.LEVERAGE_INFO_UPDATE_DATA)
+                {
+                    ExchangeInfoStore.ProcessData(msgType, data);
+                }
             });
 
         // 5. Notifications subscription — required by MTCore 0.7.23902's push
@@ -618,6 +622,10 @@ public sealed class CoreConnection : IDisposable
                 foreach (var item in collected)
                 {
                     AccountStore.ProcessData(msgType, item);
+                    if (msgType == NetworkMessageType.LEVERAGE_INFO_UPDATE_DATA)
+                    {
+                        ExchangeInfoStore.ProcessData(msgType, item);
+                    }
                 }
                 return collected.Count > 0;
             }
@@ -672,6 +680,15 @@ public sealed class CoreConnection : IDisposable
         bool gotData = ReadFreshUDSData<BalanceListData>(NetworkMessageType.UDS_BALANCE_LIST_RESULT, timeoutMs);
         if (AccountStore.LastBalanceUpdate == default) { AccountStore.LastBalanceUpdate = DateTime.UtcNow; }
         return gotData;
+    }
+
+    /// <summary>Force-refresh leverage/max-leverage/risk-limit cache by
+    /// opening a transient UDS read. Some cores only push leverage info on
+    /// their own refresh cadence, so false means "not replayed now", not
+    /// "no leverage data exists".</summary>
+    public bool ForceRefreshLeverageInfo(int timeoutMs = 5_000)
+    {
+        return ReadFreshUDSData<LeverageInfoUpdateData>(NetworkMessageType.LEVERAGE_INFO_UPDATE_DATA, timeoutMs);
     }
 
     /// <summary>Force-refresh the algorithms cache by opening a transient

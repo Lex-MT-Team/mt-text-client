@@ -599,8 +599,9 @@ public sealed class McpServer
             "mt_exchange_ticker24" => $"exchange ticker24 {arguments["symbol"]?.Value<string>() ?? ""}{ResolveTicker24Market(arguments)}{profileSuffix}",
             "mt_exchange_klines" => BuildKlinesCommand(arguments, profileSuffix),
             "mt_exchange_trades" => $"exchange trades {arguments["symbol"]?.Value<string>() ?? ""}{profileSuffix}",
-            // Funding rate + leverage brackets (read-only).
+            // Funding rate + leverage info (read-only).
             "mt_exchange_funding_rate" => BuildExchangeFundingRateCommand(arguments, profileSuffix),
+            "mt_exchange_leverage_info" => BuildExchangeLeverageInfoCommand(arguments, profileSuffix),
             "mt_exchange_leverage_brackets" => BuildExchangeLeverageBracketsCommand(arguments, profileSuffix),
 
             // Algorithms
@@ -1369,7 +1370,7 @@ public sealed class McpServer
         parts.Add($"{flag} {value}");
     }
 
-    // Funding rate + leverage brackets builders.
+    // Funding rate + leverage info builders.
     private static string BuildExchangeFundingRateCommand(JObject arguments, string profileSuffix)
     {
         var parts = new List<string> { "exchange funding-rate" };
@@ -1386,7 +1387,17 @@ public sealed class McpServer
 
     private static string BuildExchangeLeverageBracketsCommand(JObject arguments, string profileSuffix)
     {
-        var parts = new List<string> { "exchange leverage-brackets" };
+        return BuildExchangeLeverageCommand(arguments, profileSuffix, "exchange leverage-brackets");
+    }
+
+    private static string BuildExchangeLeverageInfoCommand(JObject arguments, string profileSuffix)
+    {
+        return BuildExchangeLeverageCommand(arguments, profileSuffix, "exchange leverage-info");
+    }
+
+    private static string BuildExchangeLeverageCommand(JObject arguments, string profileSuffix, string command)
+    {
+        var parts = new List<string> { command };
         string? sym = arguments["symbol"]?.Value<string>();
         if (!string.IsNullOrWhiteSpace(sym))
         {
