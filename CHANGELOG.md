@@ -9,6 +9,20 @@ Versions follow [SemVer](https://semver.org).
 
 ## Unreleased
 
+### V2 import throughput (issue #14)
+
+* **`mt_import_v2` no longer serializes one blocking acknowledgement
+  round-trip per algorithm** (~20s each on cores that throttle
+  notification replies — a 26-algo package took ~8 minutes). Algorithm
+  creates are now queued fire-and-forget with light pacing, then a
+  verification pass polls a fresh algorithm snapshot until every queued
+  create is observed on the core (or a bounded budget elapses). The
+  result reports `queued` per algo plus a `Verification: X/N queued
+  algos observed on Core` summary, so success now reflects on-core
+  creation rather than per-send acknowledgements. Group creation still
+  uses the acknowledged path (the server-assigned group id is needed for
+  remapping).
+
 ### Order cache correctness (issue #36)
 
 * **Order-list batches now merge into the cache instead of replacing it.**

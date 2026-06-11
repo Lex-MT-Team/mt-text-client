@@ -786,6 +786,20 @@ public sealed class CoreConnection : IDisposable
             timeoutMs: timeoutMs);
     }
 
+    public bool TrySendAlgorithmRequestNoWait(AlgorithmData algoData)
+    {
+        if (_udpClient == null) { return false; }
+        try
+        {
+            _udpClient.SendAlgorithmRequest(algoData);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     /// <summary>
     /// Send an algorithm list request (START_ALL, STOP_ALL, SAVE_GROUP, DELETE_GROUP, CLONE_GROUP).
     /// MTCore responds with AlgorithmListUpdateNotificationData.

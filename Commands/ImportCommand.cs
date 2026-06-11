@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using MTShared;
 using MTShared.Network;
 using MTShared.Types;
@@ -240,6 +242,8 @@ public sealed class ImportCommand : ICommand
             }
         }
 
+        HashSet<long> beforeAlgoIds = conn.AlgoStore.GetAll().Select(a => a.id).ToHashSet();
+        int queuedCount = 0;
         foreach (AlgorithmData algo in algorithms)
         {
             algo.actionType = AlgorithmData.ActionType.SAVE;
@@ -251,22 +255,21 @@ public sealed class ImportCommand : ICommand
                 algo.groupID = newGroupId;
             }
 
-            NotificationMessageData? notification = conn.SendAlgorithmRequest(algo);
-
-            if (notification == null)
+            if (conn.TrySendAlgorithmRequestNoWait(algo))
             {
-                results.Add($"  {algo.name} ({algo.signature}): sent (timed out)");
-            }
-            else if (notification.IsOk)
-            {
-                results.Add($"  {algo.name} ({algo.signature}): CREATED ✓");
-                successCount++;
+                queuedCount++;
+                results.Add($"  {algo.name} ({algo.signature}): queued");
+                if (queuedCount % 25 == 0)
+                    Thread.Sleep(10);
             }
             else
             {
-                results.Add($"  {algo.name} ({algo.signature}): FAILED — {notification.msgString}");
+                results.Add($"  {algo.name} ({algo.signature}): FAILED — queue send failed");
             }
         }
+
+        successCount = VerifyQueuedAlgorithmCreates(conn, beforeAlgoIds, queuedCount);
+        results.Add($"  Verification: {successCount}/{queuedCount} queued algos observed on Core.");
 
         if (errors.Count > 0)
         {
@@ -276,6 +279,41 @@ public sealed class ImportCommand : ICommand
         return CommandResult.Ok(
             $"[{conn.Name}] Import results: {successCount}/{algorithms.Count} created.\n{string.Join("\n", results)}",
             new { Server = conn.Name, Total = algorithms.Count, Created = successCount });
+    }
+
+    private static int VerifyQueuedAlgorithmCreates(CoreConnection conn, HashSet<long> beforeAlgoIds, int queuedCount)
+    {
+        if (queuedCount <= 0) return 0;
+
+        int timeoutMs = Math.Min(30_000, Math.Max(5_000, queuedCount * 250));
+        var sw = Stopwatch.StartNew();
+        int best = 0;
+        int stablePasses = 0;
+
+        while (sw.ElapsedMilliseconds < timeoutMs)
+        {
+            conn.ForceRefreshAlgos();
+            int current = conn.AlgoStore.GetAll().Count(a => !beforeAlgoIds.Contains(a.id));
+            if (current >= queuedCount)
+                return current;
+
+            if (current > best)
+            {
+                best = current;
+                stablePasses = 0;
+            }
+            else if (current > 0)
+            {
+                stablePasses++;
+                if (stablePasses >= 6)
+                    return current;
+            }
+
+            Thread.Sleep(250);
+        }
+
+        conn.ForceRefreshAlgos();
+        return Math.Max(best, conn.AlgoStore.GetAll().Count(a => !beforeAlgoIds.Contains(a.id)));
     }
 
     private CommandResult ListTemplates(string? explicitPath = null)
