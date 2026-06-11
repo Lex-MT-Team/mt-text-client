@@ -9,6 +9,18 @@ Versions follow [SemVer](https://semver.org).
 
 ## Unreleased
 
+### Report field completeness (issue #17)
+
+* **`mt_reports_trades` per-trade JSON records and the CSV exports**
+  (`mt_reports_export`, `mt_reports_fleet_export`, `reports export`) now
+  carry `AlgoInfo` (operator-set algorithm label), `OrderComment`,
+  `OrderOpenByComment`, and a composite `AlgoSource` in the
+  `{signature}: {info|openComment|name}` form (blank/`00` signatures
+  normalized to `Manual`). The per-trade JSON records additionally gain
+  `DistanceAtOrder` (previously only present in the opt-in `--metrics`
+  context and the CSV). Regression tests pin the new CSV columns, row
+  values, and the `AlgoSource` fallback chain.
+
 ### V2 import throughput (issue #14)
 
 * **`mt_import_v2` no longer serializes one blocking acknowledgement

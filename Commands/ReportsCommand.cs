@@ -435,6 +435,11 @@ public sealed class ReportsCommand : ICommand
                 AlgoSignature = r.orderInfo.signature ?? "Manual",
                 AlgoId = r.orderInfo.algorithmId,
                 AlgoName = r.orderInfo.AlgorithmInfo.name ?? "",
+                AlgoInfo = r.orderInfo.AlgorithmInfo.info ?? "",
+                OrderComment = r.orderInfo.orderComment ?? "",
+                OrderOpenByComment = r.orderInfo.orderOpenByComment ?? "",
+                AlgoSource = BuildAlgoSource(r),
+                DistanceAtOrder = Math.Round(r.distanceAtOrder, 6),
                 AlgoGroupType = r.orderInfo.algorithmGroupType.ToString(),
                 IsManualOrder = r.orderInfo.IsManualOrder,
                 IsAlgoOrder = r.orderInfo.IsAlgoOrder,
@@ -1259,6 +1264,24 @@ public sealed class ReportsCommand : ICommand
         }
 
         return desc.ToString();
+    }
+
+    private static string BuildAlgoSource(ReportData r)
+    {
+        string signature = r.orderInfo.signature ?? "Manual";
+        if (string.IsNullOrWhiteSpace(signature) || signature == "00")
+            signature = "Manual";
+
+        string algoInfo = r.orderInfo.AlgorithmInfo.info ?? "";
+        string orderOpenByComment = r.orderInfo.orderOpenByComment ?? "";
+        string algoName = r.orderInfo.AlgorithmInfo.name ?? "";
+        string sourceName = !string.IsNullOrWhiteSpace(algoInfo)
+            ? algoInfo
+            : (!string.IsNullOrWhiteSpace(orderOpenByComment) ? orderOpenByComment : algoName);
+
+        return !string.IsNullOrWhiteSpace(sourceName)
+            ? $"{signature}: {sourceName}"
+            : signature;
     }
 
     #endregion
