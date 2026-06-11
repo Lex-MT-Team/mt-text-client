@@ -9,6 +9,32 @@ Versions follow [SemVer](https://semver.org).
 
 ## Unreleased
 
+### Order cache correctness (issue #36)
+
+* **Order-list batches now merge into the cache instead of replacing it.**
+  MTCore delivers `UDS_ORDER_LIST_RESULT` as an incremental batch of order
+  states (frequently one order per message), matching the official
+  client's handling; the previous treat-as-full-snapshot logic cleared
+  every cached order for the market type on each batch, which collapsed
+  the active-order count to 0/1 between fuller batches — most visibly on
+  venues that fragment their batches (Bybit/OKX).
+* **Terminal orders are evicted from the active cache** (a long-lived
+  session no longer accumulates every order it has ever seen). A bounded
+  window of recent terminal snapshots is kept so
+  `mt_account_orders`/`mt_orders_list` with `show_all` still return
+  recent closed orders; fills also persist in the recent-executions ring
+  and the reports store.
+* **Order tools force a fresh read before reporting.** `mt_orders_list`,
+  `mt_orders_cancel`/`_cancel_all`/`_place`/`_move`/`_update_tpsl`,
+  `mt_account_orders`, `mt_account_summary`, `mt_fleet_balances`/
+  `_summary`, and the core dashboard now refresh the order cache via a
+  transient read first, and "no fresh order data received" is reported
+  distinctly from "no active orders".
+* **Order attribution:** each order/execution row now carries
+  `OrderSource` (`ALGORITHM` / `MANUAL` / `TPSL` / `UNKNOWN`) and
+  `DerivedAlgoSignature` — the algo signature recovered from the
+  client-order-id when the wire's own signature field is blank.
+
 ### Leverage info
 
 * **New `mt_exchange_leverage_info` tool** (CLI: `exchange leverage-info`,

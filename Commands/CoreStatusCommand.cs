@@ -355,6 +355,7 @@ public sealed class CoreStatusCommand : ICommand
         }
 
         var rows = new List<object>();
+        Parallel.ForEach(connections, conn => conn.ForceRefreshOrders(timeoutMs: 1_000));
         for (int ci = 0; ci < connections.Count; ci++)
         {
             CoreConnection? conn = connections[ci];

@@ -281,6 +281,7 @@ public sealed class FleetCommand : ICommand
 
         Parallel.ForEach(connections, conn =>
         {
+            conn.ForceRefreshOrders(timeoutMs: 1_000);
             double totalUsdt = conn.AccountStore.GetTotalBalanceUSDT();
             IReadOnlyList<BalanceSnapshot>? balances = conn.AccountStore.GetBalances(false);
             int posCount = conn.AccountStore.OpenPositionCount;
@@ -645,6 +646,7 @@ public sealed class FleetCommand : ICommand
 
         Parallel.ForEach(connected, conn =>
         {
+            conn.ForceRefreshOrders(timeoutMs: 1_000);
             double bal = conn.AccountStore.GetTotalBalanceUSDT();
             if (bal <= 0)
             {

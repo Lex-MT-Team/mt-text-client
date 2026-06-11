@@ -18,7 +18,7 @@ namespace MTTextClient.Core;
 ///   UDS_BALANCE_LIST_RESULT  (26) → BalanceListData   — batch balance update
 ///   UDS_EXECUTION_RESULT     (27) → OrderData         — trade execution (fill)
 ///   UDS_LIST_STATUS_RESULT   (28) → UDSListStatusData — OCO/list status
-///   UDS_ORDER_LIST_RESULT    (29) → OrderListData     — full order snapshot
+///   UDS_ORDER_LIST_RESULT    (29) → OrderListData     — order-state batch
 ///   UDS_ORDER_UPDATE_RESULT  (30) → OrderData         — single order update
 ///   UDS_POSITIONS_RESULT     (31) → PositionListData  — full positions snapshot
 /// </summary>
@@ -37,6 +37,13 @@ public sealed class AccountStore
     // (clientOrderId + parentClientOrderId + orderSettings + qty + price),
     // not just the clientOrderId. Returned by GetOrderRaw for those paths.
     private readonly ConcurrentDictionary<string, OrderData> _ordersRaw = new();
+    // Bounded window of terminal-state order snapshots (FILLED/CANCELED/…)
+    // kept for history-style reads — GetOrders(activeOnly: false). Snapshots
+    // only; the heavy raw OrderData is dropped on terminal transition since
+    // a terminal order can no longer be mutated on the wire.
+    private readonly ConcurrentDictionary<string, OrderSnapshot> _terminalOrders = new();
+    private readonly ConcurrentQueue<string> _terminalOrderKeys = new();
+    private const int MAX_TERMINAL_ORDERS = 200;
 
     // ── Positions ────────────────────────────────────────────
     // Key: "{symbol}:{positionSide}" (e.g. "BTCUSDT:BOTH")
@@ -264,21 +271,10 @@ public sealed class AccountStore
             return;
         }
 
-        // Full snapshot — replace all orders for this market type
-        var keysToRemove = new List<string>();
-        foreach (KeyValuePair<string, OrderSnapshot> kvp in _orders)
-        {
-            if (kvp.Value.MarketType == listData.marketType)
-            {
-                keysToRemove.Add(kvp.Key);
-            }
-        }
-        foreach (string key in keysToRemove)
-        {
-            _orders.TryRemove(key, out _);
-            _ordersRaw.TryRemove(key, out _);
-        }
-
+        // Match MTController / MoonTrader UI semantics: OrderListData is a
+        // batch of order states, not a guaranteed full replacement snapshot.
+        // Clearing a whole market here lets a partial/empty UDS batch erase
+        // active orders that are still open at the venue.
         foreach (KeyValuePair<string, OrderData> kvp in listData.orders)
         {
             OrderData order = kvp.Value;
@@ -308,6 +304,7 @@ public sealed class AccountStore
     private void UpdateOrder(OrderData order)
     {
         string? key = order.clientOrderId ?? order.orderId ?? Guid.NewGuid().ToString();
+        OrderAttribution attribution = ResolveOrderAttribution(order);
         _ordersRaw[key] = order;
         _orders[key] = new OrderSnapshot
         {
@@ -339,10 +336,12 @@ public sealed class AccountStore
             IsEmulated = order.isEmulated,
             IsArchived = order.isArchived,
             TpslStatus = order.tpslStatus,
-            IsAlgoOrder = order.IsAlgoOrder,
-            IsManualOrder = order.IsManualOrder,
+            IsAlgoOrder = attribution.IsAlgoOrder,
+            IsManualOrder = attribution.IsManualOrder,
             AlgoId = order.info.algorithmId,
-            AlgoSignature = order.info.signature ?? "",
+            AlgoSignature = attribution.AlgoSignature,
+            DerivedAlgoSignature = attribution.DerivedAlgoSignature,
+            OrderSource = attribution.OrderSource,
             AlgoName = order.AlgorithmInfo.name ?? "",
             AlgoGroupType = order.info.algorithmGroupType,
             OrderComment = order.info.orderComment ?? "",
@@ -351,6 +350,34 @@ public sealed class AccountStore
             GroupId = order.groupID,
             Timestamp = DateTime.UtcNow
         };
+        // Evict terminal orders from the active cache so a long-lived,
+        // never-disconnecting session does not accumulate every order it has
+        // ever seen. Active = NEW/PARTIALLY_FILLED (IsActiveOrderStatus).
+        // The snapshot moves into a bounded terminal-history window so
+        // GetOrders(activeOnly: false) still returns recent closed orders;
+        // the raw OrderData is dropped (terminal orders cannot be mutated).
+        if (!IsActiveOrderStatus(order.status))
+        {
+            if (_orders.TryRemove(key, out OrderSnapshot? terminal))
+            {
+                if (_terminalOrders.TryAdd(key, terminal))
+                {
+                    _terminalOrderKeys.Enqueue(key);
+                    while (_terminalOrderKeys.Count > MAX_TERMINAL_ORDERS
+                        && _terminalOrderKeys.TryDequeue(out string? evict))
+                    {
+                        _terminalOrders.TryRemove(evict, out _);
+                    }
+                }
+                else
+                {
+                    // Same order reached a terminal state again (duplicate
+                    // push) — keep the newest snapshot, queue position stands.
+                    _terminalOrders[key] = terminal;
+                }
+            }
+            _ordersRaw.TryRemove(key, out _);
+        }
     }
 
     // ── Executions ───────────────────────────────────────────
@@ -364,6 +391,7 @@ public sealed class AccountStore
 
         // Execution is an order fill event — also update the order store
         UpdateOrder(order);
+        OrderAttribution attribution = ResolveOrderAttribution(order);
 
         var exec = new ExecutionSnapshot
         {
@@ -383,8 +411,10 @@ public sealed class AccountStore
             CommissionAsset = order.commissionAsset ?? "",
             CommissionUSDT = order.commissionUSDT,
             IsEmulated = order.isEmulated,
-            IsAlgoOrder = order.IsAlgoOrder,
-            AlgoSignature = order.info.signature ?? "",
+            IsAlgoOrder = attribution.IsAlgoOrder,
+            AlgoSignature = attribution.AlgoSignature,
+            DerivedAlgoSignature = attribution.DerivedAlgoSignature,
+            OrderSource = attribution.OrderSource,
             AlgoId = order.info.algorithmId,
             TransactTime = order.transactTime,
             ExecutionTime = DateTime.UtcNow
@@ -399,6 +429,56 @@ public sealed class AccountStore
         LastOrderUpdate = DateTime.UtcNow;
         OnExecution?.Invoke(exec);
     }
+
+    private static OrderAttribution ResolveOrderAttribution(OrderData order)
+    {
+        string rawSignature = order.info.signature ?? "";
+        string derivedSignature = GetAlgSignatureFromClientOrderId(order.clientOrderId);
+        string algoSignature = !string.IsNullOrWhiteSpace(rawSignature)
+            ? rawSignature
+            : derivedSignature;
+
+        bool isTpsl = order.isTakeProfit
+            || order.isStopLoss
+            || string.Equals(derivedSignature, "TP", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(derivedSignature, "SL", StringComparison.OrdinalIgnoreCase);
+        bool isManual = string.Equals(algoSignature, "00", StringComparison.OrdinalIgnoreCase)
+            || (order.IsManualOrder && string.IsNullOrWhiteSpace(algoSignature));
+        bool isAlgo = !isManual && (order.IsAlgoOrder || !string.IsNullOrWhiteSpace(algoSignature));
+
+        string source = isTpsl
+            ? "TPSL"
+            : isManual
+                ? "MANUAL"
+                : isAlgo
+                    ? "ALGORITHM"
+                    : "UNKNOWN";
+
+        return new OrderAttribution(algoSignature, derivedSignature, source, isAlgo, isManual);
+    }
+
+    private static string GetAlgSignatureFromClientOrderId(string? clientOrderId)
+    {
+        if (string.IsNullOrWhiteSpace(clientOrderId))
+        {
+            return "";
+        }
+
+        // MoonTrader client order ids encode the core instance followed by the
+        // 2-character algorithm/source signature: mtc-d0SG..., mtc-d0TP...,
+        // mtc-d000... (manual). This mirrors the Unity order table fallback.
+        return clientOrderId.Length >= 8
+            && clientOrderId.StartsWith("mtc-", StringComparison.OrdinalIgnoreCase)
+            ? clientOrderId.Substring(6, 2)
+            : "";
+    }
+
+    private readonly record struct OrderAttribution(
+        string AlgoSignature,
+        string DerivedAlgoSignature,
+        string OrderSource,
+        bool IsAlgoOrder,
+        bool IsManualOrder);
 
     // ── Positions ────────────────────────────────────────────
 
@@ -534,16 +614,21 @@ public sealed class AccountStore
         return total;
     }
 
-    /// <summary>Get all active orders.</summary>
+    /// <summary>Get all active orders; with activeOnly=false, also include
+    /// the bounded window of recent terminal orders (history view).</summary>
     public IReadOnlyList<OrderSnapshot> GetOrders(bool activeOnly = true)
     {
         var list = new List<OrderSnapshot>();
         foreach (OrderSnapshot o in _orders.Values)
         {
-            if (!activeOnly || o.Status == OrderStatus.NEW || o.Status == OrderStatus.PARTIALLY_FILLED)
+            if (!activeOnly || IsActiveOrderStatus(o.Status))
             {
                 list.Add(o);
             }
+        }
+        if (!activeOnly)
+        {
+            list.AddRange(_terminalOrders.Values);
         }
         list.Sort((a, b) => b.CreationTime.CompareTo(a.CreationTime));
         return list;
@@ -650,7 +735,7 @@ public sealed class AccountStore
             int count = 0;
             foreach (OrderSnapshot o in _orders.Values)
             {
-                if (o.Status == OrderStatus.NEW || o.Status == OrderStatus.PARTIALLY_FILLED)
+                if (IsActiveOrderStatus(o.Status))
                 {
                     count++;
                 }
@@ -658,6 +743,9 @@ public sealed class AccountStore
             return count;
         }
     }
+
+    private static bool IsActiveOrderStatus(OrderStatus status) =>
+        status is OrderStatus.NEW or OrderStatus.PARTIALLY_FILLED;
 
     /// <summary>Count of open positions.</summary>
     public int OpenPositionCount
@@ -682,6 +770,8 @@ public sealed class AccountStore
         _balances.Clear();
         _orders.Clear();
         _ordersRaw.Clear();
+        _terminalOrders.Clear();
+        _terminalOrderKeys.Clear();
         _positions.Clear();
         _positionsRaw.Clear();
         _recentExecutions.Clear();
@@ -749,6 +839,8 @@ public sealed class OrderSnapshot
     public bool IsManualOrder { get; init; }
     public long AlgoId { get; init; }
     public string AlgoSignature { get; init; } = "";
+    public string DerivedAlgoSignature { get; init; } = "";
+    public string OrderSource { get; init; } = "";
     public string AlgoName { get; init; } = "";
     public AlgorithmGroupType AlgoGroupType { get; init; }
     public string OrderComment { get; init; } = "";
@@ -807,6 +899,8 @@ public sealed class ExecutionSnapshot
     public bool IsEmulated { get; init; }
     public bool IsAlgoOrder { get; init; }
     public string AlgoSignature { get; init; } = "";
+    public string DerivedAlgoSignature { get; init; } = "";
+    public string OrderSource { get; init; } = "";
     public long AlgoId { get; init; }
     public long TransactTime { get; init; }
     public DateTime ExecutionTime { get; init; }

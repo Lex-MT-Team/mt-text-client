@@ -644,21 +644,12 @@ public sealed class CoreConnection : IDisposable
     /// <summary>Force-refresh the orders cache by opening a transient UDS
     /// subscribe and feeding any received OrderListData back into AccountStore.
     /// Use when the long-lived store hasn't been populated (no events since
-    /// connect). Always marks LastOrderUpdate after the call completes so
-    /// callers can distinguish "queried, no orders" from "never queried".
-    /// Returns true if at least one OrderListData drop arrived.</summary>
+    /// connect). Returns true if at least one OrderListData drop arrived.
+    /// A false return is intentionally not treated as "empty orders": MTCore
+    /// can also fail to push a fresh list within the read window.</summary>
     public bool ForceRefreshOrders(int timeoutMs = 5_000)
     {
-        bool gotData = ReadFreshUDSData<OrderListData>(NetworkMessageType.UDS_ORDER_LIST_RESULT, timeoutMs);
-        // Even when no OrderListData drop arrived (genuine empty state — MTCore
-        // doesn't send empty confirmations on this build), record that we
-        // queried successfully so HandleOrders shows "No active orders" instead
-        // of "No order data received yet" on subsequent calls.
-        if (AccountStore.LastOrderUpdate == default)
-        {
-            AccountStore.LastOrderUpdate = DateTime.UtcNow;
-        }
-        return gotData;
+        return ReadFreshUDSData<OrderListData>(NetworkMessageType.UDS_ORDER_LIST_RESULT, timeoutMs);
     }
 
     /// <summary>Force-refresh positions + balances via a transient UDS read.
