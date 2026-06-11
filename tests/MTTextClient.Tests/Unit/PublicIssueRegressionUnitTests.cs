@@ -129,6 +129,32 @@ public sealed class PublicIssueRegressionUnitTests
         distanceAtOrder = 0.123456,
     };
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void Issue40_algorithm_store_tracks_last_wire_update()
+    {
+        // mt_algos_snapshot's freshness fields (source/age_ms/last_update)
+        // ride this store-level timestamp; pin that it is unset before any
+        // wire drop, set by ProcessData, and reset by Clear().
+        var store = new AlgorithmStore();
+        store.LastUpdateUtc.Should().Be(default);
+
+        var listData = new AlgorithmListData
+        {
+            algorithms = new List<AlgorithmData>
+            {
+                new() { id = 7, name = "MW", signature = "MW" },
+            },
+        };
+        store.ProcessData(NetworkMessageType.ALGORITHM_LIST_RESULT, listData);
+
+        store.LastUpdateUtc.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromSeconds(5));
+        store.Count.Should().Be(1);
+
+        store.Clear();
+        store.LastUpdateUtc.Should().Be(default);
+    }
+
     private static (bool Ok, List<AutoStopAlgorithmData> Filters, string? Error) InvokeAutoStopsParser(string raw)
     {
         MethodInfo method = typeof(AutoStopsCommand).GetMethod(

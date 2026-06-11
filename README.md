@@ -911,8 +911,8 @@ MIT — see [LICENSE](LICENSE).
 | `mt_core_shutdown` | Send a service command to MTCore (shutdown or restart). Requires confirm=true. | `confirm` | ✓ |
 | `mt_algos_tpsl_change` | Send a TP/SL algorithm change request to MT-Core (fire-and-forget). | — | — |
 | `mt_algos_profiling` | Request algorithm profiling data from MT-Core. Result is delivered asynchronously via mt_events_poll. | `symbol` | — |
-| `mt_algos_snapshot` | Return a structured snapshot of all groups and algorithms across all connected profiles. Includes group names, algo IDs, names, symbols, running state, and signatures. Designed for state reconciliation — compare desired vs actual state. | — | — |
-| `mt_algos_group_by_name` | Find a group by name (case-insensitive). Returns group ID, name, type, and contained algorithms. | `name` | — |
+| `mt_algos_snapshot` | Return a structured snapshot of all groups and algorithms across all connected profiles. Includes group names, algo IDs, names, symbols, running state, and signatures. Pulls a fresh algorithm read per profile before answering and reports per-profile freshness (source: fresh\|cache, age_ms, last_update) — captured_at is the serialization time, not data freshness. Designed for state reconciliation — compare desired vs actual state. | — | — |
+| `mt_algos_group_by_name` | Find a group by name (case-insensitive). Returns group ID, name, type, and contained algorithms. Pulls a fresh algorithm read before answering so cold caches do not yield false not-found. | `name` | — |
 | `mt_connect` | Connect to an MT-Core server using a saved profile | `profile` | — |
 | `mt_disconnect` | Disconnect from a server | `profile` | — |
 | `mt_status` | Show all connection statuses | — | — |

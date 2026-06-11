@@ -1492,10 +1492,13 @@ public static class ToolRegistry
         yield return Tool("mt_algos_snapshot",
             "Return a structured snapshot of all groups and algorithms across all connected profiles. " +
             "Includes group names, algo IDs, names, symbols, running state, and signatures. " +
-            "Designed for state reconciliation — compare desired vs actual state.",
+            "Pulls a fresh algorithm read per profile before answering and reports per-profile " +
+            "freshness (source: fresh|cache, age_ms, last_update) — captured_at is the serialization " +
+            "time, not data freshness. Designed for state reconciliation — compare desired vs actual state.",
             Prop("profile", "string", "Target server profile (omit for all connected)"));
         yield return Tool("mt_algos_group_by_name",
-            "Find a group by name (case-insensitive). Returns group ID, name, type, and contained algorithms.",
+            "Find a group by name (case-insensitive). Returns group ID, name, type, and contained algorithms. " +
+            "Pulls a fresh algorithm read before answering so cold caches do not yield false not-found.",
             Prop("name",    "string", "Group name to search for", required: true),
             Prop("profile", "string", "Target server profile"));
     }

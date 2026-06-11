@@ -9,6 +9,20 @@ Versions follow [SemVer](https://semver.org).
 
 ## Unreleased
 
+### Snapshot freshness (issue #40)
+
+* **`mt_algos_snapshot` no longer serves a possibly-stale cache.** The
+  long-lived algorithms subscription does not always deliver an initial
+  snapshot, so on a quiet or freshly-connected profile the snapshot tool
+  could return empty/stale data unless `mt_algos_list` happened to run
+  first. The handler now pulls a fresh algorithm read per connected
+  profile (the same transient-subscribe prime the list path uses) and
+  reports per-profile freshness metadata: `source` (`fresh`|`cache`),
+  `age_ms`, and `last_update`. `captured_at` remains the serialization
+  timestamp and is documented as such. `mt_algos_group_by_name` gets the
+  same cold-cache prime so lookups on quiet profiles no longer yield
+  false not-found.
+
 ### Display-name completeness (issue #15)
 
 * **`algos search` / `mt_algos_search`** now resolve the display name

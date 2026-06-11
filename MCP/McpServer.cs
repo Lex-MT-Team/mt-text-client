@@ -2738,9 +2738,21 @@ public sealed class McpServer
         {
             if (!conn.IsConnected) continue;
 
+            // The long-lived algorithms subscription does not always deliver
+            // an initial snapshot (typically only event-driven updates), so a
+            // quiet or freshly-connected profile can have an empty/stale
+            // cache. Pull a fresh snapshot before reading — same transient-
+            // subscribe prime the algos list path uses — and report data
+            // freshness so reconciliation clients can detect staleness.
+            bool fresh = conn.ForceRefreshAlgos();
+            DateTime lastUpdate = conn.AlgoStore.LastUpdateUtc;
+
             var serverObj = new JObject
             {
                 ["profile"] = conn.Name,
+                ["source"] = fresh ? "fresh" : "cache",
+                ["last_update"] = lastUpdate == default ? null : lastUpdate.ToString("o"),
+                ["age_ms"] = lastUpdate == default ? null : (long)(DateTime.UtcNow - lastUpdate).TotalMilliseconds,
                 ["groups"] = new JArray()
             };
 
@@ -2820,6 +2832,10 @@ public sealed class McpServer
         CoreConnection? conn = _manager.Resolve(profile);
         if (conn == null)
             return new JObject { ["error"] = "No active connection" };
+
+        // Same cold-cache prime as mt_algos_snapshot — group lookups on a
+        // quiet profile would otherwise read an empty store.
+        conn.ForceRefreshAlgos();
 
         AlgorithmGroupData? group = conn.AlgoStore.FindGroupByName(name);
         if (group == null)
