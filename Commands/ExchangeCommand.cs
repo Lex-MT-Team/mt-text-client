@@ -18,6 +18,7 @@ namespace MTTextClient.Commands;
 /// exchange ticker24 <symbol> — 24h ticker statistics
 /// exchange klines <symbol> [interval] [limit] — candlestick data
 /// exchange trades <symbol> [limit] — recent trades
+/// exchange leverage-info <symbol> [market] — configured leverage/max leverage/risk limits
 /// </summary>
 public sealed class ExchangeCommand : ICommand
 {
@@ -27,7 +28,7 @@ public sealed class ExchangeCommand : ICommand
 
     public string Name => "exchange";
     public string Description => "Exchange info: trade pairs, prices, ticker, klines, trades";
-    public string Usage => "exchange pairs|search|detail|summary|limits|ticker24|klines|trades";
+    public string Usage => "exchange pairs|search|detail|summary|limits|ticker24|klines|trades|funding-rate|leverage-info|leverage-brackets";
 
     public ExchangeCommand(ConnectionManager manager)
     {
@@ -83,7 +84,8 @@ public sealed class ExchangeCommand : ICommand
             "trades" or "recent-trades" => Trades(conn, subArgs),
             // Funding rate + leverage brackets (read-only).
             "funding-rate" => FundingRate(conn, subArgs),
-            "leverage-brackets" => LeverageBrackets(conn, subArgs),
+            "leverage" or "get-leverage" or "leverage-info" => LeverageInfo(conn, subArgs),
+            "leverage-brackets" => LeverageInfo(conn, subArgs),
             _ => CommandResult.Fail($"Unknown subcommand: {subCmd}. {Usage}")
         };
     }
@@ -754,31 +756,15 @@ public sealed class ExchangeCommand : ICommand
     }
 
     /// <summary>
-    /// Return whatever leverage information is locally available.
-    ///
-    /// <para>Discovery findings:</para>
-    /// <list type="bullet">
-    ///   <item>MTShared exposes a <c>LeverageInfoUpdateData</c> with three
-    ///   dictionaries (<c>leverages</c>, <c>maxLeverages</c>, <c>riskLimits</c>),
-    ///   but it's not currently surfaced via a public store on
-    ///   <see cref="CoreConnection"/> — the existing wrappers are write-only
-    ///   (<c>SendModifyLeverageRequest</c>, <c>SendModifyLeverageBuySellRequest</c>).</item>
-    ///   <item>There is NO dedicated <c>SendGetLeverageBracketsRequest</c> RPC.
-    ///   The concept of "leverage brackets" (max-leverage tiers by notional
-    ///   range) is not modelled by MTShared as a separate type.</item>
-    ///   <item>The only locally-cached leverage data is the per-position
-    ///   <c>Leverage</c> field on <see cref="AccountStore"/> position rows.</item>
-    /// </list>
-    ///
-    /// This handler returns what's available: the current leverage observed on
-    /// any open position for the symbol.  When no position exists, surfaces a
-    /// structured <c>leverage_brackets_not_exposed_by_mtshared</c> notice with
-    /// pointers to the future work needed to expose the full brackets table.
+    /// Return locally cached leverage information.
+    /// MTCore pushes LeverageInfoUpdateData independently of open positions,
+    /// so this path can answer flat-symbol leverage/max-leverage/risk-limit
+    /// queries once the cache has seen a core refresh.
     /// </summary>
-    private CommandResult LeverageBrackets(CoreConnection conn, string[] subArgs)
+    private CommandResult LeverageInfo(CoreConnection conn, string[] subArgs)
     {
         if (subArgs.Length < 1)
-            return CommandResult.Fail("Usage: exchange leverage-brackets <symbol> [<market_type=FUTURES>]");
+            return CommandResult.Fail("Usage: exchange leverage-info <symbol> [<market_type=FUTURES>]");
         string symbol = subArgs[0].ToLowerInvariant();
         MarketType marketType = MarketType.FUTURES;
         if (subArgs.Length >= 2 &&
@@ -786,10 +772,13 @@ public sealed class ExchangeCommand : ICommand
             Enum.IsDefined(typeof(MarketType), mt))
             marketType = mt;
 
-        // Read whatever leverage data is locally observable.
+        bool gotFreshLeverageInfo = conn.ForceRefreshLeverageInfo(timeoutMs: 2_000);
+        LeverageInfoSnapshot leverageInfo = conn.ExchangeInfoStore.GetLeverageInfo(symbol, marketType);
+
         int? observedLeverage = null;
         try
         {
+            conn.ForceRefreshAccount(timeoutMs: 1_500);
             var pos = conn.AccountStore.GetPositions()
                 .FirstOrDefault(p => string.Equals(p.Symbol, symbol, StringComparison.OrdinalIgnoreCase) &&
                                      p.MarketType == marketType);
@@ -797,25 +786,88 @@ public sealed class ExchangeCommand : ICommand
         }
         catch { /* best-effort */ }
 
+        int? crossLeverage = GetLeverage(leverageInfo, LeverageType.CROSS);
+        int? netLeverage = GetLeverage(leverageInfo, LeverageType.ISOLATED_NET);
+        int? longLeverage = GetLeverage(leverageInfo, LeverageType.ISOLATED_LONG);
+        int? shortLeverage = GetLeverage(leverageInfo, LeverageType.ISOLATED_SHORT);
+        int? unknownLeverage = GetLeverage(leverageInfo, LeverageType.UNKNOWN);
+        int? buyLeverage = longLeverage ?? netLeverage ?? crossLeverage ?? unknownLeverage ?? observedLeverage;
+        int? sellLeverage = shortLeverage ?? netLeverage ?? crossLeverage ?? unknownLeverage ?? observedLeverage;
+        int? effectiveLeverage = crossLeverage ?? netLeverage ?? unknownLeverage ?? observedLeverage ?? longLeverage ?? shortLeverage;
+
+        string cacheAge = leverageInfo.LastUpdatedUtc.HasValue
+            ? FormatTimeSpan(DateTime.UtcNow - leverageInfo.LastUpdatedUtc.Value)
+            : "none";
+        string summary = leverageInfo.HasWireData
+            ? $"effective={FormatLeverage(effectiveLeverage)}, buy={FormatLeverage(buyLeverage)}, sell={FormatLeverage(sellLeverage)}, max={FormatLeverage(leverageInfo.MaxLeverage)}"
+            : "no cached LeverageInfoUpdateData yet";
+
         return CommandResult.Ok(
-            $"[{conn.Name}] {symbol} {marketType} — leverage_brackets: " +
-            (observedLeverage.HasValue
-                ? $"observed_position_leverage={observedLeverage}x (brackets table not exposed by MTShared)"
-                : "no open position to read; brackets table not exposed by MTShared"),
+            $"[{conn.Name}] {symbol} {marketType} — leverage_info: {summary}; cache_age={cacheAge}",
             new
             {
                 Server = conn.Name,
                 Symbol = symbol,
                 MarketType = marketType.ToString(),
+                EffectiveLeverage = effectiveLeverage,
+                BuyLeverage = buyLeverage,
+                SellLeverage = sellLeverage,
+                CrossLeverage = crossLeverage,
+                IsolatedNetLeverage = netLeverage,
+                IsolatedLongLeverage = longLeverage,
+                IsolatedShortLeverage = shortLeverage,
+                UnknownLeverage = unknownLeverage,
+                MaxLeverage = leverageInfo.MaxLeverage,
+                RiskLimits = ToStringDoubleDict(leverageInfo.RiskLimits),
+                Leverages = ToStringIntDict(leverageInfo.Leverages),
                 ObservedPositionLeverage = observedLeverage,
+                HasLeverageInfo = leverageInfo.HasWireData,
+                FreshLeverageInfoReceived = gotFreshLeverageInfo,
+                LastLeverageInfoUpdateUtc = leverageInfo.LastUpdatedUtc?.ToString("o"),
+                CacheAge = cacheAge,
+                LeverageInfoExposedByMtShared = true,
                 BracketsExposedByMtShared = false,
-                Notice = "leverage_brackets_not_exposed_by_mtshared: MTShared has no LeverageBracket* type. " +
-                         "The request is partially fulfilled — current per-symbol leverage is readable " +
-                         "from open positions, but the full bracket tier table (notional-range → max-leverage map) " +
-                         "is not modelled by the vendor library on this build. Future work: extend CoreConnection " +
-                         "with a read wrapper for LeverageInfoUpdateData (3 dictionaries: leverages, maxLeverages, riskLimits).",
-                Source = "AccountStore.GetPositions",
+                Notice = leverageInfo.HasWireData
+                    ? "leverage_info_from_mtshared_cache: configured leverage, max leverage, and risk limits are from LeverageInfoUpdateData. " +
+                      "leverage_brackets_not_exposed_by_mtshared: full notional-tier bracket tables are still not modelled as separate MTShared rows."
+                    : "leverage_info_cache_empty: no LeverageInfoUpdateData has been observed in this mt-text-client session yet. " +
+                      "MTCore may emit it only on its leverage refresh cadence. leverage_brackets_not_exposed_by_mtshared: full notional-tier bracket tables are not modelled as separate MTShared rows.",
+                Source = "ExchangeInfoStore LeverageInfoUpdateData cache + AccountStore.GetPositions fallback",
             });
+    }
+
+    private static int? GetLeverage(LeverageInfoSnapshot snapshot, LeverageType type) =>
+        snapshot.Leverages.TryGetValue(type, out int value) ? value : null;
+
+    private static string FormatLeverage(int? value) =>
+        value.HasValue ? $"{value.Value}x" : "unknown";
+
+    private static string FormatTimeSpan(TimeSpan span)
+    {
+        if (span.TotalSeconds < 1) return "now";
+        if (span.TotalMinutes < 1) return $"{span.TotalSeconds:F0}s";
+        if (span.TotalHours < 1) return $"{span.TotalMinutes:F0}m";
+        return $"{span.TotalHours:F1}h";
+    }
+
+    private static Dictionary<string, int> ToStringIntDict(IReadOnlyDictionary<LeverageType, int> source)
+    {
+        var dict = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (KeyValuePair<LeverageType, int> kvp in source)
+        {
+            dict[kvp.Key.ToString()] = kvp.Value;
+        }
+        return dict;
+    }
+
+    private static Dictionary<string, double> ToStringDoubleDict(IReadOnlyDictionary<LeverageType, double> source)
+    {
+        var dict = new Dictionary<string, double>(StringComparer.Ordinal);
+        foreach (KeyValuePair<LeverageType, double> kvp in source)
+        {
+            dict[kvp.Key.ToString()] = kvp.Value;
+        }
+        return dict;
     }
 
 }

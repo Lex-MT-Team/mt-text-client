@@ -314,6 +314,10 @@ public sealed class CoreConnection : IDisposable
             (msgType, data) =>
             {
                 AccountStore.ProcessData(msgType, data);
+                if (msgType == NetworkMessageType.LEVERAGE_INFO_UPDATE_DATA)
+                {
+                    ExchangeInfoStore.ProcessData(msgType, data);
+                }
             });
 
         // 5. Notifications subscription — required by MTCore 0.7.23902's push
@@ -618,6 +622,10 @@ public sealed class CoreConnection : IDisposable
                 foreach (var item in collected)
                 {
                     AccountStore.ProcessData(msgType, item);
+                    if (msgType == NetworkMessageType.LEVERAGE_INFO_UPDATE_DATA)
+                    {
+                        ExchangeInfoStore.ProcessData(msgType, item);
+                    }
                 }
                 return collected.Count > 0;
             }
@@ -636,21 +644,12 @@ public sealed class CoreConnection : IDisposable
     /// <summary>Force-refresh the orders cache by opening a transient UDS
     /// subscribe and feeding any received OrderListData back into AccountStore.
     /// Use when the long-lived store hasn't been populated (no events since
-    /// connect). Always marks LastOrderUpdate after the call completes so
-    /// callers can distinguish "queried, no orders" from "never queried".
-    /// Returns true if at least one OrderListData drop arrived.</summary>
+    /// connect). Returns true if at least one OrderListData drop arrived.
+    /// A false return is intentionally not treated as "empty orders": MTCore
+    /// can also fail to push a fresh list within the read window.</summary>
     public bool ForceRefreshOrders(int timeoutMs = 5_000)
     {
-        bool gotData = ReadFreshUDSData<OrderListData>(NetworkMessageType.UDS_ORDER_LIST_RESULT, timeoutMs);
-        // Even when no OrderListData drop arrived (genuine empty state — MTCore
-        // doesn't send empty confirmations on this build), record that we
-        // queried successfully so HandleOrders shows "No active orders" instead
-        // of "No order data received yet" on subsequent calls.
-        if (AccountStore.LastOrderUpdate == default)
-        {
-            AccountStore.LastOrderUpdate = DateTime.UtcNow;
-        }
-        return gotData;
+        return ReadFreshUDSData<OrderListData>(NetworkMessageType.UDS_ORDER_LIST_RESULT, timeoutMs);
     }
 
     /// <summary>Force-refresh positions + balances via a transient UDS read.
@@ -672,6 +671,15 @@ public sealed class CoreConnection : IDisposable
         bool gotData = ReadFreshUDSData<BalanceListData>(NetworkMessageType.UDS_BALANCE_LIST_RESULT, timeoutMs);
         if (AccountStore.LastBalanceUpdate == default) { AccountStore.LastBalanceUpdate = DateTime.UtcNow; }
         return gotData;
+    }
+
+    /// <summary>Force-refresh leverage/max-leverage/risk-limit cache by
+    /// opening a transient UDS read. Some cores only push leverage info on
+    /// their own refresh cadence, so false means "not replayed now", not
+    /// "no leverage data exists".</summary>
+    public bool ForceRefreshLeverageInfo(int timeoutMs = 5_000)
+    {
+        return ReadFreshUDSData<LeverageInfoUpdateData>(NetworkMessageType.LEVERAGE_INFO_UPDATE_DATA, timeoutMs);
     }
 
     /// <summary>Force-refresh the algorithms cache by opening a transient
@@ -776,6 +784,20 @@ public sealed class CoreConnection : IDisposable
                 msgString = n.message ?? string.Empty,
             },
             timeoutMs: timeoutMs);
+    }
+
+    public bool TrySendAlgorithmRequestNoWait(AlgorithmData algoData)
+    {
+        if (_udpClient == null) { return false; }
+        try
+        {
+            _udpClient.SendAlgorithmRequest(algoData);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>

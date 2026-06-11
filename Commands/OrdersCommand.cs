@@ -131,10 +131,14 @@ public sealed class OrdersCommand : ICommand
             return error!;
         }
 
+        bool gotFreshOrders = conn.ForceRefreshOrders();
         IReadOnlyList<OrderSnapshot>? orders = conn.AccountStore.GetOrders(activeOnly: true);
         if (orders.Count == 0)
         {
-            return CommandResult.Ok($"[{conn.Name}] No active orders.");
+            string msg = gotFreshOrders
+                ? $"[{conn.Name}] No active orders."
+                : $"[{conn.Name}] No fresh order data received; local active-order cache is empty.";
+            return CommandResult.Ok(msg);
         }
 
         var data = new List<object>(orders.Count);
@@ -153,7 +157,8 @@ public sealed class OrdersCommand : ICommand
                 TIF = o.TimeInForce.ToString(),
                 TP = o.IsTakeProfit ? "TP" : "",
                 SL = o.IsStopLoss ? "SL" : "",
-                Algo = o.IsAlgoOrder ? o.AlgoSignature : "Manual",
+                Source = o.OrderSource,
+                Algo = o.IsManualOrder ? "Manual" : o.AlgoSignature,
                 Emulated = o.IsEmulated
             });
         }
@@ -213,6 +218,7 @@ public sealed class OrdersCommand : ICommand
         string? clientOrderId = args[0];
 
         // Find the order in AccountStore
+        conn.ForceRefreshOrders();
         IReadOnlyList<OrderSnapshot>? orders = conn.AccountStore.GetOrders(activeOnly: true);
         OrderSnapshot? order = null;
         foreach (OrderSnapshot o in orders)
@@ -259,6 +265,7 @@ public sealed class OrdersCommand : ICommand
         }
 
         string? symbol = args.Length > 0 ? args[0] : null;
+        conn.ForceRefreshOrders();
         IReadOnlyList<OrderSnapshot>? activeOrders = conn.AccountStore.GetOrders(activeOnly: true);
         int orderCount = activeOrders.Count;
 
@@ -768,6 +775,7 @@ public sealed class OrdersCommand : ICommand
         // BUG-2 fix: snapshot pre-place open-order ids so we can recover the
         // exchange-assigned ClientOrderId post-send (the wire response does not
         // echo it directly; we diff the AccountStore instead).
+        conn.ForceRefreshOrders(timeoutMs: 1_500);
         var preIds = new HashSet<string>(
             (conn.AccountStore.GetOrders(activeOnly: true) ?? Array.Empty<OrderSnapshot>())
                 .Select(o => o.ClientOrderId ?? string.Empty));
@@ -824,6 +832,7 @@ public sealed class OrdersCommand : ICommand
         {
             for (int attempt = 0; attempt < 10 && newCoid == null; attempt++)
             {
+                conn.ForceRefreshOrders(timeoutMs: 500);
                 var post = conn.AccountStore.GetOrders(activeOnly: true) ?? Array.Empty<OrderSnapshot>();
                 var match = post.FirstOrDefault(o =>
                     o.ClientOrderId is not null
@@ -862,6 +871,7 @@ public sealed class OrdersCommand : ICommand
         }
 
         // Find the order to get its market type
+        conn.ForceRefreshOrders();
         IReadOnlyList<OrderSnapshot>? orders = conn.AccountStore.GetOrders(activeOnly: true);
         OrderSnapshot? order = null;
         foreach (OrderSnapshot o in orders)
@@ -886,6 +896,7 @@ public sealed class OrdersCommand : ICommand
         // BUG-5 fix: snapshot the pre-move active-order id set so we can
         // detect cancel-and-replace exchanges (Bybit) where MoveOrder
         // produces a new ClientOrderId server-side.
+        conn.ForceRefreshOrders(timeoutMs: 1_500);
         var preIds = new HashSet<string>(
             (conn.AccountStore.GetOrders(activeOnly: true) ?? Array.Empty<OrderSnapshot>())
                 .Select(o => o.ClientOrderId ?? string.Empty));
@@ -906,6 +917,7 @@ public sealed class OrdersCommand : ICommand
             decimal targetPrice = (decimal)newPrice;
             for (int attempt = 0; attempt < 10; attempt++)
             {
+                conn.ForceRefreshOrders(timeoutMs: 500);
                 var post = conn.AccountStore.GetOrders(activeOnly: true) ?? Array.Empty<OrderSnapshot>();
                 // Same id, repriced -> Binance-style; trust it.
                 var same = post.FirstOrDefault(o => o.ClientOrderId == clientOrderId);
@@ -1797,6 +1809,7 @@ public sealed class OrdersCommand : ICommand
         // OrderData must be echoed back with only the TP/SL settings
         // mutated. Look up the order by clientOrderId, or fall back to a
         // unique symbol+side match in the active orders list.
+        conn.ForceRefreshOrders();
         OrderData? cachedOrder = null;
         if (!string.IsNullOrEmpty(clientOrderId))
         {

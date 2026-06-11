@@ -599,8 +599,9 @@ public sealed class McpServer
             "mt_exchange_ticker24" => $"exchange ticker24 {arguments["symbol"]?.Value<string>() ?? ""}{ResolveTicker24Market(arguments)}{profileSuffix}",
             "mt_exchange_klines" => BuildKlinesCommand(arguments, profileSuffix),
             "mt_exchange_trades" => $"exchange trades {arguments["symbol"]?.Value<string>() ?? ""}{profileSuffix}",
-            // Funding rate + leverage brackets (read-only).
+            // Funding rate + leverage info (read-only).
             "mt_exchange_funding_rate" => BuildExchangeFundingRateCommand(arguments, profileSuffix),
+            "mt_exchange_leverage_info" => BuildExchangeLeverageInfoCommand(arguments, profileSuffix),
             "mt_exchange_leverage_brackets" => BuildExchangeLeverageBracketsCommand(arguments, profileSuffix),
 
             // Algorithms
@@ -1296,14 +1297,16 @@ public sealed class McpServer
     {
         var parts = new List<string> { "autostops add" };
         AppendFlag(parts, "--max-loss", arguments["max_loss"]?.Value<string>());
-        AppendFlag(parts, "--value-max", arguments["value_max"]?.Value<string>());
-        if (arguments["is_range"]?.Value<bool>() == true) parts.Add("--is-range");
+        AppendFlag(parts, "--info", arguments["info"]?.Value<string>());
         AppendFlagSanitised(parts, "--filter-type", arguments["filter_type"]?.Value<string>(), AutoStopFilterTypes);
         AppendFlagSanitised(parts, "--source-type", arguments["source_type"]?.Value<string>(), AutoStopSourceTypes);
         AppendFlagSanitised(parts, "--market", arguments["market"]?.Value<string>(), AutoStopMarkets);
         AppendFlag(parts, "--timeframe-ms", arguments["timeframe_ms"]?.Value<string>());
         AppendFlag(parts, "--symbols", arguments["symbols"]?.Value<string>(), allowSpaces: false);
         AppendFlag(parts, "--quotes", arguments["quotes"]?.Value<string>(), allowSpaces: false);
+        AppendFlag(parts, "--asset", arguments["asset"]?.Value<string>(), allowSpaces: false);
+        AppendFlag(parts, "--algorithm-comment", arguments["algorithm_comment"]?.Value<string>());
+        AppendFlag(parts, "--report-comment", arguments["report_comment"]?.Value<string>());
         if (arguments["pause_algo"]?.Value<bool>() == true) parts.Add("--pause-algo");
         return string.Join(" ", parts) + profileSuffix + confirm;
     }
@@ -1315,15 +1318,16 @@ public sealed class McpServer
         if (!int.TryParse(idx, out _)) idx = "0";
         parts.Add(idx);
         AppendFlag(parts, "--max-loss", arguments["max_loss"]?.Value<string>());
-        AppendFlag(parts, "--value-max", arguments["value_max"]?.Value<string>());
-        if (arguments["is_range"]?.Value<bool>() == true) parts.Add("--is-range");
-        if (arguments["no_range"]?.Value<bool>() == true) parts.Add("--no-range");
+        AppendFlag(parts, "--info", arguments["info"]?.Value<string>());
         AppendFlagSanitised(parts, "--filter-type", arguments["filter_type"]?.Value<string>(), AutoStopFilterTypes);
         AppendFlagSanitised(parts, "--source-type", arguments["source_type"]?.Value<string>(), AutoStopSourceTypes);
         AppendFlagSanitised(parts, "--market", arguments["market"]?.Value<string>(), AutoStopMarkets);
         AppendFlag(parts, "--timeframe-ms", arguments["timeframe_ms"]?.Value<string>());
         AppendFlag(parts, "--symbols", arguments["symbols"]?.Value<string>(), allowSpaces: false);
         AppendFlag(parts, "--quotes", arguments["quotes"]?.Value<string>(), allowSpaces: false);
+        AppendFlag(parts, "--asset", arguments["asset"]?.Value<string>(), allowSpaces: false);
+        AppendFlag(parts, "--algorithm-comment", arguments["algorithm_comment"]?.Value<string>());
+        AppendFlag(parts, "--report-comment", arguments["report_comment"]?.Value<string>());
         if (arguments["pause_algo"]?.Value<bool>() == true) parts.Add("--pause-algo");
         if (arguments["no_pause_algo"]?.Value<bool>() == true) parts.Add("--no-pause-algo");
         if (arguments["enabled"] is JValue enVal && enVal.Type == JTokenType.Boolean)
@@ -1366,7 +1370,7 @@ public sealed class McpServer
         parts.Add($"{flag} {value}");
     }
 
-    // Funding rate + leverage brackets builders.
+    // Funding rate + leverage info builders.
     private static string BuildExchangeFundingRateCommand(JObject arguments, string profileSuffix)
     {
         var parts = new List<string> { "exchange funding-rate" };
@@ -1383,7 +1387,17 @@ public sealed class McpServer
 
     private static string BuildExchangeLeverageBracketsCommand(JObject arguments, string profileSuffix)
     {
-        var parts = new List<string> { "exchange leverage-brackets" };
+        return BuildExchangeLeverageCommand(arguments, profileSuffix, "exchange leverage-brackets");
+    }
+
+    private static string BuildExchangeLeverageInfoCommand(JObject arguments, string profileSuffix)
+    {
+        return BuildExchangeLeverageCommand(arguments, profileSuffix, "exchange leverage-info");
+    }
+
+    private static string BuildExchangeLeverageCommand(JObject arguments, string profileSuffix, string command)
+    {
+        var parts = new List<string> { command };
         string? sym = arguments["symbol"]?.Value<string>();
         if (!string.IsNullOrWhiteSpace(sym))
         {
@@ -2724,9 +2738,21 @@ public sealed class McpServer
         {
             if (!conn.IsConnected) continue;
 
+            // The long-lived algorithms subscription does not always deliver
+            // an initial snapshot (typically only event-driven updates), so a
+            // quiet or freshly-connected profile can have an empty/stale
+            // cache. Pull a fresh snapshot before reading — same transient-
+            // subscribe prime the algos list path uses — and report data
+            // freshness so reconciliation clients can detect staleness.
+            bool fresh = conn.ForceRefreshAlgos();
+            DateTime lastUpdate = conn.AlgoStore.LastUpdateUtc;
+
             var serverObj = new JObject
             {
                 ["profile"] = conn.Name,
+                ["source"] = fresh ? "fresh" : "cache",
+                ["last_update"] = lastUpdate == default ? null : lastUpdate.ToString("o"),
+                ["age_ms"] = lastUpdate == default ? null : (long)(DateTime.UtcNow - lastUpdate).TotalMilliseconds,
                 ["groups"] = new JArray()
             };
 
@@ -2806,6 +2832,10 @@ public sealed class McpServer
         CoreConnection? conn = _manager.Resolve(profile);
         if (conn == null)
             return new JObject { ["error"] = "No active connection" };
+
+        // Same cold-cache prime as mt_algos_snapshot — group lookups on a
+        // quiet profile would otherwise read an empty store.
+        conn.ForceRefreshAlgos();
 
         AlgorithmGroupData? group = conn.AlgoStore.FindGroupByName(name);
         if (group == null)

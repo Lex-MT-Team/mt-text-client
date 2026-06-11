@@ -83,9 +83,6 @@ public sealed class AutoStopsCrudSmokeTests
         var addResp = await _mcp.CallTool("mt_autostops_add", new
         {
             max_loss = "-1000000",
-            value_max = "1000000",
-            filter_type = "GLOBAL_BY_SYMBOL",
-            source_type = "VALUE",
             market = "FUTURES",
             timeframe_ms = "3600000",
             pause_algo = true,

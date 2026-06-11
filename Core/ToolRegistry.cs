@@ -99,7 +99,7 @@ public static class ToolRegistry
             "Get recent trades for a symbol from the exchange.",
             Prop("symbol", "string", "Symbol (e.g. BTCUSDT)", required: true),
             Prop("profile", "string", "Target server profile"));
-        // Funding rate + leverage brackets (read-only from cached subscription state).
+        // Funding rate + leverage info (read-only from cached subscription state).
         yield return Tool("mt_exchange_funding_rate",
             "Get the funding-rate fields for a symbol (last funding rate/time, next funding rate/time, mark price, last price). " +
             "Read-only; no confirm. Returns whatever the symbol's live-markets cache currently holds, " +
@@ -107,12 +107,18 @@ public static class ToolRegistry
             Prop("symbol", "string", "Trading symbol (lowercase, e.g. btcusdt)", required: true),
             Prop("market_type", "string", "Market type (default FUTURES — SPOT typically has no funding rate)"),
             Prop("profile", "string", "Target server profile"));
+        yield return Tool("mt_exchange_leverage_info",
+            "Get configured/effective leverage, max leverage, and risk-limit data for a symbol from MTCore's " +
+            "LeverageInfoUpdateData cache. Read-only; no confirm. Does not require an open position, but the " +
+            "cache must have observed a core leverage refresh in this mt-text-client session.",
+            Prop("symbol", "string", "Trading symbol (lowercase, e.g. btcusdt)", required: true),
+            Prop("market_type", "string", "Market type (default FUTURES)"),
+            Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_exchange_leverage_brackets",
-            "Return locally-observable leverage info for a symbol — the current effective leverage on any open " +
-            "position for the symbol. " +
-            "Read-only; no confirm. NOTE: full bracket-tier tables (notional-range → max-leverage map) " +
-            "are not exposed by the current vendor library; this tool surfaces only what the position cache reports, " +
-            "with a structured leverage_brackets_not_available notice when no richer source is on the wire.",
+            "Compatibility alias for leverage info. Returns configured/effective leverage, max leverage, and risk-limit " +
+            "data from MTCore's LeverageInfoUpdateData cache when available, with open-position leverage only as " +
+            "a fallback. Read-only; no confirm. NOTE: full bracket-tier tables (notional-range → max-leverage map) " +
+            "are not exposed as separate MTShared rows.",
             Prop("symbol", "string", "Trading symbol (lowercase, e.g. btcusdt)", required: true),
             Prop("market_type", "string", "Market type (default FUTURES)"),
             Prop("profile", "string", "Target server profile"));
@@ -618,49 +624,46 @@ public static class ToolRegistry
         // tools mutate that blob via UpdateProfileSettings.
         yield return Tool("mt_autostops_add",
             "Append a new balance auto-stop filter. Created disabled — call mt_autostops_start to activate. " +
-            "max_loss is the lower bound of the value range (e.g. -0.1 USDT) and value_max its upper bound. " +
-            "filter_type ∈ {GLOBAL_BY_SYMBOL, ALGO_SYMBOLS, ALGO_TOTAL, CUSTOM}; " +
-            "source_type ∈ {VALUE, PRICE_DELTA_SUM, PROFIT_FACTOR}; market ∈ {SPOT, MARGIN, FUTURES, DELIVERY}.",
-            Prop("max_loss", "string", "Lower bound of the value range (e.g. -0.1, 5.0)", required: true),
-            Prop("value_max", "string", "Upper bound of the value range (default 1e15)"),
-            Prop("is_range", "boolean", "Treat min/max as a range (default false → only min is the trigger)"),
-            Prop("filter_type", "string", "Filter type (default GLOBAL_BY_SYMBOL)"),
-            Prop("source_type", "string", "Value source type (default VALUE)"),
+            "Writes the real MTShared AutoStopAlgorithmData[] shape: max_loss → minMargin, symbols → symbolFilter, " +
+            "quotes/asset → asset, pause_algo → panicIfTriggered, timeframe_ms → AutoStopsTimeFrame.",
+            Prop("max_loss", "string", "minMargin threshold (e.g. -0.1, -5.0)", required: true),
+            Prop("info", "string", "Optional display info stored in AutoStopAlgorithmData.info"),
             Prop("market", "string", "Market type (default FUTURES)"),
             Prop("timeframe_ms", "string", "Evaluation timeframe in ms (default 86400000 = 24h)"),
-            Prop("symbols", "string", "Optional comma-separated symbol filter"),
-            Prop("quotes", "string", "Optional comma-separated quote-asset filter"),
-            Prop("pause_algo", "boolean", "On trigger, pause matching algos rather than panic-close (default false)"),
+            Prop("symbols", "string", "Optional symbolFilter string"),
+            Prop("quotes", "string", "Optional quote asset; first value is used as asset"),
+            Prop("asset", "string", "Asset field (default usdt)"),
+            Prop("algorithm_comment", "string", "Optional algorithmComment filter"),
+            Prop("report_comment", "string", "Optional reportComment filter"),
+            Prop("pause_algo", "boolean", "Set panicIfTriggered=true"),
             Prop("confirm", "boolean", "Must be true to proceed", required: true),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_autostops_edit",
             "Mutate an existing balance auto-stop filter at the given index. " +
             "Every other field is optional — only the ones you pass are updated.",
             Prop("index", "string", "Zero-based filter index (use mt_autostops_list to discover)", required: true),
-            Prop("max_loss", "string", "New lower bound"),
-            Prop("value_max", "string", "New upper bound"),
-            Prop("is_range", "boolean", "If true, set isRange=true"),
-            Prop("no_range", "boolean", "If true, set isRange=false"),
-            Prop("filter_type", "string", "Filter type"),
-            Prop("source_type", "string", "Value source type"),
+            Prop("max_loss", "string", "New minMargin threshold"),
+            Prop("info", "string", "New info field"),
             Prop("market", "string", "Market type"),
             Prop("timeframe_ms", "string", "Evaluation timeframe in ms"),
-            Prop("symbols", "string", "Symbol-list filter"),
-            Prop("quotes", "string", "Quote-list filter"),
-            Prop("pause_algo", "boolean", "If true, set pauseAlgo=true"),
-            Prop("no_pause_algo", "boolean", "If true, set pauseAlgo=false"),
-            Prop("enabled", "boolean", "Set isEnabled explicitly"),
+            Prop("symbols", "string", "New symbolFilter string"),
+            Prop("quotes", "string", "Quote asset; first value is used as asset"),
+            Prop("asset", "string", "New asset field"),
+            Prop("algorithm_comment", "string", "New algorithmComment filter"),
+            Prop("report_comment", "string", "New reportComment filter"),
+            Prop("pause_algo", "boolean", "If true, set panicIfTriggered=true"),
+            Prop("no_pause_algo", "boolean", "If true, set panicIfTriggered=false"),
+            Prop("enabled", "boolean", "Set isRunning explicitly"),
             Prop("confirm", "boolean", "Must be true to proceed", required: true),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_autostops_start",
-            "Enable a balance auto-stop filter. If index is omitted, the master balance auto-stop switch " +
-            "is flipped to true.",
-            Prop("index", "string", "Zero-based filter index (optional — omit to flip master switch)"),
+            "Enable one balance auto-stop filter, or all filters if index is omitted.",
+            Prop("index", "string", "Zero-based filter index (optional — omit to enable all)"),
             Prop("confirm", "boolean", "Must be true to proceed", required: true),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_autostops_stop",
-            "Disable a balance auto-stop filter. If index is omitted, the master switch is flipped to false.",
-            Prop("index", "string", "Zero-based filter index (optional — omit to flip master switch)"),
+            "Disable one balance auto-stop filter, or all filters if index is omitted.",
+            Prop("index", "string", "Zero-based filter index (optional — omit to disable all)"),
             Prop("confirm", "boolean", "Must be true to proceed", required: true),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_autostops_delete",
@@ -1489,10 +1492,13 @@ public static class ToolRegistry
         yield return Tool("mt_algos_snapshot",
             "Return a structured snapshot of all groups and algorithms across all connected profiles. " +
             "Includes group names, algo IDs, names, symbols, running state, and signatures. " +
-            "Designed for state reconciliation — compare desired vs actual state.",
+            "Pulls a fresh algorithm read per profile before answering and reports per-profile " +
+            "freshness (source: fresh|cache, age_ms, last_update) — captured_at is the serialization " +
+            "time, not data freshness. Designed for state reconciliation — compare desired vs actual state.",
             Prop("profile", "string", "Target server profile (omit for all connected)"));
         yield return Tool("mt_algos_group_by_name",
-            "Find a group by name (case-insensitive). Returns group ID, name, type, and contained algorithms.",
+            "Find a group by name (case-insensitive). Returns group ID, name, type, and contained algorithms. " +
+            "Pulls a fresh algorithm read before answering so cold caches do not yield false not-found.",
             Prop("name",    "string", "Group name to search for", required: true),
             Prop("profile", "string", "Target server profile"));
     }

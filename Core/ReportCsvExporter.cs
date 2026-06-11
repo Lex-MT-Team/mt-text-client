@@ -19,6 +19,7 @@ public static class ReportCsvExporter
         "EntryPrice,ExitPrice,PriceDelta,Qty,ExecutedQty,SizeUSDT," +
         "PnLCoin,PnLUSDT,GrossUSDT,FeeUSDT,ROE%," +
         "ClosedBy,IsEmulated,AlgoSignature,AlgoId,AlgoName,AlgoGroup," +
+        "AlgoInfo,OrderComment,OrderOpenByComment,AlgoSource," +
         "DepthVolume,DistanceAtOrder,ShotDepth";
 
     public static string GenerateCsv(List<ReportData> reports, string serverName)
@@ -103,8 +104,21 @@ public static class ReportCsvExporter
         }
 
         string algoName = r.orderInfo.AlgorithmInfo.name ?? "";
+        string algoInfo = r.orderInfo.AlgorithmInfo.info ?? "";
+        string orderComment = r.orderInfo.orderComment ?? "";
+        string orderOpenByComment = r.orderInfo.orderOpenByComment ?? "";
+        string algoSourceName = !string.IsNullOrWhiteSpace(algoInfo)
+            ? algoInfo
+            : (!string.IsNullOrWhiteSpace(orderOpenByComment) ? orderOpenByComment : algoName);
+        string algoSource = !string.IsNullOrWhiteSpace(algoSourceName)
+            ? $"{signature}: {algoSourceName}"
+            : signature;
         // Escape fields that might contain commas
         algoName = EscapeCsvField(algoName);
+        algoInfo = EscapeCsvField(algoInfo);
+        orderComment = EscapeCsvField(orderComment);
+        orderOpenByComment = EscapeCsvField(orderOpenByComment);
+        algoSource = EscapeCsvField(algoSource);
 
         sb.Append(r.id); sb.Append(',');
         sb.Append(EscapeCsvField(serverName)); sb.Append(',');
@@ -131,6 +145,10 @@ public static class ReportCsvExporter
         sb.Append(r.orderInfo.algorithmId); sb.Append(',');
         sb.Append(algoName); sb.Append(',');
         sb.Append(r.orderInfo.algorithmGroupType); sb.Append(',');
+        sb.Append(algoInfo); sb.Append(',');
+        sb.Append(orderComment); sb.Append(',');
+        sb.Append(orderOpenByComment); sb.Append(',');
+        sb.Append(algoSource); sb.Append(',');
         sb.Append(Math.Round(r.depthVolume, 4)); sb.Append(',');
         sb.Append(Math.Round(r.distanceAtOrder, 6)); sb.Append(',');
         sb.Append(r.metrics.shotDepth);

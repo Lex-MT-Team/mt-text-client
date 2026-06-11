@@ -24,6 +24,12 @@ public sealed class AlgorithmStore
     /// <summary>Number of groups currently tracked.</summary>
     public int GroupCount => _groups.Count;
 
+    /// <summary>UTC time of the last wire update applied to this store
+    /// (default(DateTime) until the first drop). Lets read paths report
+    /// data freshness instead of leaving callers to guess whether the
+    /// cache has ever been populated.</summary>
+    public DateTime LastUpdateUtc { get; private set; }
+
     /// <summary>
     /// Process incoming algorithm data from subscription callback.
     /// The callback delivers (NetworkMessageType, NetworkData) where the concrete types are:
@@ -34,6 +40,7 @@ public sealed class AlgorithmStore
     /// </summary>
     public void ProcessData(NetworkMessageType msgType, NetworkData data)
     {
+        LastUpdateUtc = DateTime.UtcNow;
         switch (msgType)
         {
             case NetworkMessageType.ALGORITHM_LIST_RESULT:
@@ -645,6 +652,7 @@ public sealed class AlgorithmStore
     {
         _algorithms.Clear();
         _groups.Clear();
+        LastUpdateUtc = default;
     }
 }
 

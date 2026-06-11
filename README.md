@@ -911,8 +911,8 @@ MIT — see [LICENSE](LICENSE).
 | `mt_core_shutdown` | Send a service command to MTCore (shutdown or restart). Requires confirm=true. | `confirm` | ✓ |
 | `mt_algos_tpsl_change` | Send a TP/SL algorithm change request to MT-Core (fire-and-forget). | — | — |
 | `mt_algos_profiling` | Request algorithm profiling data from MT-Core. Result is delivered asynchronously via mt_events_poll. | `symbol` | — |
-| `mt_algos_snapshot` | Return a structured snapshot of all groups and algorithms across all connected profiles. Includes group names, algo IDs, names, symbols, running state, and signatures. Designed for state reconciliation — compare desired vs actual state. | — | — |
-| `mt_algos_group_by_name` | Find a group by name (case-insensitive). Returns group ID, name, type, and contained algorithms. | `name` | — |
+| `mt_algos_snapshot` | Return a structured snapshot of all groups and algorithms across all connected profiles. Includes group names, algo IDs, names, symbols, running state, and signatures. Pulls a fresh algorithm read per profile before answering and reports per-profile freshness (source: fresh\|cache, age_ms, last_update) — captured_at is the serialization time, not data freshness. Designed for state reconciliation — compare desired vs actual state. | — | — |
+| `mt_algos_group_by_name` | Find a group by name (case-insensitive). Returns group ID, name, type, and contained algorithms. Pulls a fresh algorithm read before answering so cold caches do not yield false not-found. | `name` | — |
 | `mt_connect` | Connect to an MT-Core server using a saved profile | `profile` | — |
 | `mt_disconnect` | Disconnect from a server | `profile` | — |
 | `mt_status` | Show all connection statuses | — | — |
@@ -935,7 +935,8 @@ MIT — see [LICENSE](LICENSE).
 | `mt_exchange_klines` | Get candlestick/kline data for a symbol. Returns OHLCV data. market (FUTURES\|SPOT) lets you force the market type when a symbol exists on both; without it, the server falls back to its exchange-info pair cache and may pick the wrong one (e.g. BTCUSDT routes to SPOT on Binance unless overridden). | `symbol` | — |
 | `mt_exchange_trades` | Get recent trades for a symbol from the exchange. | `symbol` | — |
 | `mt_exchange_funding_rate` | Get the funding-rate fields for a symbol (last funding rate/time, next funding rate/time, mark price, last price). Read-only; no confirm. Returns whatever the symbol's live-markets cache currently holds, with up to a few seconds of warm-up after first subscription. | `symbol` | — |
-| `mt_exchange_leverage_brackets` | Return locally-observable leverage info for a symbol — the current effective leverage on any open position for the symbol. Read-only; no confirm. NOTE: full bracket-tier tables (notional-range → max-leverage map) are not exposed by the current vendor library; this tool surfaces only what the position cache reports, with a structured leverage_brackets_not_available notice when no richer source is on the wire. | `symbol` | — |
+| `mt_exchange_leverage_info` | Get configured/effective leverage, max leverage, and risk-limit data for a symbol from MTCore's LeverageInfoUpdateData cache. Read-only; no confirm. Does not require an open position, but the cache must have observed a core leverage refresh in this mt-text-client session. | `symbol` | — |
+| `mt_exchange_leverage_brackets` | Compatibility alias for leverage info. Returns configured/effective leverage, max leverage, and risk-limit data from MTCore's LeverageInfoUpdateData cache when available, with open-position leverage only as a fallback. Read-only; no confirm. NOTE: full bracket-tier tables (notional-range → max-leverage map) are not exposed as separate MTShared rows. | `symbol` | — |
 | `mt_algos_list` | List algorithms on active connection | — | — |
 | `mt_algos_list_all` | List algorithms across ALL connections | — | — |
 | `mt_algos_search` | Search algorithms by name/signature/symbol | `query` | — |
@@ -1018,10 +1019,10 @@ MIT — see [LICENSE](LICENSE).
 | `mt_autostops_list` | List auto-stop algorithm configurations and status. Shows balance/report filters and thresholds. | — | — |
 | `mt_autostops_baseline` | Request auto-stop baseline recalculation on Core (fire-and-forget). | — | — |
 | `mt_autostops_reports` | Get report data for auto-stop algorithms. Optionally filter by algorithm IDs. | — | — |
-| `mt_autostops_add` | Append a new balance auto-stop filter. Created disabled — call mt_autostops_start to activate. max_loss is the lower bound of the value range (e.g. -0.1 USDT) and value_max its upper bound. filter_type ∈ {GLOBAL_BY_SYMBOL, ALGO_SYMBOLS, ALGO_TOTAL, CUSTOM}; source_type ∈ {VALUE, PRICE_DELTA_SUM, PROFIT_FACTOR}; market ∈ {SPOT, MARGIN, FUTURES, DELIVERY}. | `max_loss`, `confirm` | ✓ |
+| `mt_autostops_add` | Append a new balance auto-stop filter. Created disabled — call mt_autostops_start to activate. Writes the real MTShared AutoStopAlgorithmData[] shape: max_loss → minMargin, symbols → symbolFilter, quotes/asset → asset, pause_algo → panicIfTriggered, timeframe_ms → AutoStopsTimeFrame. | `max_loss`, `confirm` | ✓ |
 | `mt_autostops_edit` | Mutate an existing balance auto-stop filter at the given index. Every other field is optional — only the ones you pass are updated. | `index`, `confirm` | ✓ |
-| `mt_autostops_start` | Enable a balance auto-stop filter. If index is omitted, the master balance auto-stop switch is flipped to true. | `confirm` | ✓ |
-| `mt_autostops_stop` | Disable a balance auto-stop filter. If index is omitted, the master switch is flipped to false. | `confirm` | ✓ |
+| `mt_autostops_start` | Enable one balance auto-stop filter, or all filters if index is omitted. | `confirm` | ✓ |
+| `mt_autostops_stop` | Disable one balance auto-stop filter, or all filters if index is omitted. | `confirm` | ✓ |
 | `mt_autostops_delete` | Remove a balance auto-stop filter at the given index. | `index`, `confirm` | ✓ |
 | `mt_blacklist_list` | List current blacklist configuration: blocked markets, quote assets, and symbols. | — | — |
 | `mt_blacklist_add` | Add an item to the blacklist. type=market needs market_type only; type=quote needs market_type+quote_asset; type=symbol needs market_type+quote_asset+symbol. Requires confirm=true. | `type`, `market_type`, `confirm` | ✓ |
@@ -1138,6 +1139,6 @@ MIT — see [LICENSE](LICENSE).
 | `mt_folders_edit` | Rename a folder.  Renames the entry in folders.json AND cascades the rename to every profile currently in that folder (profiles.json is rewritten). | `old_name`, `new_name`, `confirm` | ✓ |
 | `mt_folders_delete` | Delete a folder from folders.json.  WARNING: if any profiles are still in this folder they become ORPHAN (their Folder field still references the now-deleted name).  Use mt_profiles_move to re-bind them first. | `name`, `confirm` | ✓ |
 
-_Total: 260 tools._
+_Total: 261 tools._
 
 <!-- END AUTOGENERATED REGISTRY TABLE -->

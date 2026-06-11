@@ -340,7 +340,8 @@ public sealed class AlgosCommand : ICommand
             data.Add(new
             {
                 a.id,
-                a.name,
+                name = ResolveDisplayName(a),
+                CoreName = a.name,
                 a.signature,
                 Running = a.isRunning ? "YES" : "no",
                 a.symbol,

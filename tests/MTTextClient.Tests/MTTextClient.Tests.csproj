@@ -30,6 +30,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Reference Include="MTShared">
+      <HintPath>..\..\lib\MTShared.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
     <None Update="_expected\**\*.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

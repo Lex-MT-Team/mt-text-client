@@ -9,6 +9,118 @@ Versions follow [SemVer](https://semver.org).
 
 ## Unreleased
 
+### Snapshot freshness (issue #40)
+
+* **`mt_algos_snapshot` no longer serves a possibly-stale cache.** The
+  long-lived algorithms subscription does not always deliver an initial
+  snapshot, so on a quiet or freshly-connected profile the snapshot tool
+  could return empty/stale data unless `mt_algos_list` happened to run
+  first. The handler now pulls a fresh algorithm read per connected
+  profile (the same transient-subscribe prime the list path uses) and
+  reports per-profile freshness metadata: `source` (`fresh`|`cache`),
+  `age_ms`, and `last_update`. `captured_at` remains the serialization
+  timestamp and is documented as such. `mt_algos_group_by_name` gets the
+  same cold-cache prime so lookups on quiet profiles no longer yield
+  false not-found.
+
+### Display-name completeness (issue #15)
+
+* **`algos search` / `mt_algos_search`** now resolve the display name
+  through the same `info parameter → description → name` priority the
+  other algorithm list views use (synthetic auto-generated names
+  filtered), and carry the raw on-wire name in a separate `CoreName`
+  field — the last list-shaped surface that still emitted the raw
+  synthetic name.
+
+### Report field completeness (issue #17)
+
+* **`mt_reports_trades` per-trade JSON records and the CSV exports**
+  (`mt_reports_export`, `mt_reports_fleet_export`, `reports export`) now
+  carry `AlgoInfo` (operator-set algorithm label), `OrderComment`,
+  `OrderOpenByComment`, and a composite `AlgoSource` in the
+  `{signature}: {info|openComment|name}` form (blank/`00` signatures
+  normalized to `Manual`). The per-trade JSON records additionally gain
+  `DistanceAtOrder` (previously only present in the opt-in `--metrics`
+  context and the CSV). Regression tests pin the new CSV columns, row
+  values, and the `AlgoSource` fallback chain.
+
+### V2 import throughput (issue #14)
+
+* **`mt_import_v2` no longer serializes one blocking acknowledgement
+  round-trip per algorithm** (~20s each on cores that throttle
+  notification replies — a 26-algo package took ~8 minutes). Algorithm
+  creates are now queued fire-and-forget with light pacing, then a
+  verification pass polls a fresh algorithm snapshot until every queued
+  create is observed on the core (or a bounded budget elapses). The
+  result reports `queued` per algo plus a `Verification: X/N queued
+  algos observed on Core` summary, so success now reflects on-core
+  creation rather than per-send acknowledgements. Group creation still
+  uses the acknowledged path (the server-assigned group id is needed for
+  remapping).
+
+### Order cache correctness (issue #36)
+
+* **Order-list batches now merge into the cache instead of replacing it.**
+  MTCore delivers `UDS_ORDER_LIST_RESULT` as an incremental batch of order
+  states (frequently one order per message), matching the official
+  client's handling; the previous treat-as-full-snapshot logic cleared
+  every cached order for the market type on each batch, which collapsed
+  the active-order count to 0/1 between fuller batches — most visibly on
+  venues that fragment their batches (Bybit/OKX).
+* **Terminal orders are evicted from the active cache** (a long-lived
+  session no longer accumulates every order it has ever seen). A bounded
+  window of recent terminal snapshots is kept so
+  `mt_account_orders`/`mt_orders_list` with `show_all` still return
+  recent closed orders; fills also persist in the recent-executions ring
+  and the reports store.
+* **Order tools force a fresh read before reporting.** `mt_orders_list`,
+  `mt_orders_cancel`/`_cancel_all`/`_place`/`_move`/`_update_tpsl`,
+  `mt_account_orders`, `mt_account_summary`, `mt_fleet_balances`/
+  `_summary`, and the core dashboard now refresh the order cache via a
+  transient read first, and "no fresh order data received" is reported
+  distinctly from "no active orders".
+* **Order attribution:** each order/execution row now carries
+  `OrderSource` (`ALGORITHM` / `MANUAL` / `TPSL` / `UNKNOWN`) and
+  `DerivedAlgoSignature` — the algo signature recovered from the
+  client-order-id when the wire's own signature field is blank.
+
+### Leverage info
+
+* **New `mt_exchange_leverage_info` tool** (CLI: `exchange leverage-info`,
+  aliases `leverage` / `get-leverage`): surfaces configured/effective
+  leverage per leverage type (Cross / IsolatedNet / IsolatedLong /
+  IsolatedShort), max leverage, and risk-limit data for a symbol from
+  MTCore's `LeverageInfoUpdateData` cache — no open position required.
+  Each call primes the cache via a transient fresh read; open-position
+  leverage is kept only as a fallback source.
+* `mt_exchange_leverage_brackets` is now a compatibility alias backed by
+  the same cache (bracket-tier tables are still not modelled as separate
+  rows by the shared library). MCP tool catalog: 260 → 261.
+
+### Autostops schema fix (issue #34)
+
+* **`mt_autostops_*` / `autostops` now read and write the real
+  `AutoStopAlgorithmData[]` array shape** under
+  `AutoStopAlgorithm.Balance.Filters`, replacing the previous
+  client-invented `{isEnabled, Values:[...]}` wrapper that crashed the
+  official UI's balance-autostops panel on deserialize and meant filters
+  written by this client never armed on the core. Field mapping:
+  `max_loss` → `minMargin`, `symbols` → `symbolFilter`, `quotes`/`asset` →
+  `asset`, `pause_algo` → `panicIfTriggered`, `timeframe_ms` → the
+  timeframe enum (snapped to the nearest bucket), `enabled` → `isRunning`.
+* `value_max` / `is_range` are removed from the `mt_autostops_add`/`_edit`
+  schemas (the real type has no range concept); passing the old CLI flags
+  now returns an explanatory error. New optional fields: `info`, `asset`,
+  `algorithm_comment`, `report_comment`.
+* The "master switch" concept is gone — `mt_autostops_start`/`_stop`
+  without an index now enable/disable **all** filters.
+* Settings blobs still holding the legacy wrapper are detected and
+  reported as an explicit error on every mutating subcommand (no silent
+  rewrite). Remediation for affected profiles: reset the
+  `AutoStopAlgorithm.Balance.Filters` key to `[]` via `mt_settings_set`.
+* Regression tests round-trip a real `AutoStopAlgorithmData` through the
+  parser and pin the legacy-wrapper rejection.
+
 ### Algos lifecycle refresh
 
 * **`mt_algos_start`/`mt_algos_stop` request wire-shape** now mirrors the

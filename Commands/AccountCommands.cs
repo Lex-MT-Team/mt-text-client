@@ -156,19 +156,21 @@ public sealed class AccountCommand : ICommand
         // immediately query orders) see stale data. Matches the vendor
         // BotClient read pattern: fetch a fresh snapshot on every call
         // rather than trusting the cache.
-        conn.ForceRefreshOrders();
+        bool gotFreshOrders = conn.ForceRefreshOrders();
         IReadOnlyList<OrderSnapshot>? orders = conn.AccountStore.GetOrders(activeOnly: !showAll);
 
         if (orders.Count == 0)
         {
-            string? msg = conn.AccountStore.LastOrderUpdate == default
+            string? msg = !gotFreshOrders
+                ? $"[{conn.Name}] No fresh order data received; local {(showAll ? "order" : "active-order")} cache is empty."
+                : conn.AccountStore.LastOrderUpdate == default
                 ? $"[{conn.Name}] No order data received yet."
                 : $"[{conn.Name}] No {(showAll ? "" : "active ")}orders found.";
             return CommandResult.Ok(msg);
         }
 
         // Display table with key expanded fields
-        TableBuilder rows = new TableBuilder("Symbol", "Side", "Type", "Status", "Price", "Qty", "Filled", "StopPrice", "PosSide", "TIF", "SL", "TP", "Emu", "Algo", "OrderId");
+        TableBuilder rows = new TableBuilder("Symbol", "Side", "Type", "Status", "Price", "Qty", "Filled", "StopPrice", "PosSide", "TIF", "SL", "TP", "Emu", "Src", "Algo", "OrderId");
         foreach (OrderSnapshot o in orders)
         {
             rows.AddRow(
@@ -185,6 +187,7 @@ public sealed class AccountCommand : ICommand
                 o.IsStopLoss ? "SL" : "",
                 o.IsTakeProfit ? "TP" : "",
                 o.IsEmulated ? "E" : "",
+                o.OrderSource,
                 !string.IsNullOrEmpty(o.AlgoSignature) ? o.AlgoSignature : "",
                 TruncateId(o.ClientOrderId)
             );
@@ -217,6 +220,8 @@ public sealed class AccountCommand : ICommand
                 o.IsManualOrder,
                 o.AlgoId,
                 o.AlgoSignature,
+                o.DerivedAlgoSignature,
+                o.OrderSource,
                 o.AlgoName,
                 AlgoGroupType = o.AlgoGroupType.ToString(),
                 TpslStatus = o.TpslStatus.ToString(),
@@ -308,7 +313,7 @@ public sealed class AccountCommand : ICommand
             return CommandResult.Ok($"[{conn.Name}] No recent executions.");
         }
 
-        TableBuilder rows = new TableBuilder("Time", "Symbol", "Side", "Price", "Qty", "Commission", "Market", "Type", "Status", "Emu", "Algo", "OrderId");
+        TableBuilder rows = new TableBuilder("Time", "Symbol", "Side", "Price", "Qty", "Commission", "Market", "Type", "Status", "Emu", "Src", "Algo", "OrderId");
         foreach (ExecutionSnapshot e in executions)
         {
             rows.AddRow(
@@ -322,6 +327,7 @@ public sealed class AccountCommand : ICommand
                 e.OrderType.ToString(),
                 e.Status.ToString(),
                 e.IsEmulated ? "E" : "",
+                e.OrderSource,
                 !string.IsNullOrEmpty(e.AlgoSignature) ? e.AlgoSignature : "",
                 TruncateId(e.ClientOrderId)
             );
@@ -352,6 +358,8 @@ public sealed class AccountCommand : ICommand
                 e.IsEmulated,
                 e.IsAlgoOrder,
                 e.AlgoSignature,
+                e.DerivedAlgoSignature,
+                e.OrderSource,
                 e.AlgoId,
                 e.TransactTime,
             });
@@ -401,6 +409,7 @@ public sealed class AccountCommand : ICommand
     private CommandResult HandleSummary(CoreConnection conn)
     {
         AccountStore acct = conn.AccountStore;
+        conn.ForceRefreshOrders(timeoutMs: 1_500);
         double totalUsdt = acct.GetTotalBalanceUSDT();
         IReadOnlyList<PositionSnapshot>? openPositions = acct.GetPositions(openOnly: true);
         IReadOnlyList<OrderSnapshot>? activeOrders = acct.GetOrders(activeOnly: true);
