@@ -20,9 +20,9 @@ Default targets (idempotent — script can be run on every build):
 Each path that already has Machine=0xAA64 is reported and skipped.
 Pass explicit paths as positional args to override the default list.
 
-Stage 0.6 of UnifiedDevelopmentPlan.md — Apple Silicon build hygiene.
-Wired into MTTextClient.csproj as a post-build MSBuild target conditioned
-on the OSX runtime; on Linux/Windows the target is a no-op.
+Apple Silicon build hygiene. Wired into MTTextClient.csproj as a
+post-build MSBuild target conditioned on the OSX runtime; on
+Linux/Windows the target is a no-op.
 """
 import struct
 import sys
