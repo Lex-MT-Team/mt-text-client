@@ -9,6 +9,15 @@ Versions follow [SemVer](https://semver.org).
 
 ## Unreleased
 
+### Display-name completeness (issue #15)
+
+* **`algos search` / `mt_algos_search`** now resolve the display name
+  through the same `info parameter → description → name` priority the
+  other algorithm list views use (synthetic auto-generated names
+  filtered), and carry the raw on-wire name in a separate `CoreName`
+  field — the last list-shaped surface that still emitted the raw
+  synthetic name.
+
 ### Report field completeness (issue #17)
 
 * **`mt_reports_trades` per-trade JSON records and the CSV exports**
