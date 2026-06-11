@@ -99,6 +99,19 @@
           ContinueOnError="WarnAndContinue" />
   </Target>
 
+  <!-- The committed lib/MTShared.dll carries PE Machine=ARM64 so Apple
+       Silicon hosts load it natively. The CLR on linux-x64 rejects that
+       header during assembly probing (surfaces as FileNotFoundException),
+       so on Linux the build-output copy is flipped back to x64 after
+       every build. The repo file itself is never modified — only the
+       per-platform build output. -->
+  <Target Name="PatchMTSharedMachineLinux"
+          AfterTargets="Build"
+          Condition="$([MSBuild]::IsOSPlatform('Linux'))">
+    <Exec Command="python3 &quot;$(MSBuildThisFileDirectory)scripts/patch_mtshared_arm64.py&quot; --machine x64 &quot;$(TargetDir)MTShared.dll&quot;"
+          ContinueOnError="WarnAndContinue" />
+  </Target>
+
   <!-- Vendored algoConfigs.json template file.
        mt_algos_create is clone-from-existing only: it scans the target
        AlgoStore for a matching group_type and clones from there. On a

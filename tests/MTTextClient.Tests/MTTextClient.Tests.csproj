@@ -30,10 +30,27 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Direct vendor reference so unit tests can construct MTShared wire
+         types. Forward slashes: backslash-relative HintPaths resolve on
+         Windows/macOS but break copy-local on Linux. Private=true forces
+         the DLL into the test output on every platform. -->
     <Reference Include="MTShared">
-      <HintPath>..\..\lib\MTShared.dll</HintPath>
+      <HintPath>$(MSBuildThisFileDirectory)../../lib/MTShared.dll</HintPath>
+      <Private>true</Private>
     </Reference>
   </ItemGroup>
+
+  <!-- The committed lib/MTShared.dll carries PE Machine=ARM64 (Apple
+       Silicon hosts load it natively); the CLR on linux-x64 rejects that
+       header while probing, so the test-output copy is flipped back to
+       x64 after every Linux build. See the matching target in
+       MTTextClient.csproj. -->
+  <Target Name="PatchTestMTSharedMachineLinux"
+          AfterTargets="Build"
+          Condition="$([MSBuild]::IsOSPlatform('Linux'))">
+    <Exec Command="python3 &quot;$(MSBuildThisFileDirectory)../../scripts/patch_mtshared_arm64.py&quot; --machine x64 &quot;$(TargetDir)MTShared.dll&quot;"
+          ContinueOnError="WarnAndContinue" />
+  </Target>
 
   <ItemGroup>
     <None Update="_expected\**\*.json">
