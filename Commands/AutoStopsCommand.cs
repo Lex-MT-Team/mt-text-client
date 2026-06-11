@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Text;
 using MTShared.Algorithms;
 using MTShared.Network;
@@ -19,8 +20,8 @@ namespace MTTextClient.Commands;
 ///   autostops reports [ids]     — get report data for specific autostop algorithm IDs
 ///   autostops add ...           — append a new filter to AutoStopAlgorithm.Balance.Filters
 ///   autostops edit &lt;idx&gt; ...    — mutate a filter at the given index
-///   autostops start [&lt;idx&gt;]     — enable a filter (or the master switch if idx omitted)
-///   autostops stop  [&lt;idx&gt;]     — disable a filter (or the master switch if idx omitted)
+///   autostops start [&lt;idx&gt;]     — enable a filter (or all filters if idx omitted)
+///   autostops stop  [&lt;idx&gt;]     — disable a filter (or all filters if idx omitted)
 ///   autostops delete &lt;idx&gt;      — remove a filter at the given index
 ///
 /// Supports @profile targeting.
@@ -51,8 +52,8 @@ public sealed class AutoStopsCommand : ICommand
                 "  reports    — get report data for autostop algorithm IDs\n" +
                 "  add        — append a new balance filter\n" +
                 "  edit       — mutate a filter by index\n" +
-                "  start      — enable a filter (or master switch)\n" +
-                "  stop       — disable a filter (or master switch)\n" +
+                "  start      — enable a filter (or all filters)\n" +
+                "  stop       — disable a filter (or all filters)\n" +
                 "  delete     — remove a filter by index");
         }
 
@@ -129,31 +130,23 @@ public sealed class AutoStopsCommand : ICommand
         string? balanceLastUpdate = conn.ProfileSettingsStore.GetValue("AutoStopAlgorithm.Balance.LastUpdate");
         string? reportLastUpdate = conn.ProfileSettingsStore.GetValue("AutoStopAlgorithm.Report.LastUpdate");
 
-        var (parseOk, parsedList, parseErr) = TryParseBalanceList(balanceFilters);
-        var values = parseOk ? (parsedList!["Values"] as JArray) ?? new JArray() : new JArray();
-        bool masterEnabled = parseOk && parsedList!["isEnabled"]?.Value<bool>() == true;
+        var (parseOk, values, parseErr) = TryParseBalanceFilters(balanceFilters);
 
         var sb = new StringBuilder();
         sb.AppendLine($"[{conn.Name}] AutoStop Algorithms:");
-        sb.AppendLine($"  Master switch (Balance.isEnabled): {(masterEnabled ? "ON" : "off")}");
+        if (!parseOk)
+        {
+            sb.AppendLine($"  Balance filters: INVALID ({parseErr})");
+            sb.AppendLine("  Stored value must be a bare AutoStopAlgorithmData JSON array.");
+        }
         sb.AppendLine($"  Balance filters: {values.Count}");
         for (int i = 0; i < values.Count; i++)
         {
-            var v = values[i] as JObject;
-            if (v == null) continue;
-            string en = v["isEnabled"]?.Value<bool>() == true ? "ENABLED" : "disabled";
-            int ft = v["filterType"]?.Value<int>() ?? 0;
-            int mt = v["marketType"]?.Value<int>() ?? 0;
-            int srcType = v["valueSourceType"]?.Value<int>() ?? 0;
-            string sym = v["symbolList"]?.Value<string>() ?? "";
-            string quote = v["quoteList"]?.Value<string>() ?? "";
-            var range = v["valueRange"] as JObject;
-            double min = range?["min"]?.Value<double>() ?? 0;
-            double max = range?["max"]?.Value<double>() ?? 0;
-            bool isRange = range?["isRange"]?.Value<bool>() ?? false;
-            long tf = v["timeframe"]?.Value<long>() ?? 0;
-            sb.AppendLine($"  [{i}] {en}  FT={FilterTypeName(ft)} M={MarketName(mt)} Src={SourceName(srcType)} " +
-                $"min={min} max={max} isRange={isRange} tf={tf}ms sym=\"{sym}\" quote=\"{quote}\"");
+            AutoStopAlgorithmData v = values[i];
+            string en = v.isRunning ? "ENABLED" : "disabled";
+            sb.AppendLine($"  [{i}] {en}  id={v.id} M={MarketName((int)v.marketType)} minMargin={v.minMargin} " +
+                $"tf={v.timeFrame} symbol=\"{v.symbolFilter ?? ""}\" asset=\"{v.asset ?? ""}\" " +
+                $"panicIfTriggered={v.panicIfTriggered} info=\"{v.info ?? ""}\"");
         }
         sb.AppendLine();
         sb.AppendLine("Report filters (raw):");
@@ -161,38 +154,38 @@ public sealed class AutoStopsCommand : ICommand
         sb.AppendLine($"  Balance Last Update: {(string.IsNullOrEmpty(balanceLastUpdate) ? "N/A" : balanceLastUpdate)}");
         sb.AppendLine($"  Report Last Update:  {(string.IsNullOrEmpty(reportLastUpdate) ? "N/A" : reportLastUpdate)}");
 
-        var listData = new List<object>();
-        for (int i = 0; i < values.Count; i++)
-        {
-            var v = values[i] as JObject;
-            if (v == null) continue;
-            var range = v["valueRange"] as JObject;
-            listData.Add(new
-            {
-                Index = i,
-                Enabled = v["isEnabled"]?.Value<bool>() ?? false,
-                FilterType = FilterTypeName(v["filterType"]?.Value<int>() ?? 0),
-                MarketType = MarketName(v["marketType"]?.Value<int>() ?? 0),
-                SourceType = SourceName(v["valueSourceType"]?.Value<int>() ?? 0),
-                Min = range?["min"]?.Value<double>() ?? 0,
-                Max = range?["max"]?.Value<double>() ?? 0,
-                IsRange = range?["isRange"]?.Value<bool>() ?? false,
-                TimeframeMs = v["timeframe"]?.Value<long>() ?? 0,
-                SymbolList = v["symbolList"]?.Value<string>() ?? "",
-                QuoteList = v["quoteList"]?.Value<string>() ?? "",
-                AlgorithmId = v["algorithmId"]?.Value<long>() ?? 0,
-                LastAlgoName = v["lastAlgoName"]?.Value<string>() ?? "",
-                PauseAlgo = v["pauseAlgo"]?.Value<bool>() ?? false,
-            });
-        }
-
         return CommandResult.Ok(sb.ToString(),
             new
             {
                 Server = conn.Name,
-                MasterEnabled = masterEnabled,
+                Valid = parseOk,
+                Error = parseErr,
                 BalanceFilterCount = values.Count,
-                Filters = listData,
+                Filters = values.Select((v, i) => new
+                {
+                    Index = i,
+                    v.id,
+                    v.info,
+                    MarketType = MarketName((int)v.marketType),
+                    v.minMargin,
+                    v.algorithmComment,
+                    v.notAlgorithmComment,
+                    v.isRunning,
+                    v.asset,
+                    v.panicIfTriggered,
+                    v.timeFrame,
+                    v.symbolFilter,
+                    v.notSymbolFilter,
+                    v.reportComment,
+                    v.notReportComment,
+                    v.marketTypes,
+                    v.excludeEmulatedTrades,
+                    v.algorithmCount,
+                    v.baseLine,
+                    v.currentBalance,
+                    v.reportTotal,
+                    v.orderCount,
+                }).ToList(),
                 ReportFiltersRaw = reportFilters ?? "",
                 BalanceLastUpdate = balanceLastUpdate ?? "",
                 ReportLastUpdate = reportLastUpdate ?? "",
@@ -261,8 +254,10 @@ public sealed class AutoStopsCommand : ICommand
         {
             return CommandResult.Fail("autostops add --max-loss <value> is required (e.g. -0.1 or 5.0).");
         }
-        double valueMax = TryGetDouble(flags, "--value-max", 1e15);
-        bool isRange = flags.ContainsKey("--is-range");
+        if (flags.ContainsKey("--value-max") || flags.ContainsKey("--is-range"))
+        {
+            return CommandResult.Fail("AutoStopAlgorithmData has no value_max/is_range fields; use --max-loss for minMargin.");
+        }
         int filterType = ResolveFilterType(flags.GetValueOrDefault("--filter-type") ?? "GLOBAL_BY_SYMBOL");
         int sourceType = ResolveSourceType(flags.GetValueOrDefault("--source-type") ?? "VALUE");
         int marketType = ResolveMarket(flags.GetValueOrDefault("--market") ?? "FUTURES");
@@ -274,39 +269,38 @@ public sealed class AutoStopsCommand : ICommand
         var ensureErr = EnsureProfileSettings(conn);
         if (ensureErr != null) return ensureErr;
 
-        string? raw = conn.ProfileSettingsStore.GetValue(BalanceFiltersKey);
-        JObject list = ParseOrInit(raw);
-        var values = (JArray)list["Values"]!;
+        var parsed = ParseOrInit(conn.ProfileSettingsStore.GetValue(BalanceFiltersKey));
+        if (parsed.Error != null) return CommandResult.Fail(parsed.Error);
+        List<AutoStopAlgorithmData> values = parsed.Filters;
 
-        // Default new filters to *disabled*; the LiveTrade contract is
-        // add then explicit start so each step is visible.
-        var newFilter = new JObject
+        var newFilter = new AutoStopAlgorithmData
         {
-            ["isEnabled"] = false,
-            ["filterType"] = filterType,
-            ["marketType"] = marketType,
-            ["symbolList"] = symbolList,
-            ["algorithmId"] = 0L,
-            ["lastAlgoName"] = "",
-            ["valueSourceType"] = sourceType,
-            ["valueRange"] = new JObject
-            {
-                ["min"] = maxLoss,
-                ["max"] = valueMax,
-                ["isRange"] = isRange,
-            },
-            ["timeframe"] = timeframeMs,
-            ["pauseAlgo"] = pauseAlgo,
-            ["sleepTime"] = 0.0,
-            ["quoteList"] = quoteList,
+            id = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            info = flags.GetValueOrDefault("--info") ?? BuildAutoStopInfo(filterType, sourceType),
+            marketType = (MarketType)marketType,
+            minMargin = maxLoss,
+            algorithmComment = flags.GetValueOrDefault("--algorithm-comment") ?? "",
+            notAlgorithmComment = flags.ContainsKey("--not-algorithm-comment"),
+            isRunning = false,
+            asset = flags.GetValueOrDefault("--asset") ?? FirstCsv(quoteList) ?? "usdt",
+            panicIfTriggered = pauseAlgo,
+            timeFrame = ResolveTimeFrame(timeframeMs),
+            symbolFilter = symbolList,
+            notSymbolFilter = flags.ContainsKey("--not-symbol-filter"),
+            reportComment = flags.GetValueOrDefault("--report-comment") ?? "",
+            notReportComment = flags.ContainsKey("--not-report-comment"),
+            marketTypes = new List<MarketType>(),
+            excludeEmulatedTrades = flags.ContainsKey("--exclude-emulated-trades"),
+            algorithmCount = 0,
+            baseLine = 0,
+            currentBalance = 0,
+            reportTotal = 0,
+            orderCount = 0,
         };
         values.Add(newFilter);
         int newIndex = values.Count - 1;
-        // Master switch defaults to true so individual filter toggling works.
-        if (list["isEnabled"] == null || list["isEnabled"]!.Type == JTokenType.Null)
-            list["isEnabled"] = true;
 
-        var updateErr = WriteBalanceList(conn, list);
+        var updateErr = WriteBalanceFilters(conn, values);
         if (updateErr != null) return updateErr;
         return CommandResult.Ok(
             $"[{conn.Name}] AutoStop balance filter added at index {newIndex} (disabled — use 'autostops start {newIndex}' to activate).",
@@ -324,33 +318,48 @@ public sealed class AutoStopsCommand : ICommand
         var ensureErr = EnsureProfileSettings(conn);
         if (ensureErr != null) return ensureErr;
 
-        string? raw = conn.ProfileSettingsStore.GetValue(BalanceFiltersKey);
-        JObject list = ParseOrInit(raw);
-        var values = (JArray)list["Values"]!;
+        var parsed = ParseOrInit(conn.ProfileSettingsStore.GetValue(BalanceFiltersKey));
+        if (parsed.Error != null) return CommandResult.Fail(parsed.Error);
+        List<AutoStopAlgorithmData> values = parsed.Filters;
         if (idx < 0 || idx >= values.Count)
             return CommandResult.Fail($"Index {idx} out of range (have {values.Count} filter(s)).");
-        var filter = (JObject)values[idx];
+        AutoStopAlgorithmData filter = values[idx];
 
         var flags = ParseFlags(args.GetRange(1, args.Count - 1));
+        if (flags.ContainsKey("--value-max") || flags.ContainsKey("--is-range") || flags.ContainsKey("--no-range"))
+        {
+            return CommandResult.Fail("AutoStopAlgorithmData has no value_max/is_range fields; use --max-loss for minMargin.");
+        }
         if (flags.TryGetValue("--max-loss", out string? mls) && double.TryParse(mls, NumberStyles.Any, CultureInfo.InvariantCulture, out double ml))
-            ((JObject)filter["valueRange"]!)["min"] = ml;
-        if (flags.TryGetValue("--value-max", out string? vms) && double.TryParse(vms, NumberStyles.Any, CultureInfo.InvariantCulture, out double vm))
-            ((JObject)filter["valueRange"]!)["max"] = vm;
-        if (flags.ContainsKey("--is-range")) ((JObject)filter["valueRange"]!)["isRange"] = true;
-        if (flags.ContainsKey("--no-range")) ((JObject)filter["valueRange"]!)["isRange"] = false;
-        if (flags.TryGetValue("--filter-type", out string? ft)) filter["filterType"] = ResolveFilterType(ft);
-        if (flags.TryGetValue("--source-type", out string? st)) filter["valueSourceType"] = ResolveSourceType(st);
-        if (flags.TryGetValue("--market", out string? mk)) filter["marketType"] = ResolveMarket(mk);
+            filter.minMargin = ml;
+        bool hasFilterType = flags.TryGetValue("--filter-type", out string? ft);
+        bool hasSourceType = flags.TryGetValue("--source-type", out string? st);
+        if (hasFilterType || hasSourceType)
+            filter.info = BuildAutoStopInfo(ResolveFilterType(ft ?? "GLOBAL_BY_SYMBOL"),
+                ResolveSourceType(st ?? "VALUE"));
+        if (flags.TryGetValue("--market", out string? mk)) filter.marketType = (MarketType)ResolveMarket(mk);
         if (flags.TryGetValue("--timeframe-ms", out string? tfs) && long.TryParse(tfs, NumberStyles.Any, CultureInfo.InvariantCulture, out long tf))
-            filter["timeframe"] = tf;
-        if (flags.TryGetValue("--symbols", out string? sy)) filter["symbolList"] = sy;
-        if (flags.TryGetValue("--quotes", out string? q)) filter["quoteList"] = q;
-        if (flags.ContainsKey("--pause-algo")) filter["pauseAlgo"] = true;
-        if (flags.ContainsKey("--no-pause-algo")) filter["pauseAlgo"] = false;
+            filter.timeFrame = ResolveTimeFrame(tf);
+        if (flags.TryGetValue("--symbols", out string? sy)) filter.symbolFilter = sy;
+        if (flags.TryGetValue("--quotes", out string? q)) filter.asset = FirstCsv(q) ?? filter.asset;
+        if (flags.TryGetValue("--asset", out string? asset)) filter.asset = asset;
+        if (flags.TryGetValue("--info", out string? info)) filter.info = info;
+        if (flags.TryGetValue("--algorithm-comment", out string? ac)) filter.algorithmComment = ac;
+        if (flags.TryGetValue("--report-comment", out string? rc)) filter.reportComment = rc;
+        if (flags.ContainsKey("--pause-algo")) filter.panicIfTriggered = true;
+        if (flags.ContainsKey("--no-pause-algo")) filter.panicIfTriggered = false;
+        if (flags.ContainsKey("--not-symbol-filter")) filter.notSymbolFilter = true;
+        if (flags.ContainsKey("--match-symbol-filter")) filter.notSymbolFilter = false;
+        if (flags.ContainsKey("--not-algorithm-comment")) filter.notAlgorithmComment = true;
+        if (flags.ContainsKey("--match-algorithm-comment")) filter.notAlgorithmComment = false;
+        if (flags.ContainsKey("--not-report-comment")) filter.notReportComment = true;
+        if (flags.ContainsKey("--match-report-comment")) filter.notReportComment = false;
+        if (flags.ContainsKey("--exclude-emulated-trades")) filter.excludeEmulatedTrades = true;
+        if (flags.ContainsKey("--include-emulated-trades")) filter.excludeEmulatedTrades = false;
         if (flags.TryGetValue("--enabled", out string? en))
-            filter["isEnabled"] = en.Equals("true", StringComparison.OrdinalIgnoreCase) || en == "1";
+            filter.isRunning = en.Equals("true", StringComparison.OrdinalIgnoreCase) || en == "1";
 
-        var updateErr = WriteBalanceList(conn, list);
+        var updateErr = WriteBalanceFilters(conn, values);
         if (updateErr != null) return updateErr;
         return CommandResult.Ok(
             $"[{conn.Name}] AutoStop balance filter at index {idx} updated.",
@@ -366,27 +375,28 @@ public sealed class AutoStopsCommand : ICommand
         var ensureErr = EnsureProfileSettings(conn);
         if (ensureErr != null) return ensureErr;
 
-        string? raw = conn.ProfileSettingsStore.GetValue(BalanceFiltersKey);
-        JObject list = ParseOrInit(raw);
-        var values = (JArray)list["Values"]!;
+        var parsed = ParseOrInit(conn.ProfileSettingsStore.GetValue(BalanceFiltersKey));
+        if (parsed.Error != null) return CommandResult.Fail(parsed.Error);
+        List<AutoStopAlgorithmData> values = parsed.Filters;
 
         int? idx = null;
-        if (args.Count > 0 && int.TryParse(args[0], out int parsed)) idx = parsed;
+        if (args.Count > 0 && int.TryParse(args[0], out int parsedIndex)) idx = parsedIndex;
 
         if (idx == null)
         {
-            list["isEnabled"] = enabled;
-            var werr1 = WriteBalanceList(conn, list);
+            foreach (var filter in values)
+                filter.isRunning = enabled;
+            var werr1 = WriteBalanceFilters(conn, values);
             if (werr1 != null) return werr1;
             return CommandResult.Ok(
-                $"[{conn.Name}] AutoStop master switch {(enabled ? "ENABLED" : "DISABLED")}.",
-                new { Server = conn.Name, MasterEnabled = enabled, FilterCount = values.Count });
+                $"[{conn.Name}] AutoStop balance filters {(enabled ? "ENABLED" : "DISABLED")} ({values.Count}).",
+                new { Server = conn.Name, Enabled = enabled, FilterCount = values.Count });
         }
 
         if (idx.Value < 0 || idx.Value >= values.Count)
             return CommandResult.Fail($"Index {idx} out of range (have {values.Count} filter(s)).");
-        ((JObject)values[idx.Value])["isEnabled"] = enabled;
-        var werr2 = WriteBalanceList(conn, list);
+        values[idx.Value].isRunning = enabled;
+        var werr2 = WriteBalanceFilters(conn, values);
         if (werr2 != null) return werr2;
         return CommandResult.Ok(
             $"[{conn.Name}] AutoStop balance filter at index {idx} {(enabled ? "ENABLED" : "DISABLED")}.",
@@ -404,13 +414,13 @@ public sealed class AutoStopsCommand : ICommand
         var ensureErr = EnsureProfileSettings(conn);
         if (ensureErr != null) return ensureErr;
 
-        string? raw = conn.ProfileSettingsStore.GetValue(BalanceFiltersKey);
-        JObject list = ParseOrInit(raw);
-        var values = (JArray)list["Values"]!;
+        var parsed = ParseOrInit(conn.ProfileSettingsStore.GetValue(BalanceFiltersKey));
+        if (parsed.Error != null) return CommandResult.Fail(parsed.Error);
+        List<AutoStopAlgorithmData> values = parsed.Filters;
         if (idx < 0 || idx >= values.Count)
             return CommandResult.Fail($"Index {idx} out of range (have {values.Count} filter(s)).");
         values.RemoveAt(idx);
-        var updateErr = WriteBalanceList(conn, list);
+        var updateErr = WriteBalanceFilters(conn, values);
         if (updateErr != null) return updateErr;
         return CommandResult.Ok(
             $"[{conn.Name}] AutoStop balance filter at index {idx} deleted (remaining: {values.Count}).",
@@ -427,41 +437,59 @@ public sealed class AutoStopsCommand : ICommand
         return null;
     }
 
-    private static (bool, JObject?, string?) TryParseBalanceList(string? raw)
+    private static (bool Ok, List<AutoStopAlgorithmData> Filters, string? Error) TryParseBalanceFilters(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw))
-            return (true, new JObject { ["isEnabled"] = false, ["Values"] = new JArray() }, null);
+            return (true, new List<AutoStopAlgorithmData>(), null);
         try
         {
             var tok = JToken.Parse(raw);
-            if (tok is JObject obj)
+            if (tok.Type != JTokenType.Array)
             {
-                if (obj["Values"] == null || obj["Values"]!.Type != JTokenType.Array)
-                    obj["Values"] = new JArray();
-                return (true, obj, null);
+                string hint = tok.Type == JTokenType.Object && tok["Values"] is JArray
+                    ? "legacy mt-text-client wrapper object detected"
+                    : $"got {tok.Type}";
+                return (false, new List<AutoStopAlgorithmData>(),
+                    $"Unexpected JSON shape ({hint}; expected bare AutoStopAlgorithmData array).");
             }
-            return (false, null, $"Unexpected JSON shape (got {tok.Type}, expected object).");
+
+            var filters = tok.ToObject<List<AutoStopAlgorithmData>>() ?? new List<AutoStopAlgorithmData>();
+            foreach (var filter in filters)
+                NormalizeAutoStopFilter(filter);
+            return (true, filters, null);
         }
         catch (Exception ex)
         {
-            return (false, null, ex.Message);
+            return (false, new List<AutoStopAlgorithmData>(), ex.Message);
         }
     }
 
-    private static JObject ParseOrInit(string? raw)
+    private static (List<AutoStopAlgorithmData> Filters, string? Error) ParseOrInit(string? raw)
     {
-        var (ok, obj, _) = TryParseBalanceList(raw);
-        if (ok && obj != null) return obj;
-        return new JObject { ["isEnabled"] = false, ["Values"] = new JArray() };
+        var parsed = TryParseBalanceFilters(raw);
+        if (parsed.Ok) return (parsed.Filters, null);
+        return (new List<AutoStopAlgorithmData>(), parsed.Error);
     }
 
-    private CommandResult? WriteBalanceList(CoreConnection conn, JObject list)
+    private CommandResult? WriteBalanceFilters(CoreConnection conn, List<AutoStopAlgorithmData> filters)
     {
-        string newValue = list.ToString(Formatting.None);
+        foreach (var filter in filters)
+            NormalizeAutoStopFilter(filter);
+        string newValue = JsonConvert.SerializeObject(filters, Formatting.None);
         var updated = new Dictionary<string, string> { { BalanceFiltersKey, newValue } };
         var (success, _, error) = conn.UpdateProfileSettings(updated);
         if (!success) return CommandResult.Fail($"[{conn.Name}] Failed to update AutoStops: {error}");
         return null;
+    }
+
+    private static void NormalizeAutoStopFilter(AutoStopAlgorithmData filter)
+    {
+        filter.info ??= "";
+        filter.algorithmComment ??= "";
+        filter.asset = string.IsNullOrWhiteSpace(filter.asset) ? "usdt" : filter.asset;
+        filter.symbolFilter ??= "";
+        filter.reportComment ??= "";
+        filter.marketTypes ??= new List<MarketType>();
     }
 
     private static Dictionary<string, string> ParseFlags(List<string> args)
@@ -515,6 +543,31 @@ public sealed class AutoStopsCommand : ICommand
             return (int)mt;
         return (int)MarketType.FUTURES;
     }
+
+    private static AutoStopsTimeFrame ResolveTimeFrame(long timeframeMs)
+    {
+        long hours = Math.Max(1, (long)Math.Round(timeframeMs / 3_600_000.0));
+        return hours switch
+        {
+            <= 1 => AutoStopsTimeFrame.H1,
+            <= 2 => AutoStopsTimeFrame.H2,
+            <= 3 => AutoStopsTimeFrame.H3,
+            <= 6 => AutoStopsTimeFrame.H6,
+            <= 12 => AutoStopsTimeFrame.H12,
+            <= 24 => AutoStopsTimeFrame.D1,
+            <= 48 => AutoStopsTimeFrame.D2,
+            <= 72 => AutoStopsTimeFrame.D3,
+            <= 168 => AutoStopsTimeFrame.D7,
+            _ => AutoStopsTimeFrame.D30,
+        };
+    }
+
+    private static string BuildAutoStopInfo(int filterType, int sourceType)
+        => $"mt-text-client {FilterTypeName(filterType)} {SourceName(sourceType)}";
+
+    private static string? FirstCsv(string csv)
+        => csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .FirstOrDefault();
 
     // AutoStop enums are byte-backed in MTShared, so Enum.IsDefined(typeof(...), int)
     // throws.  Render by name only if the int value falls in the known range; else

@@ -1018,10 +1018,10 @@ MIT — see [LICENSE](LICENSE).
 | `mt_autostops_list` | List auto-stop algorithm configurations and status. Shows balance/report filters and thresholds. | — | — |
 | `mt_autostops_baseline` | Request auto-stop baseline recalculation on Core (fire-and-forget). | — | — |
 | `mt_autostops_reports` | Get report data for auto-stop algorithms. Optionally filter by algorithm IDs. | — | — |
-| `mt_autostops_add` | Append a new balance auto-stop filter. Created disabled — call mt_autostops_start to activate. max_loss is the lower bound of the value range (e.g. -0.1 USDT) and value_max its upper bound. filter_type ∈ {GLOBAL_BY_SYMBOL, ALGO_SYMBOLS, ALGO_TOTAL, CUSTOM}; source_type ∈ {VALUE, PRICE_DELTA_SUM, PROFIT_FACTOR}; market ∈ {SPOT, MARGIN, FUTURES, DELIVERY}. | `max_loss`, `confirm` | ✓ |
+| `mt_autostops_add` | Append a new balance auto-stop filter. Created disabled — call mt_autostops_start to activate. Writes the real MTShared AutoStopAlgorithmData[] shape: max_loss → minMargin, symbols → symbolFilter, quotes/asset → asset, pause_algo → panicIfTriggered, timeframe_ms → AutoStopsTimeFrame. | `max_loss`, `confirm` | ✓ |
 | `mt_autostops_edit` | Mutate an existing balance auto-stop filter at the given index. Every other field is optional — only the ones you pass are updated. | `index`, `confirm` | ✓ |
-| `mt_autostops_start` | Enable a balance auto-stop filter. If index is omitted, the master balance auto-stop switch is flipped to true. | `confirm` | ✓ |
-| `mt_autostops_stop` | Disable a balance auto-stop filter. If index is omitted, the master switch is flipped to false. | `confirm` | ✓ |
+| `mt_autostops_start` | Enable one balance auto-stop filter, or all filters if index is omitted. | `confirm` | ✓ |
+| `mt_autostops_stop` | Disable one balance auto-stop filter, or all filters if index is omitted. | `confirm` | ✓ |
 | `mt_autostops_delete` | Remove a balance auto-stop filter at the given index. | `index`, `confirm` | ✓ |
 | `mt_blacklist_list` | List current blacklist configuration: blocked markets, quote assets, and symbols. | — | — |
 | `mt_blacklist_add` | Add an item to the blacklist. type=market needs market_type only; type=quote needs market_type+quote_asset; type=symbol needs market_type+quote_asset+symbol. Requires confirm=true. | `type`, `market_type`, `confirm` | ✓ |

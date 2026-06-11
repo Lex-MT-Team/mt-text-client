@@ -1296,14 +1296,16 @@ public sealed class McpServer
     {
         var parts = new List<string> { "autostops add" };
         AppendFlag(parts, "--max-loss", arguments["max_loss"]?.Value<string>());
-        AppendFlag(parts, "--value-max", arguments["value_max"]?.Value<string>());
-        if (arguments["is_range"]?.Value<bool>() == true) parts.Add("--is-range");
+        AppendFlag(parts, "--info", arguments["info"]?.Value<string>());
         AppendFlagSanitised(parts, "--filter-type", arguments["filter_type"]?.Value<string>(), AutoStopFilterTypes);
         AppendFlagSanitised(parts, "--source-type", arguments["source_type"]?.Value<string>(), AutoStopSourceTypes);
         AppendFlagSanitised(parts, "--market", arguments["market"]?.Value<string>(), AutoStopMarkets);
         AppendFlag(parts, "--timeframe-ms", arguments["timeframe_ms"]?.Value<string>());
         AppendFlag(parts, "--symbols", arguments["symbols"]?.Value<string>(), allowSpaces: false);
         AppendFlag(parts, "--quotes", arguments["quotes"]?.Value<string>(), allowSpaces: false);
+        AppendFlag(parts, "--asset", arguments["asset"]?.Value<string>(), allowSpaces: false);
+        AppendFlag(parts, "--algorithm-comment", arguments["algorithm_comment"]?.Value<string>());
+        AppendFlag(parts, "--report-comment", arguments["report_comment"]?.Value<string>());
         if (arguments["pause_algo"]?.Value<bool>() == true) parts.Add("--pause-algo");
         return string.Join(" ", parts) + profileSuffix + confirm;
     }
@@ -1315,15 +1317,16 @@ public sealed class McpServer
         if (!int.TryParse(idx, out _)) idx = "0";
         parts.Add(idx);
         AppendFlag(parts, "--max-loss", arguments["max_loss"]?.Value<string>());
-        AppendFlag(parts, "--value-max", arguments["value_max"]?.Value<string>());
-        if (arguments["is_range"]?.Value<bool>() == true) parts.Add("--is-range");
-        if (arguments["no_range"]?.Value<bool>() == true) parts.Add("--no-range");
+        AppendFlag(parts, "--info", arguments["info"]?.Value<string>());
         AppendFlagSanitised(parts, "--filter-type", arguments["filter_type"]?.Value<string>(), AutoStopFilterTypes);
         AppendFlagSanitised(parts, "--source-type", arguments["source_type"]?.Value<string>(), AutoStopSourceTypes);
         AppendFlagSanitised(parts, "--market", arguments["market"]?.Value<string>(), AutoStopMarkets);
         AppendFlag(parts, "--timeframe-ms", arguments["timeframe_ms"]?.Value<string>());
         AppendFlag(parts, "--symbols", arguments["symbols"]?.Value<string>(), allowSpaces: false);
         AppendFlag(parts, "--quotes", arguments["quotes"]?.Value<string>(), allowSpaces: false);
+        AppendFlag(parts, "--asset", arguments["asset"]?.Value<string>(), allowSpaces: false);
+        AppendFlag(parts, "--algorithm-comment", arguments["algorithm_comment"]?.Value<string>());
+        AppendFlag(parts, "--report-comment", arguments["report_comment"]?.Value<string>());
         if (arguments["pause_algo"]?.Value<bool>() == true) parts.Add("--pause-algo");
         if (arguments["no_pause_algo"]?.Value<bool>() == true) parts.Add("--no-pause-algo");
         if (arguments["enabled"] is JValue enVal && enVal.Type == JTokenType.Boolean)

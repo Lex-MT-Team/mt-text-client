@@ -9,6 +9,30 @@ Versions follow [SemVer](https://semver.org).
 
 ## Unreleased
 
+### Autostops schema fix (issue #34)
+
+* **`mt_autostops_*` / `autostops` now read and write the real
+  `AutoStopAlgorithmData[]` array shape** under
+  `AutoStopAlgorithm.Balance.Filters`, replacing the previous
+  client-invented `{isEnabled, Values:[...]}` wrapper that crashed the
+  official UI's balance-autostops panel on deserialize and meant filters
+  written by this client never armed on the core. Field mapping:
+  `max_loss` → `minMargin`, `symbols` → `symbolFilter`, `quotes`/`asset` →
+  `asset`, `pause_algo` → `panicIfTriggered`, `timeframe_ms` → the
+  timeframe enum (snapped to the nearest bucket), `enabled` → `isRunning`.
+* `value_max` / `is_range` are removed from the `mt_autostops_add`/`_edit`
+  schemas (the real type has no range concept); passing the old CLI flags
+  now returns an explanatory error. New optional fields: `info`, `asset`,
+  `algorithm_comment`, `report_comment`.
+* The "master switch" concept is gone — `mt_autostops_start`/`_stop`
+  without an index now enable/disable **all** filters.
+* Settings blobs still holding the legacy wrapper are detected and
+  reported as an explicit error on every mutating subcommand (no silent
+  rewrite). Remediation for affected profiles: reset the
+  `AutoStopAlgorithm.Balance.Filters` key to `[]` via `mt_settings_set`.
+* Regression tests round-trip a real `AutoStopAlgorithmData` through the
+  parser and pin the legacy-wrapper rejection.
+
 ### Algos lifecycle refresh
 
 * **`mt_algos_start`/`mt_algos_stop` request wire-shape** now mirrors the
