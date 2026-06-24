@@ -172,6 +172,28 @@ public sealed class ImportCommand : ICommand
         var results = new List<string>();
         int successCount = 0;
 
+        // Re-seed the parser from the connected core's current default templates
+        // (the isConfigList broadcast) and re-parse, so each algorithm's argument
+        // set matches the connected core. A V2 file exported from an older core
+        // otherwise carries a stale argument set the core rejects on start
+        // (issue #44). Falls back to the initial bundled-template parse if the
+        // core has not broadcast its config-list yet.
+        if (conn.AlgoStore.ConfigTemplateCount == 0)
+        {
+            conn.ForceRefreshAlgos();
+        }
+        if (conn.AlgoStore.ConfigTemplateCount > 0)
+        {
+            _parser.SetTemplates(conn.AlgoStore.ConfigTemplates);
+            V2FormatParser.ParseResult liveParse = _parser.Parse(v2Text);
+            if (liveParse.Algorithms.Count > 0)
+            {
+                algorithms = liveParse.Algorithms;
+                groups = liveParse.Groups;
+                results.Add($"  Templated {algorithms.Count} algo(s) from the core's current-version defaults.");
+            }
+        }
+
         // Create groups FIRST, then remap algo groupIDs.
         // Core reassigns group IDs via GetNextID() in AddFolder(), so we must:
         //   1. Send SAVE_GROUP with old ID

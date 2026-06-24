@@ -19,20 +19,41 @@ Versions follow [SemVer](https://semver.org).
   0.7.24554 — verified live (clone → `START ✓ / VERIFIED / isRunning=true`). The
   provenance count (passthrough/unknown argument count) is still reported in the
   dry-run preview; it is now computed read-only without mutating `argsJson`.
-* **Known remaining scope (separate, deeper):** the bundled `algorithms.json`
-  template and any pre-0.7.24554 `mt_import_v2` file carry the *old* argument set
-  — 0.7.24554 added several algorithm arguments (e.g. `toggleRiskLimitFilter`,
-  `orderSizeSettings`, `listingModeFilter`, `natrFilter`, `volumeSpikesFilter`)
-  and the core only back-fills them for algorithms already persisted at
-  format-upgrade time, not for freshly-imported ones. So the cold-bench template
-  fallback and importing old V2 files still fail with `Value cannot be null.
-  (Parameter 'obj')`; those args must come from a 0.7.24554 source (clone an
-  existing algorithm, or re-export the V2 file from a 0.7.24554 core).
+### Algorithm create / import: use the core's live default templates (issue #44)
+
+The core broadcasts a default-parameter template for every algorithm type (an
+`AlgorithmListData` with `isConfigList=true` — the same set the desktop GUI's
+"add new algorithm" dialog uses). The client previously discarded this and fell
+back to a bundled template file whose argument set could be older or incomplete
+than the connected core, so a created/imported algorithm could fail to start
+with `StartAlgorithm | Value cannot be null. (Parameter 'obj')`. The client now
+keeps these templates and uses them as the source of current-version arguments:
+
+* **`mt_algos_templates`** (new) — list the connected core's default per-type
+  templates (signature, type, market, argument count). Read-only.
+* **`mt_algos_create`** now clones the core's live template for the requested
+  type when no existing algorithm is found on the target, ahead of the bundled
+  file. A created algorithm therefore carries the connected core's full
+  current-version argument set and is startable. Verified live: creating a
+  brand-new `SHOT_DETECT` (a type absent from the bundled file entirely) yields
+  the full 86-argument set and `START ✓` with no error.
+* **`mt_import_v2`** now re-bases each imported algorithm onto the core's live
+  template before saving, so a V2 file exported from an older core imports with
+  the connected core's current argument set (the file's explicit values applied
+  on top). Verified live: a V2 import is `Templated … from the core's
+  current-version defaults`, lands the full 85-argument set, and `START`s with no
+  error. The V2 parser also now reads either `argsJson` or `args` from a bundled
+  template, fixing a pre-existing offline-import failure.
+
+The bundled template file remains only as an offline / not-yet-connected
+fallback; when connected, the client always prefers the core's own defaults.
 
 ### MoonTrader 0.7.24554 new-feature surfacing
 
 * **Shot Detect algorithm** — `SHOT_DETECT` added to the `mt_algos_create`
-  `algo_type` enumerations (registry, CLI usage, error text, README); the new
+  `algo_type` enumerations (registry, CLI usage, error text, README) **and the
+  MCP argument builder** (it was previously accepted everywhere except the
+  `mt_algos_create` dispatcher, which silently dropped it); the new
   `SHOT_DETECT_ORDER_BEHAVIOR` / `SHOT_DETECT_BUFFER_TYPE` argument types now
   render as `enum` (not `complex`) in `mt_algos_config`; and the `mt_algos_verify`
   silent-init (BUG13) carve-out now exempts `SHOT_DETECT` group parents the same

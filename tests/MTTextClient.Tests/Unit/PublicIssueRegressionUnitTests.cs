@@ -6,13 +6,50 @@ using MTShared.Structs;
 using MTShared.Types;
 using MTTextClient.Commands;
 using MTTextClient.Core;
+using MTTextClient.Import;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using Xunit;
 
 namespace MTTextClient.Tests.Unit;
 
 public sealed class PublicIssueRegressionUnitTests
 {
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void Issue44_import_templates_from_live_core_args_not_stale_file()
+    {
+        // The reporter's path: a V2 file exported from an older core carries an
+        // argument set that predates the connected core, which rejects it on
+        // start. Seeding the parser from the core's live config-list template
+        // (current-version argsJson) makes the imported algorithm carry the full
+        // current argument set, with the file's explicit overrides applied.
+        var parser = new V2FormatParser(""); // no bundled file
+        parser.SetTemplates(new[]
+        {
+            new AlgorithmData
+            {
+                name = "Shots Group",
+                signature = "SG",
+                groupType = AlgorithmGroupType.SHOTS,
+                isTradingAlgo = true,
+                // current core arg set — includes a NEW arg older files lack
+                argsJson = """{"Arguments":{"distance":{"value":1.0},"toggleRiskLimitFilter":{"value":false}}}""",
+            },
+        });
+
+        const string v2 = "VERSION: 2\n###START###\nalgorithmName=0=Shots Group;\nversion=0=9;\ngroupId=0=0;\ndistance=4=5.5;\n";
+        V2FormatParser.ParseResult result = parser.Parse(v2);
+
+        result.Algorithms.Should().HaveCount(1);
+        var args = JObject.Parse(result.Algorithms[0].argsJson!)["Arguments"] as JObject;
+        args.Should().NotBeNull();
+        // file override applied
+        args!["distance"]!["value"]!.Value<double>().Should().Be(5.5);
+        // new current-version arg present (would be missing from a stale file)
+        args.Should().ContainKey("toggleRiskLimitFilter");
+    }
+
     [Fact]
     [Trait("Category", "Unit")]
     public void Issue44_create_does_not_inject_synthetic_args_into_wire()

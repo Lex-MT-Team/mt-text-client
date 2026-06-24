@@ -130,6 +130,12 @@ public static class ToolRegistry
         yield return Tool("mt_algos_search", "Search algorithms by name/signature/symbol",
             Prop("query", "string", "Search query", required: true),
             Prop("profile", "string", "Target server profile"));
+        yield return Tool("mt_algos_templates",
+            "List the connected core's default per-type algorithm templates (the isConfigList " +
+            "broadcast the GUI's 'add new algorithm' dialog uses). These carry the core's " +
+            "current-version default argument set and are the clone source for mt_algos_create " +
+            "and mt_import_v2. Read-only.",
+            Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_algos_get", "Get algorithm details",
             Prop("id", "string", "Algorithm ID", required: true),
             Prop("profile", "string", "Target server profile"));

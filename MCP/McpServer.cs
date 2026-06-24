@@ -607,6 +607,7 @@ public sealed class McpServer
             // Algorithms
             "mt_algos_list" => $"algos list{profileSuffix}",
             "mt_algos_list_all" => "algos list-all",
+            "mt_algos_templates" => $"algos templates{profileSuffix}",
             "mt_algos_search" => $"algos search {arguments["query"]?.Value<string>() ?? ""}{profileSuffix}",
             "mt_algos_get" => $"algos get {arguments["id"]?.Value<string>() ?? ""}{profileSuffix}",
             "mt_algos_start" => $"algos start {arguments["id"]?.Value<string>() ?? ""}{profileSuffix}",
@@ -1235,7 +1236,7 @@ public sealed class McpServer
     {
         var parts = new List<string> { "algos create" };
         string? algoType = arguments["algo_type"]?.Value<string>()?.ToUpperInvariant();
-        if (algoType is "SHOTS" or "AVERAGES" or "WATCHERS" or "SIGNALS" or "SAVER" or "DEPTHSHOTS" or "VECTOR")
+        if (algoType is "SHOTS" or "SHOT_DETECT" or "AVERAGES" or "WATCHERS" or "SIGNALS" or "SAVER" or "DEPTHSHOTS" or "VECTOR")
             parts.Add($"--algo-type {algoType}");
         string? presetName = arguments["preset_name"]?.Value<string>();
         if (!string.IsNullOrWhiteSpace(presetName) && !presetName.Contains(' '))

@@ -49,7 +49,29 @@ namespace MTTextClient.Import;
 /// </summary>
 public sealed class V2FormatParser
 {
-    private readonly JObject _templatesByName; // algorithmName → full argsJson JObject
+    private JObject _templatesByName; // algorithmName → template token (argsJson/args + groupType/signature/isTradingAlgo)
+
+    /// <summary>Reseed the template table from the connected core's live
+    /// config-list templates (the isConfigList broadcast). These carry the
+    /// core's current-version argsJson, so imported algorithms match the
+    /// connected core and remain startable, in place of the bundled file whose
+    /// argument set may be stale or incomplete (issue #44). No-op if empty.</summary>
+    public void SetTemplates(IEnumerable<AlgorithmData> liveTemplates)
+    {
+        var table = new JObject();
+        foreach (AlgorithmData t in liveTemplates)
+        {
+            if (string.IsNullOrWhiteSpace(t.name) || string.IsNullOrWhiteSpace(t.argsJson)) continue;
+            table[t.name] = new JObject
+            {
+                ["argsJson"] = t.argsJson,
+                ["groupType"] = (int)t.groupType,
+                ["signature"] = t.signature ?? "",
+                ["isTradingAlgo"] = t.isTradingAlgo,
+            };
+        }
+        if (table.Count > 0) _templatesByName = table;
+    }
 
     /// <summary>
     /// Parsed group metadata from ###GROUP_START### section.
@@ -312,8 +334,14 @@ public sealed class V2FormatParser
             return null;
         }
 
-        // Deep-copy template argsJson and override with V2 values
+        // Deep-copy template argsJson and override with V2 values. Live
+        // config-list templates carry argsJson (a string); the bundled file
+        // stores the same payload under `args` (an object) — accept either.
         string? templateArgsJson = template["argsJson"]?.Value<string>();
+        if (string.IsNullOrWhiteSpace(templateArgsJson) && template["args"] is JObject argsAsObject)
+        {
+            templateArgsJson = argsAsObject.ToString(Formatting.None);
+        }
         if (string.IsNullOrWhiteSpace(templateArgsJson))
         {
             errors.Add($"Block {blockIndex}: template '{algorithmName}' has no argsJson.");

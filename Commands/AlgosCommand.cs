@@ -152,6 +152,8 @@ public sealed class AlgosCommand : ICommand
             "bulk-edit" => BulkEdit(subArgs, targetProfile, confirmFlag),
             // Create a new algorithm via clone-from-source.
             "create" => CreateAlgo(subArgs, targetProfile, confirmFlag),
+            // List the connected core's default per-type templates (isConfigList).
+            "templates" or "tpl" => ListCoreTemplates(targetProfile),
             "start-verify" or "sv" => StartAndVerify(subArgs, targetProfile),
             "verify" => VerifyAlgo(subArgs, targetProfile),
             _ => CommandResult.Fail($"Unknown subcommand: {subCmd}. {Usage}")
@@ -182,6 +184,62 @@ public sealed class AlgosCommand : ICommand
     #endregion
 
     #region List / Search / Get
+
+    // List the connected core's default per-type algorithm templates. The core
+    // broadcasts these as an AlgorithmListData with isConfigList=true (the same
+    // set the vendor GUI's "add new algorithm" dialog seeds from); they carry
+    // the core's current-version default argument set and are the clone source
+    // used by `algos create` and `import v2`.
+    private CommandResult ListCoreTemplates(string? targetProfile)
+    {
+        CoreConnection? conn = ResolveConnection(targetProfile, out CommandResult? error);
+        if (conn == null)
+        {
+            return error!;
+        }
+
+        if (conn.AlgoStore.ConfigTemplateCount == 0)
+        {
+            // The config-list rides the algorithms subscription; a transient
+            // refresh provokes it on cores that don't push it eagerly.
+            conn.ForceRefreshAlgos();
+        }
+
+        IReadOnlyCollection<AlgorithmData> templates = conn.AlgoStore.ConfigTemplates;
+        if (templates.Count == 0)
+        {
+            return CommandResult.Ok(
+                $"[{conn.Name}] No core config-list templates received yet. " +
+                "They arrive with the algorithms subscription shortly after connect.");
+        }
+
+        var data = templates
+            .OrderBy(t => t.groupType.ToString(), StringComparer.Ordinal)
+            .ThenBy(t => t.signature, StringComparer.Ordinal)
+            .Select(t =>
+            {
+                int argCount = 0;
+                if (!string.IsNullOrWhiteSpace(t.argsJson))
+                {
+                    try { argCount = (JObject.Parse(t.argsJson)["Arguments"] as JObject)?.Count ?? 0; }
+                    catch { /* leave 0 */ }
+                }
+                return (object)new
+                {
+                    t.signature,
+                    t.name,
+                    GroupType = t.groupType.ToString(),
+                    Market = t.marketType.ToString(),
+                    IsTrading = t.isTradingAlgo,
+                    ArgCount = argCount,
+                };
+            })
+            .ToList();
+
+        return CommandResult.Ok(
+            $"[{conn.Name}] {data.Count} core default template(s) — clone source for `algos create` / `import v2`:",
+            data);
+    }
 
     private CommandResult ListAlgos(string? targetProfile)
     {
@@ -2072,25 +2130,34 @@ public sealed class AlgosCommand : ICommand
             {
                 presetSource = $"auto_discover_on_target_profile (group_type={wantGroupType}, signature={sigFilter ?? source.signature ?? "?"}, sample_id={source.id})";
             }
+            else if (conn.AlgoStore.FindConfigTemplate(wantGroupType, sigFilter) is { } coreTemplate)
+            {
+                // Prefer the core's own default template for this type (broadcast
+                // as the isConfigList AlgorithmListData — the same set the vendor
+                // GUI's "add new algorithm" dialog seeds from). It always carries
+                // the connected core's CURRENT-version argument set, so the
+                // created algorithm is startable, and it needs no bundled file.
+                source = coreTemplate;
+                presetSource = $"clone_from_core_config_template (group_type={wantGroupType}, signature={source.signature ?? "?"})";
+            }
             else
             {
-                // Fall back to the bundled algoConfigs.json templates. The vendor
-                // mtclient ships a templates file with its desktop distribution
-                // and clones from it on first use — same pattern here. Without
-                // this fallback a freshly-provisioned bench (no algos loaded
-                // yet) had no MCP path to create the first algo at all.
+                // Last resort (offline / config-list not yet received): the
+                // bundled algoConfigs.json. Its argument set may predate the
+                // connected core, so a created algorithm may not be startable
+                // until the core broadcasts its config-list (issue #44).
                 source = TryLoadAlgoTemplateFromConfig(wantGroupType, sigFilter, out var templatePath);
                 if (source == null)
                 {
                     return CommandResult.Fail(
                         $"template_not_available: no algorithm of group_type={wantGroupType}" +
                         (sigFilter != null ? $" + signature={sigFilter}" : "") +
-                        $" found on {conn.Name} and no matching template in algoConfigs.json. " +
+                        $" found on {conn.Name}, no core config-list template received yet, and no matching bundled template. " +
                         "Either (a) specify --source-id N to clone a specific algorithm, " +
-                        "(b) create at least one algorithm of this type manually via the GUI / paste-from-clipboard first, " +
-                        "or (c) drop an algoConfigs.json template at <app-dir>/algoConfigs.json, ~/Documents/algoConfigs.json, or /tmp/algoConfigs.json.");
+                        "(b) ensure the profile is connected so the core broadcasts its default templates, " +
+                        "or (c) create at least one algorithm of this type manually via the GUI / paste-from-clipboard first.");
                 }
-                presetSource = $"clone_from_template_file (path={templatePath}, group_type={wantGroupType}, signature={source.signature ?? "?"})";
+                presetSource = $"clone_from_bundled_template_file (path={templatePath}, group_type={wantGroupType}, signature={source.signature ?? "?"})";
             }
         }
 

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using MTShared;
 using MTShared.Network;
 using MTShared.Types;
@@ -17,6 +18,46 @@ public sealed class AlgorithmStore
 {
     private readonly ConcurrentDictionary<long, AlgorithmData> _algorithms = new();
     private readonly ConcurrentDictionary<long, AlgorithmGroupData> _groups = new();
+
+    // Default per-type algorithm templates broadcast by the core as an
+    // AlgorithmListData with isConfigList=true (the same set the vendor UI's
+    // "add new algorithm" dialog seeds from). Keyed by signature (e.g. "SG",
+    // "MW"). These carry the connected core's CURRENT-version default argument
+    // set — the correct clone source for creating new algorithms, in place of a
+    // bundled (potentially stale) template file. See issue #44.
+    private readonly ConcurrentDictionary<string, AlgorithmData> _configTemplates =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Number of per-type default templates received from the core's
+    /// config-list broadcast.</summary>
+    public int ConfigTemplateCount => _configTemplates.Count;
+
+    /// <summary>The default per-type templates (one per signature) from the
+    /// core's isConfigList broadcast, or empty until one arrives.</summary>
+    public IReadOnlyCollection<AlgorithmData> ConfigTemplates => _configTemplates.Values.ToList();
+
+    /// <summary>Find the core-provided default template for a group type, with
+    /// an optional signature to disambiguate single vs group variants (e.g.
+    /// SHOTS → "SA" Shot or "SG" Shots Group). Deterministic: matches by
+    /// group type, prefers an exact signature match, else returns the
+    /// lowest-signature match. Null if no template has been broadcast.</summary>
+    public AlgorithmData? FindConfigTemplate(AlgorithmGroupType groupType, string? signature)
+    {
+        AlgorithmData? best = null;
+        foreach (AlgorithmData t in _configTemplates.Values)
+        {
+            if (t.groupType != groupType) continue;
+            if (!string.IsNullOrWhiteSpace(signature))
+            {
+                if (string.Equals(t.signature, signature, StringComparison.OrdinalIgnoreCase))
+                    return t;
+                continue;
+            }
+            if (best == null || string.CompareOrdinal(t.signature, best.signature) < 0)
+                best = t;
+        }
+        return best;
+    }
 
     /// <summary>Number of algorithms currently tracked.</summary>
     public int Count => _algorithms.Count;
@@ -85,9 +126,20 @@ public sealed class AlgorithmStore
     /// </summary>
     private void ProcessAlgorithmList(AlgorithmListData listData)
     {
-        // Skip config lists (template data, not live algos)
+        // Config lists carry the core's default per-type templates, not live
+        // algos: cache them by signature (do not mix into the live algo store).
         if (listData.isConfigList)
         {
+            if (listData.algorithms != null)
+            {
+                foreach (AlgorithmData t in listData.algorithms)
+                {
+                    if (!string.IsNullOrWhiteSpace(t.signature))
+                    {
+                        _configTemplates[t.signature] = t;
+                    }
+                }
+            }
             return;
         }
 

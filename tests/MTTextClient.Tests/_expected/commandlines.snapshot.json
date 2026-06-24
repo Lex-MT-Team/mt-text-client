@@ -62,6 +62,7 @@
   "mt_algos_list": "algos list @<profile>",
   "mt_algos_list_all": "algos list-all",
   "mt_algos_search": "algos search <query> @<profile>",
+  "mt_algos_templates": "algos templates @<profile>",
   "mt_algos_get": "algos get <id> @<profile>",
   "mt_algos_start": "algos start <id> @<profile>",
   "mt_algos_stop": "algos stop <id> @<profile>",
