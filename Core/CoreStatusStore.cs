@@ -26,6 +26,17 @@ namespace MTTextClient.Core;
 /// </summary>
 public sealed class CoreStatusStore
 {
+    /// <summary>The MTCore build the committed vendor DLLs were built against.
+    /// Bump in lockstep with lib/MTShared.dll (and scripts/fetch_vendor_libs.py
+    /// VENDOR_VERSION). A connected core reporting a different build means the
+    /// wire layouts can disagree — several structs silently mis-deserialize under
+    /// such skew, so callers should treat a mismatch as a hard warning.</summary>
+    public const string ExpectedCoreBuild = "0.7.24554";
+
+    /// <summary>True when the connected core's reported build matches
+    /// <see cref="ExpectedCoreBuild"/>. Defaults true until a build is observed.</summary>
+    public bool BuildVersionMatches { get; private set; } = true;
+
     private volatile CoreStatusSnapshot? _current;
     private volatile CoreLicenseSnapshot? _license;
 
@@ -89,8 +100,21 @@ public sealed class CoreStatusStore
                 LicenseValidTill = status.licenseValidTill,
                 ApiKeysExpiration = status.exchangeAPIKeysExpirationTime,
                 UserComment = status.licenseUserComment ?? "",
+                // 0.7.24554: per-account license risk limits + balance-limit policy.
+                ManualOrderLimits = status.licenseUserManualOrderLimits ?? new List<int>(),
+                AlgoOrderLimits = status.licenseUserAlgoOrderLimits ?? new List<int>(),
+                BalanceLimitPercent = status.licenseUserBalanceLimitInfo?.percentLimit ?? 0,
+                BalanceLimitFixed = status.licenseUserBalanceLimitInfo?.fixedLimit ?? 0,
+                BalanceLimitAsset = status.licenseUserBalanceLimitInfo?.asset ?? "",
+                ExchangeUID = status.exchangeUID ?? "",
                 Timestamp = DateTime.UtcNow
             };
+
+            // buildVersion is serialized before the 0.7.24554 CoreStatusData
+            // insertions, so it reads correctly even under wire skew — making it a
+            // reliable handshake field.
+            BuildVersionMatches = string.IsNullOrEmpty(license.BuildVersion)
+                || string.Equals(license.BuildVersion, ExpectedCoreBuild, StringComparison.OrdinalIgnoreCase);
 
             _license = license;
             OnLicenseReceived?.Invoke(license);
@@ -187,6 +211,13 @@ public sealed class CoreLicenseSnapshot
     public long LicenseValidTill { get; init; }
     public long ApiKeysExpiration { get; init; }
     public string UserComment { get; init; } = "";
+    // 0.7.24554 per-account license risk limits + balance-limit policy.
+    public IReadOnlyList<int> ManualOrderLimits { get; init; } = new List<int>();
+    public IReadOnlyList<int> AlgoOrderLimits { get; init; } = new List<int>();
+    public double BalanceLimitPercent { get; init; }
+    public double BalanceLimitFixed { get; init; }
+    public string BalanceLimitAsset { get; init; } = "";
+    public string ExchangeUID { get; init; } = "";
     public DateTime Timestamp { get; init; }
 
     // Valid unix timestamp range for DateTimeOffset.FromUnixTimeSeconds

@@ -9,6 +9,29 @@ Versions follow [SemVer](https://semver.org).
 
 ## Unreleased
 
+### MoonTrader 0.7.24554 new-feature surfacing
+
+* **Shot Detect algorithm** — `SHOT_DETECT` added to the `mt_algos_create`
+  `algo_type` enumerations (registry, CLI usage, error text, README); the new
+  `SHOT_DETECT_ORDER_BEHAVIOR` / `SHOT_DETECT_BUFFER_TYPE` argument types now
+  render as `enum` (not `complex`) in `mt_algos_config`; and the `mt_algos_verify`
+  silent-init (BUG13) carve-out now exempts `SHOT_DETECT` group parents the same
+  way it exempts SHOTS scanners.
+* **Risk Limit** — `mt_core_license` now surfaces the per-account license caps
+  added in 0.7.24554: `ManualOrderLimits`, `AlgoOrderLimits`, the balance-limit
+  policy (`BalanceLimitInfo`: percent/fixed/asset), and `ExchangeUID`.
+* **Wire-version handshake guard** — the client pins an expected core build
+  (`CoreStatusStore.ExpectedCoreBuild`, bumped with the vendor DLL) and compares
+  it to the connected core's reported `buildVersion` on the initial status
+  update. `mt_core_license` reports `BuildVersionMatch` and `mt_core_health`
+  raises a warning on mismatch, since a build skew means struct layouts can
+  silently disagree. buildVersion is serialized ahead of the changed
+  CoreStatusData fields, so it reads correctly even under skew.
+* Reference Price for the Averages algorithm (`priceDistanceType` /
+  `klineInterval`) remains reachable via the `algos config set
+  algorithmParameters` escape hatch; a first-class set path + template default
+  are deferred pending a live-confirmed default.
+
 ### Vendor upgrade to MoonTrader 0.7.24554
 
 * **Bumped the vendored protocol stack to MTCore 0.7.24554** —

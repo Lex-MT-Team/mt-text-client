@@ -258,7 +258,7 @@ public static class ToolRegistry
             "DRY-RUN by default (omit no_dry_run to preview); commit requires no_dry_run=true AND confirm=true.",
             Prop("profile", "string", "Target server profile", required: true),
             Prop("algo_type", "string",
-                "Algorithm group_type: SHOTS, AVERAGES, WATCHERS, SIGNALS, SAVER, DEPTHSHOTS, VECTOR. " +
+                "Algorithm group_type: SHOTS, SHOT_DETECT, AVERAGES, WATCHERS, SIGNALS, SAVER, DEPTHSHOTS, VECTOR. " +
                 "Required when source_algo_id is omitted (auto-discover path)."),
             Prop("preset_name", "string",
                 "Optional signature filter (e.g. 'SG' for Shots Group) — narrows auto-discovery " +

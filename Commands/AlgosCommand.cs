@@ -1996,7 +1996,7 @@ public sealed class AlgosCommand : ICommand
     ///
     /// CLI:
     ///   algos create [@profile]
-    ///       --algo-type SHOTS|AVERAGES|WATCHERS|SIGNALS|SAVER|DEPTHSHOTS|VECTOR
+    ///       --algo-type SHOTS|SHOT_DETECT|AVERAGES|WATCHERS|SIGNALS|SAVER|DEPTHSHOTS|VECTOR
     ///       [--signature SG]
     ///       [--source-id N]                        (pin a specific source)
     ///       [--new-name "..."]                     (default: <source>_copy_<ts>)
@@ -2047,7 +2047,7 @@ public sealed class AlgosCommand : ICommand
             // Auto-discover by --algo-type (group_type) and optional --signature.
             if (string.IsNullOrWhiteSpace(algoTypeRaw))
                 return CommandResult.Fail(
-                    "algo_type_required: specify --algo-type SHOTS|AVERAGES|WATCHERS|SIGNALS|SAVER|DEPTHSHOTS|VECTOR " +
+                    "algo_type_required: specify --algo-type SHOTS|SHOT_DETECT|AVERAGES|WATCHERS|SIGNALS|SAVER|DEPTHSHOTS|VECTOR " +
                     "OR specify --source-id N to clone a specific algorithm.");
             if (!Enum.TryParse<AlgorithmGroupType>(algoTypeRaw.ToUpperInvariant(), out var wantGroupType) ||
                 !Enum.IsDefined(typeof(AlgorithmGroupType), wantGroupType) ||
@@ -2448,11 +2448,13 @@ public sealed class AlgosCommand : ICommand
                           || (int)algo.marketType == 0;
         bool   isTradingAlgo = algo.isTradingAlgo;
 
-        // SG/SHOTS algorithms are market scanners. The parent algo row can stay
-        // symbol-less while the per-market work happens underneath the group, so
-        // do not apply the single-symbol silent-init heuristic to them.
+        // SG/SHOTS (and the 0.7.24554 SHOT_DETECT) algorithms are market
+        // scanners. The parent algo row can stay symbol-less while the per-market
+        // work happens underneath the group, so do not apply the single-symbol
+        // silent-init heuristic to them.
         bool isShotGroup = string.Equals(algo.signature, "SG", StringComparison.OrdinalIgnoreCase)
-                        || algo.groupType == AlgorithmGroupType.SHOTS;
+                        || algo.groupType == AlgorithmGroupType.SHOTS
+                        || algo.groupType == AlgorithmGroupType.SHOT_DETECT;
 
         // Silent init failure pattern: a single-market trading algo reports
         // running, but no symbol/market resolved (Init failed).

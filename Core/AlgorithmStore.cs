@@ -446,6 +446,8 @@ public sealed class AlgorithmStore
         59 => "enum",               // MARKETS_WATCHER_SIGNAL_TYPE
         61 => "enum",               // PERF_FILTER_VALUE_SOURCE_TYPE
         62 => "enum",               // PERF_FILTER_VALUE_RANGE_TYPE
+        65 => "enum",               // SHOT_DETECT_ORDER_BEHAVIOR (0.7.24554)
+        72 => "enum",               // SHOT_DETECT_BUFFER_TYPE (0.7.24554)
 
         // === Ranges (min/max objects) ===
         18 => "range",              // MIN_MAX_FLOAT
@@ -513,7 +515,7 @@ public sealed class AlgorithmStore
 
         // === Enum types — typically stored as integer index ===
         7 or 8 or 10 or 12 or 13 or 14 or 16 or 17 or 20 or 21 or 22 or 26
-        or 31 or 38 or 39 or 41 or 44 or 52 or 59 or 61 or 62 =>
+        or 31 or 38 or 39 or 41 or 44 or 52 or 59 or 61 or 62 or 65 or 72 =>
             int.TryParse(input, out int enumInt) ? JToken.FromObject(enumInt) : JToken.FromObject(input),
 
         // === String types — pass through as-is ===

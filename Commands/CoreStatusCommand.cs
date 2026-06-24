@@ -156,6 +156,9 @@ public sealed class CoreStatusCommand : ICommand
             LicenseId = license.LicenseId,
             LicenseName = license.LicenseName,
             BuildVersion = license.BuildVersion,
+            BuildVersionMatch = conn.CoreStatusStore.BuildVersionMatches
+                ? "OK"
+                : $"MISMATCH — client built for {CoreStatusStore.ExpectedCoreBuild}; wire layouts may disagree",
             CoreOS = license.CoreOS,
             CoreUptime = license.CoreUptime > TimeSpan.Zero ? uptimeStr : "N/A",
             LicenseValid = licenseDays == int.MaxValue
@@ -169,6 +172,14 @@ public sealed class CoreStatusCommand : ICommand
                     ? $"{apiDays} days remaining"
                     : $"EXPIRED ({Math.Abs(apiDays)} days ago)",
             UserComment = string.IsNullOrEmpty(license.UserComment) ? "(none)" : license.UserComment,
+            // 0.7.24554 license risk limits (Risk Limit feature). Empty/zero when
+            // the core does not enforce per-account caps.
+            ManualOrderLimits = license.ManualOrderLimits,
+            AlgoOrderLimits = license.AlgoOrderLimits,
+            BalanceLimit = license.BalanceLimitPercent > 0 || license.BalanceLimitFixed > 0
+                ? $"{license.BalanceLimitPercent}% / {license.BalanceLimitFixed} {license.BalanceLimitAsset}".Trim()
+                : "(none)",
+            ExchangeUID = string.IsNullOrEmpty(license.ExchangeUID) ? "(none)" : license.ExchangeUID,
             ReceivedAt = license.Timestamp.ToString("yyyy-MM-dd HH:mm:ss UTC")
         };
 
@@ -188,6 +199,14 @@ public sealed class CoreStatusCommand : ICommand
         }
 
         var issues = new List<string>();
+
+        // Wire-protocol handshake: a build mismatch means the client and core
+        // may disagree on struct layouts (silent mis-deserialization).
+        if (!conn.CoreStatusStore.BuildVersionMatches)
+        {
+            issues.Add($"⚠ Core build mismatch: client built for {CoreStatusStore.ExpectedCoreBuild}, " +
+                $"core reports {conn.CoreStatusStore.GetLicense()?.BuildVersion ?? "?"} — wire layouts may disagree");
+        }
 
         // Check critical metrics
         if (status.CoreCpuPercent > 90)
