@@ -1016,13 +1016,13 @@ MIT — see [LICENSE](LICENSE).
 | `mt_monitor_health` | Health assessment with trend analysis. Checks CPU, memory, threads, exchange latency, UDS data streams, and detects memory/thread growth trends. Returns HEALTHY/WARNING/CRITICAL. | — | — |
 | `mt_monitor_performance` | Get time-series performance snapshots. Each snapshot includes CPU, memory, threads, latency, UDS status. Start monitor first for history. | — | — |
 | `mt_monitor_stats` | Aggregate statistics over the monitoring window: min/max/avg for CPU, memory, threads, latency. Shows trends and sample count. | — | — |
-| `mt_autostops_list` | List auto-stop algorithm configurations and status. Shows balance/report filters and thresholds. | — | — |
+| `mt_autostops_list` | List balance and report auto-stops with status. Pulls a fresh AUTO_STOP subscription snapshot from Core (MTCore 0.7.24554+). The list index of each balance auto-stop is the value to pass to edit/start/stop/delete. | — | — |
 | `mt_autostops_baseline` | Request auto-stop baseline recalculation on Core (fire-and-forget). | — | — |
 | `mt_autostops_reports` | Get report data for auto-stop algorithms. Optionally filter by algorithm IDs. | — | — |
-| `mt_autostops_add` | Append a new balance auto-stop filter. Created disabled — call mt_autostops_start to activate. Writes the real MTShared AutoStopAlgorithmData[] shape: max_loss → minMargin, symbols → symbolFilter, quotes/asset → asset, pause_algo → panicIfTriggered, timeframe_ms → AutoStopsTimeFrame. | `max_loss`, `confirm` | ✓ |
-| `mt_autostops_edit` | Mutate an existing balance auto-stop filter at the given index. Every other field is optional — only the ones you pass are updated. | `index`, `confirm` | ✓ |
-| `mt_autostops_start` | Enable one balance auto-stop filter, or all filters if index is omitted. | `confirm` | ✓ |
-| `mt_autostops_stop` | Disable one balance auto-stop filter, or all filters if index is omitted. | `confirm` | ✓ |
+| `mt_autostops_add` | Create a new balance auto-stop (AutoStopOnBalanceData). Created disabled — call mt_autostops_start to activate. Sends AUTO_STOP_REQUEST(AddRequest) to Core. | `max_loss`, `confirm` | ✓ |
+| `mt_autostops_edit` | Mutate an existing balance auto-stop by its mt_autostops_list index. Only the fields you pass are updated. Sends AUTO_STOP_REQUEST(UpdateRequest). | `index`, `confirm` | ✓ |
+| `mt_autostops_start` | Enable one balance auto-stop by list index, or all if index is omitted. Sends AUTO_STOP_REQUEST(RunRequest). | `confirm` | ✓ |
+| `mt_autostops_stop` | Disable one balance auto-stop by list index, or all if index is omitted. Sends AUTO_STOP_REQUEST(StopRequest). | `confirm` | ✓ |
 | `mt_autostops_delete` | Remove a balance auto-stop filter at the given index. | `index`, `confirm` | ✓ |
 | `mt_blacklist_list` | List current blacklist configuration: blocked markets, quote assets, and symbols. | — | — |
 | `mt_blacklist_add` | Add an item to the blacklist. type=market needs market_type only; type=quote needs market_type+quote_asset; type=symbol needs market_type+quote_asset+symbol. Requires confirm=true. | `type`, `market_type`, `confirm` | ✓ |

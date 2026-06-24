@@ -13,48 +13,54 @@ namespace MTTextClient.Tests.Unit;
 
 public sealed class PublicIssueRegressionUnitTests
 {
+    // Issue #34 was originally fixed (PR #41) by writing the
+    // AutoStopAlgorithm.Balance.Filters settings blob as a real
+    // AutoStopAlgorithmData[]. MTCore 0.7.24554 removed that type and the
+    // settings-blob model entirely in favour of the live AUTO_STOP
+    // request/event subsystem, so the parser these tests guarded no longer
+    // exists. The regression guard now pins the new wire model: the store
+    // ingests the core's AutoStopListEvent snapshot keyed by id, and a balance
+    // request carries the real vendor AutoStopOnBalanceData (not a client blob).
     [Fact]
     [Trait("Category", "Unit")]
-    public void Issue34_autostops_parser_accepts_real_mtshared_array_shape()
+    public void Issue34_autostop_store_ingests_balance_snapshot_by_id()
     {
-        string raw = JsonConvert.SerializeObject(new[]
+        var store = new AutoStopStore();
+        store.HasData.Should().BeFalse();
+
+        var snapshot = new AutoStopListEvent
         {
-            new AutoStopAlgorithmData
+            AutoStopsOnBalance = new List<AutoStopOnBalanceData>
             {
-                id = 123,
-                info = "risk guard",
-                marketType = MarketType.FUTURES,
-                minMargin = -5,
-                isRunning = true,
-                asset = "usdt",
-                panicIfTriggered = true,
-                timeFrame = AutoStopsTimeFrame.D1,
-                symbolFilter = "btcusdt",
-                marketTypes = new List<MarketType>(),
-            }
-        });
+                new() { id = 123, name = "risk guard", marketType = MarketType.FUTURES, maxLoss = -5, asset = "usdt", keywords = "btcusdt", panicSellIfTriggered = true, isRunning = true },
+                new() { id = 456, name = "second", marketType = MarketType.FUTURES, maxLoss = -10, asset = "usdt", isRunning = false },
+            },
+            AutoStopsOnReports = new List<AutoStopOnReportsData>(),
+        };
+        store.ProcessEvent(snapshot);
 
-        (bool ok, List<AutoStopAlgorithmData> filters, string? error) = InvokeAutoStopsParser(raw);
+        store.HasData.Should().BeTrue();
+        store.Balance.Should().HaveCount(2);
+        store.FindBalanceById(123)!.maxLoss.Should().Be(-5);
+        store.FindBalanceById(123)!.keywords.Should().Be("btcusdt");
+        store.FindBalanceById(999).Should().BeNull();
 
-        ok.Should().BeTrue(error);
-        filters.Should().ContainSingle();
-        filters[0].minMargin.Should().Be(-5);
-        filters[0].symbolFilter.Should().Be("btcusdt");
+        // Removed event drops by id; the snapshot order is stable by id.
+        store.ProcessEvent(new AutoStopOnBalanceRemovedEvent { AutoStopIds = new List<long> { 123 } });
+        store.Balance.Should().ContainSingle().Which.id.Should().Be(456);
     }
 
     [Fact]
     [Trait("Category", "Unit")]
-    public void Issue34_autostops_parser_rejects_legacy_wrapper_shape()
+    public void Issue34_balance_request_carries_real_vendor_type()
     {
-        const string raw = """
-        {"isEnabled":true,"Values":[{"isEnabled":true,"valueRange":{"min":-5.0}}]}
-        """;
+        var autostop = new AutoStopOnBalanceData { id = 0, name = "g", marketType = MarketType.FUTURES, maxLoss = -5, asset = "usdt" };
+        var req = new AutoStopOnBalanceAddRequestData { AutoStop = autostop };
 
-        (bool ok, List<AutoStopAlgorithmData> filters, string? error) = InvokeAutoStopsParser(raw);
-
-        ok.Should().BeFalse();
-        filters.Should().BeEmpty();
-        error.Should().Contain("legacy mt-text-client wrapper");
+        // The request wraps the genuine MTShared.Network.AutoStopOnBalanceData —
+        // no client-invented JSON blob — and self-stamps its RequestType.
+        req.AutoStop.Should().BeSameAs(autostop);
+        req.RequestType.Should().Be(nameof(AutoStopOnBalanceAddRequestData));
     }
 
     [Fact]
@@ -153,18 +159,5 @@ public sealed class PublicIssueRegressionUnitTests
 
         store.Clear();
         store.LastUpdateUtc.Should().Be(default);
-    }
-
-    private static (bool Ok, List<AutoStopAlgorithmData> Filters, string? Error) InvokeAutoStopsParser(string raw)
-    {
-        MethodInfo method = typeof(AutoStopsCommand).GetMethod(
-            "TryParseBalanceFilters",
-            BindingFlags.NonPublic | BindingFlags.Static)!;
-        object result = method.Invoke(null, new object?[] { raw })!;
-        Type t = result.GetType();
-        return (
-            (bool)t.GetField("Item1")!.GetValue(result)!,
-            (List<AutoStopAlgorithmData>)t.GetField("Item2")!.GetValue(result)!,
-            (string?)t.GetField("Item3")!.GetValue(result));
     }
 }

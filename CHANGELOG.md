@@ -9,6 +9,30 @@ Versions follow [SemVer](https://semver.org).
 
 ## Unreleased
 
+### Vendor upgrade to MoonTrader 0.7.24554
+
+* **Bumped the vendored protocol stack to MTCore 0.7.24554** —
+  `lib/MTShared.dll` and `lib/LiteNetLib.dll` (LiteNetLib v2.1.2.0; the new
+  MTShared requires its `OnNtpResponse` entrypoint) refreshed together, and
+  `scripts/fetch_vendor_libs.py` `VENDOR_VERSION` bumped to `724554`. These must
+  move in lockstep with the core — mixing a 723902 client DLL with a 724554 core
+  silently mis-reads several wire structs.
+* **Auto-stops rewritten onto the new AUTO_STOP request/event subsystem.**
+  0.7.24554 removed the `AutoStopAlgorithmData` type and the
+  `AutoStopAlgorithm.Balance.Filters` settings-blob model that
+  `mt_autostops_*` wrote to (the model that PR #41 had aligned to the old
+  vendor shape). Balance auto-stops are now read from a live AUTO_STOP
+  subscription snapshot (`AutoStopStore`, fed by `AutoStopListEvent` +
+  incremental Added/Updated/Removed events) and mutated via
+  `AUTO_STOP_REQUEST` (Add/Update/Run/Stop/Remove) carrying the real
+  `AutoStopOnBalanceData`. `mt_autostops_add`/`edit` field set follows the
+  new type: `max_loss` (maxLoss), `name`, `market`, `asset`, `keywords`
+  (+`exclude_keywords`), `panic_sell` (panicSellIfTriggered); the removed
+  filter_type/source_type/timeframe/comment fields are gone. `start`/`stop`/
+  `edit`/`delete` index args are positions in the `mt_autostops_list`
+  snapshot. `baseline` and `reports` are unchanged (they ride the surviving
+  AUTO_STOPS_ALGORITHM family).
+
 ### Build
 
 * **Linux test runs can now load the vendor assembly.** The committed

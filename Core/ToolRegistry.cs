@@ -609,7 +609,9 @@ public static class ToolRegistry
 
         // ── AutoStops (Risk Management) ──
         yield return Tool("mt_autostops_list",
-            "List auto-stop algorithm configurations and status. Shows balance/report filters and thresholds.",
+            "List balance and report auto-stops with status. Pulls a fresh AUTO_STOP " +
+            "subscription snapshot from Core (MTCore 0.7.24554+). The list index of each " +
+            "balance auto-stop is the value to pass to edit/start/stop/delete.",
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_autostops_baseline",
             "Request auto-stop baseline recalculation on Core (fire-and-forget).",
@@ -619,51 +621,48 @@ public static class ToolRegistry
             Prop("ids", "string", "Comma-separated algorithm IDs (optional — omit for all)"),
             Prop("profile", "string", "Target server profile"));
 
-        // AutoStops balance-filter CRUD.  The filter list is stored
-        // as JSON in the AutoStopAlgorithm.Balance.Filters profile setting; these
-        // tools mutate that blob via UpdateProfileSettings.
+        // AutoStops balance CRUD over the MTCore 0.7.24554 AUTO_STOP request/event
+        // subsystem (the pre-24554 AutoStopAlgorithm.Balance.Filters settings-blob and
+        // AutoStopAlgorithmData type were removed). Fields map to AutoStopOnBalanceData;
+        // index args are positions in the mt_autostops_list snapshot.
         yield return Tool("mt_autostops_add",
-            "Append a new balance auto-stop filter. Created disabled — call mt_autostops_start to activate. " +
-            "Writes the real MTShared AutoStopAlgorithmData[] shape: max_loss → minMargin, symbols → symbolFilter, " +
-            "quotes/asset → asset, pause_algo → panicIfTriggered, timeframe_ms → AutoStopsTimeFrame.",
-            Prop("max_loss", "string", "minMargin threshold (e.g. -0.1, -5.0)", required: true),
-            Prop("info", "string", "Optional display info stored in AutoStopAlgorithmData.info"),
+            "Create a new balance auto-stop (AutoStopOnBalanceData). Created disabled — call " +
+            "mt_autostops_start to activate. Sends AUTO_STOP_REQUEST(AddRequest) to Core.",
+            Prop("max_loss", "string", "maxLoss threshold (e.g. -0.1, -5.0)", required: true),
+            Prop("name", "string", "Optional display name"),
             Prop("market", "string", "Market type (default FUTURES)"),
-            Prop("timeframe_ms", "string", "Evaluation timeframe in ms (default 86400000 = 24h)"),
-            Prop("symbols", "string", "Optional symbolFilter string"),
-            Prop("quotes", "string", "Optional quote asset; first value is used as asset"),
-            Prop("asset", "string", "Asset field (default usdt)"),
-            Prop("algorithm_comment", "string", "Optional algorithmComment filter"),
-            Prop("report_comment", "string", "Optional reportComment filter"),
-            Prop("pause_algo", "boolean", "Set panicIfTriggered=true"),
+            Prop("asset", "string", "Balance asset to watch (default usdt)"),
+            Prop("keywords", "string", "Optional algo-name keyword filter"),
+            Prop("exclude_keywords", "boolean", "Treat keywords as an exclusion filter"),
+            Prop("panic_sell", "boolean", "Panic-sell positions when triggered (panicSellIfTriggered)"),
             Prop("confirm", "boolean", "Must be true to proceed", required: true),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_autostops_edit",
-            "Mutate an existing balance auto-stop filter at the given index. " +
-            "Every other field is optional — only the ones you pass are updated.",
-            Prop("index", "string", "Zero-based filter index (use mt_autostops_list to discover)", required: true),
-            Prop("max_loss", "string", "New minMargin threshold"),
-            Prop("info", "string", "New info field"),
+            "Mutate an existing balance auto-stop by its mt_autostops_list index. " +
+            "Only the fields you pass are updated. Sends AUTO_STOP_REQUEST(UpdateRequest).",
+            Prop("index", "string", "Zero-based list index (use mt_autostops_list to discover)", required: true),
+            Prop("max_loss", "string", "New maxLoss threshold"),
+            Prop("name", "string", "New display name"),
             Prop("market", "string", "Market type"),
-            Prop("timeframe_ms", "string", "Evaluation timeframe in ms"),
-            Prop("symbols", "string", "New symbolFilter string"),
-            Prop("quotes", "string", "Quote asset; first value is used as asset"),
-            Prop("asset", "string", "New asset field"),
-            Prop("algorithm_comment", "string", "New algorithmComment filter"),
-            Prop("report_comment", "string", "New reportComment filter"),
-            Prop("pause_algo", "boolean", "If true, set panicIfTriggered=true"),
-            Prop("no_pause_algo", "boolean", "If true, set panicIfTriggered=false"),
+            Prop("asset", "string", "New balance asset"),
+            Prop("keywords", "string", "New keyword filter"),
+            Prop("exclude_keywords", "boolean", "Set keyword exclusion on"),
+            Prop("include_keywords", "boolean", "Set keyword exclusion off"),
+            Prop("panic_sell", "boolean", "Set panicSellIfTriggered=true"),
+            Prop("no_panic_sell", "boolean", "Set panicSellIfTriggered=false"),
             Prop("enabled", "boolean", "Set isRunning explicitly"),
             Prop("confirm", "boolean", "Must be true to proceed", required: true),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_autostops_start",
-            "Enable one balance auto-stop filter, or all filters if index is omitted.",
-            Prop("index", "string", "Zero-based filter index (optional — omit to enable all)"),
+            "Enable one balance auto-stop by list index, or all if index is omitted. " +
+            "Sends AUTO_STOP_REQUEST(RunRequest).",
+            Prop("index", "string", "Zero-based list index (optional — omit to enable all)"),
             Prop("confirm", "boolean", "Must be true to proceed", required: true),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_autostops_stop",
-            "Disable one balance auto-stop filter, or all filters if index is omitted.",
-            Prop("index", "string", "Zero-based filter index (optional — omit to disable all)"),
+            "Disable one balance auto-stop by list index, or all if index is omitted. " +
+            "Sends AUTO_STOP_REQUEST(StopRequest).",
+            Prop("index", "string", "Zero-based list index (optional — omit to disable all)"),
             Prop("confirm", "boolean", "Must be true to proceed", required: true),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_autostops_delete",
