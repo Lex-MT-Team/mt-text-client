@@ -98,24 +98,22 @@ public sealed class AlgosCreateLiveTradeTests
         newIds.Count.Should().Be(1, because: $"exactly one new algorithm ID expected; beforeIds={beforeIds.Count} afterIds={afterIds.Count}");
         long newId = newIds[0];
 
-        // 4) METADATA STAMP — Layer 2 check.  The new algo's argsJson must
-        // carry an `_mcp_metadata` block with the schema_version.
+        // 4) CLEAN WIRE ARGS — issue #44.  The new algo's argsJson must NOT
+        // carry any synthetic client metadata: MTCore 0.7.24554's argument
+        // parser rejects unknown keys (e.g. the old `_mcp_metadata` block),
+        // making the algorithm unstartable. The wire arguments must contain only
+        // real algorithm parameters.
         var cfgResp = await _mcp.CallTool("mt_algos_config", new
         {
             id = newId.ToString(), profile = Profile,
         });
         cfgResp.InnerSuccess.Should().BeTrue();
         // mt_algos_config flattens Arguments → 'data' array of {Key, Value, ...}.
-        bool foundMcpMetadata = false;
         foreach (var p in cfgResp.ParsedBody!.Value.GetProperty("data").EnumerateArray())
             if (p.ValueKind == JsonValueKind.Object &&
-                p.TryGetProperty("Key", out var k) && k.GetString() == "_mcp_metadata")
-            { foundMcpMetadata = true; break; }
-        // The _mcp_metadata is a synthetic Arguments entry; some MTCore versions
-        // may filter unknown-typed args out of the parsed config view.  We accept
-        // either an explicit hit OR (fallback) we re-read the raw argsJson via
-        // an alternate path; but for the LiveTrade contract here, the algo
-        // SAVED at all + appears with the right name is the primary evidence.
+                p.TryGetProperty("Key", out var k))
+                k.GetString().Should().NotStartWith("_mcp",
+                    because: "synthetic client metadata in wire args breaks start on 0.7.24554 (#44)");
 
         // 5) WRITE ARTIFACT.
         await WriteArtifact(new
@@ -124,7 +122,7 @@ public sealed class AlgosCreateLiveTradeTests
             artifact.StartedAtUtc,
             EndedAtUtc = System.DateTime.UtcNow,
             NewAlgoId = newId,
-            McpMetadataObserved = foundMcpMetadata,
+            WireArgsClean = true, // no _mcp_metadata in argsJson (issue #44)
             FinalAlgoCount = before + 1,
             CrudPath = "create_clone_from_source(SHOTS+SG) → SAVE → verify (ID-diff) → delete",
             SchemaVersion = "algo-create-v1",

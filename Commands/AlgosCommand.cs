@@ -1979,12 +1979,14 @@ public sealed class AlgosCommand : ICommand
     ///   carries on the source algorithm at this moment.  New fields shipped
     ///   in a future MTCore binary flow through to the new algorithm because
     ///   we copy the whole argsJson verbatim.</item>
-    ///   <item><b>Layer 2 — schema-version stamp.</b>  A synthetic
-    ///   <c>_mcp_metadata</c> JObject is injected into <c>argsJson.Arguments</c>
-    ///   carrying <c>created_by_mcp_version</c>, <c>algo_type</c>,
-    ///   <c>source_algo_id</c>, <c>source_profile</c>, <c>source_exchange</c>,
-    ///   <c>created_at_utc</c>.  This creates a history of what schema was
-    ///   in use at creation time, observable via <c>mt_algos_config</c>.</item>
+    ///   <item><b>Layer 2 — unknown-field count.</b>  The created algorithm's
+    ///   argument names are compared against the small set the MCP layer knows;
+    ///   the count of unrecognised (passed-through) arguments is reported in the
+    ///   dry-run preview as evidence that nothing was dropped. (Earlier builds
+    ///   also injected a synthetic <c>_mcp_metadata</c> block into
+    ///   <c>argsJson.Arguments</c>; that was removed because MTCore 0.7.24554's
+    ///   stricter argument parser rejects unknown synthetic keys and the
+    ///   resulting algorithm could not be started — see issue #44.)</item>
     ///   <item><b>Layer 3 — unknown-field passthrough.</b>  Overrides flow
     ///   through <see cref="AlgorithmStore.UpdateParameter"/> which touches
     ///   only <c>Arguments.&lt;key&gt;.value</c>; every other field
@@ -2146,9 +2148,10 @@ public sealed class AlgosCommand : ICommand
             }
         }
 
-        // Inject Layer 2 metadata into argsJson.
-        int unknownFieldsPreserved = InjectMcpMetadata(fresh, presetSource, source, conn,
-            algoTypeRaw, sigFilter, finalName);
+        // Layer 2 evidence: count passthrough (unknown-to-MCP) arguments. Does
+        // NOT mutate argsJson — synthetic keys in the wire arguments break
+        // start on MTCore 0.7.24554 (issue #44).
+        int unknownFieldsPreserved = CountTemplateUnknownArgs(fresh);
 
         // Dry-run preview (default).
         if (dryRun)
@@ -2214,48 +2217,26 @@ public sealed class AlgosCommand : ICommand
     }
 
     /// <summary>
-    /// Inject the Stage-resilience metadata into <paramref name="fresh"/>'s
-    /// argsJson under a synthetic <c>_mcp_metadata</c> key.  Returns the
-    /// count of unknown-to-MCP fields preserved verbatim from the source
-    /// template (Layer 3 evidence — observable in the dry-run preview).
+    /// Count the arguments in <paramref name="fresh"/>'s argsJson whose names
+    /// the MCP layer does not recognise (passthrough fields preserved verbatim
+    /// from the source/template — Layer 2 evidence, shown in the dry-run
+    /// preview). Read-only: it does NOT mutate argsJson. Synthetic keys in the
+    /// wire arguments break algorithm start on MTCore 0.7.24554's stricter
+    /// argument parser (issue #44), so nothing is injected.
     /// </summary>
-    private static int InjectMcpMetadata(AlgorithmData fresh, string presetSource,
-        AlgorithmData source, CoreConnection conn, string? algoTypeHint, string? sigFilter, string newName)
+    private static int CountTemplateUnknownArgs(AlgorithmData fresh)
     {
         if (string.IsNullOrWhiteSpace(fresh.argsJson)) return 0;
-        int unknownPreserved = 0;
         try
         {
             JObject root = JObject.Parse(fresh.argsJson);
             if (root["Arguments"] is JObject args)
             {
-                // Inject metadata as a synthetic Arguments entry.  We use a key
-                // prefixed with `_` to signal "not a user-facing parameter".
-                args["_mcp_metadata"] = new JObject
-                {
-                    ["created_by_mcp_version"] = AlgoCreateSchemaVersion,
-                    ["algo_type_hint"] = algoTypeHint ?? "",
-                    ["signature_hint"] = sigFilter ?? "",
-                    ["source_algo_id"] = source.id,
-                    ["source_name"] = source.name,
-                    ["source_signature"] = source.signature,
-                    ["source_group_type"] = source.groupType.ToString(),
-                    ["source_profile"] = conn.Name,
-                    ["source_exchange"] = conn.Profile.Exchange.ToString(),
-                    ["new_name"] = newName,
-                    ["preset_source"] = presetSource,
-                    ["created_at_utc"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
-                };
-                // Layer 3 evidence: count Arguments entries whose names we don't
-                // know.  This is a heuristic — "known" = matches a small static
-                // set of parameter-name patterns documented in the codebase.
-                // The count is purely informational; ALL entries are preserved.
-                unknownPreserved = CountUnknownArgs(args);
+                return CountUnknownArgs(args);
             }
-            fresh.argsJson = root.ToString(Newtonsoft.Json.Formatting.None);
         }
-        catch { /* best-effort metadata; never block creation on JSON quirk */ }
-        return unknownPreserved;
+        catch { /* best-effort evidence; never block creation on a JSON quirk */ }
+        return 0;
     }
 
     /// <summary>
@@ -2272,7 +2253,7 @@ public sealed class AlgosCommand : ICommand
         "criticalErrorRestartDelay", "whiteList", "blackList",
         "quoteAssets", "useListingOnly",
         "coinDeltaFilterList", "deltaFilterList", "autoStopFilterList",
-        "triggerList", "_mcp_metadata",
+        "triggerList",
     };
 
     private static int CountUnknownArgs(JObject args)

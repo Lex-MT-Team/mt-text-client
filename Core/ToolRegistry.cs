@@ -252,9 +252,8 @@ public static class ToolRegistry
             "either pin an explicit source_algo_id, or specify algo_type to auto-discover a matching algorithm " +
             "on the target profile (optionally filtered by preset_name=signature).  " +
             "The source algorithm's argument template is cloned verbatim, with caller-supplied overrides applied on top — " +
-            "so any new vendor fields flow through without an MCP-side update. " +
-            "A small _mcp_metadata block is injected into the new algorithm's arguments " +
-            "(schema_version, source_algo_id, source_profile, created_at_utc) and is observable via mt_algos_config. " +
+            "so any new vendor fields flow through without an MCP-side update. The arguments sent to Core contain only " +
+            "real algorithm parameters (no client-side metadata), so the created algorithm is startable on MTCore 0.7.24554. " +
             "DRY-RUN by default (omit no_dry_run to preview); commit requires no_dry_run=true AND confirm=true.",
             Prop("profile", "string", "Target server profile", required: true),
             Prop("algo_type", "string",

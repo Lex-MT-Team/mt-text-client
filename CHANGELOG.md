@@ -9,6 +9,26 @@ Versions follow [SemVer](https://semver.org).
 
 ## Unreleased
 
+### Algorithm create: clean wire arguments (issue #44)
+
+* **`mt_algos_create` no longer injects a synthetic `_mcp_metadata` block into
+  the algorithm's wire arguments.** MTCore 0.7.24554's argument parser rejects
+  unknown synthetic keys, so a created/cloned algorithm carrying that block
+  could not be started (`StartAlgorithm | Value cannot be null. (Parameter
+  'key')`). Clone/copy/paste-based creation now produces startable algorithms on
+  0.7.24554 — verified live (clone → `START ✓ / VERIFIED / isRunning=true`). The
+  provenance count (passthrough/unknown argument count) is still reported in the
+  dry-run preview; it is now computed read-only without mutating `argsJson`.
+* **Known remaining scope (separate, deeper):** the bundled `algorithms.json`
+  template and any pre-0.7.24554 `mt_import_v2` file carry the *old* argument set
+  — 0.7.24554 added several algorithm arguments (e.g. `toggleRiskLimitFilter`,
+  `orderSizeSettings`, `listingModeFilter`, `natrFilter`, `volumeSpikesFilter`)
+  and the core only back-fills them for algorithms already persisted at
+  format-upgrade time, not for freshly-imported ones. So the cold-bench template
+  fallback and importing old V2 files still fail with `Value cannot be null.
+  (Parameter 'obj')`; those args must come from a 0.7.24554 source (clone an
+  existing algorithm, or re-export the V2 file from a 0.7.24554 core).
+
 ### MoonTrader 0.7.24554 new-feature surfacing
 
 * **Shot Detect algorithm** — `SHOT_DETECT` added to the `mt_algos_create`

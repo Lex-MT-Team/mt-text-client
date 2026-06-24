@@ -13,6 +13,29 @@ namespace MTTextClient.Tests.Unit;
 
 public sealed class PublicIssueRegressionUnitTests
 {
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void Issue44_create_does_not_inject_synthetic_args_into_wire()
+    {
+        // MTCore 0.7.24554's argument parser rejects unknown synthetic keys in
+        // the algorithm arguments, so a created algorithm carrying the old
+        // `_mcp_metadata` block could not be started (Value cannot be null).
+        // The create path's evidence helper must count passthrough args WITHOUT
+        // mutating argsJson.
+        const string argsJson = """{"Arguments":{"info":{"value":"x"},"customField":{"value":1}}}""";
+        var algo = new AlgorithmData { argsJson = argsJson };
+
+        MethodInfo count = typeof(AlgosCommand).GetMethod(
+            "CountTemplateUnknownArgs", BindingFlags.NonPublic | BindingFlags.Static)!;
+        int unknown = (int)count.Invoke(null, new object[] { algo })!;
+
+        // argsJson is untouched — no synthetic key injected.
+        algo.argsJson.Should().Be(argsJson);
+        algo.argsJson.Should().NotContain("_mcp");
+        // customField is unknown to the MCP layer; info is known.
+        unknown.Should().BeGreaterThan(0);
+    }
+
     // Issue #34 was originally fixed (PR #41) by writing the
     // AutoStopAlgorithm.Balance.Filters settings blob as a real
     // AutoStopAlgorithmData[]. MTCore 0.7.24554 removed that type and the
