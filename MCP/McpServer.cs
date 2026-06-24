@@ -607,6 +607,7 @@ public sealed class McpServer
             // Algorithms
             "mt_algos_list" => $"algos list{profileSuffix}",
             "mt_algos_list_all" => "algos list-all",
+            "mt_algos_templates" => $"algos templates{profileSuffix}",
             "mt_algos_search" => $"algos search {arguments["query"]?.Value<string>() ?? ""}{profileSuffix}",
             "mt_algos_get" => $"algos get {arguments["id"]?.Value<string>() ?? ""}{profileSuffix}",
             "mt_algos_start" => $"algos start {arguments["id"]?.Value<string>() ?? ""}{profileSuffix}",
@@ -1235,7 +1236,7 @@ public sealed class McpServer
     {
         var parts = new List<string> { "algos create" };
         string? algoType = arguments["algo_type"]?.Value<string>()?.ToUpperInvariant();
-        if (algoType is "SHOTS" or "AVERAGES" or "WATCHERS" or "SIGNALS" or "SAVER" or "DEPTHSHOTS" or "VECTOR")
+        if (algoType is "SHOTS" or "SHOT_DETECT" or "AVERAGES" or "WATCHERS" or "SIGNALS" or "SAVER" or "DEPTHSHOTS" or "VECTOR")
             parts.Add($"--algo-type {algoType}");
         string? presetName = arguments["preset_name"]?.Value<string>();
         if (!string.IsNullOrWhiteSpace(presetName) && !presetName.Contains(' '))
@@ -1297,17 +1298,12 @@ public sealed class McpServer
     {
         var parts = new List<string> { "autostops add" };
         AppendFlag(parts, "--max-loss", arguments["max_loss"]?.Value<string>());
-        AppendFlag(parts, "--info", arguments["info"]?.Value<string>());
-        AppendFlagSanitised(parts, "--filter-type", arguments["filter_type"]?.Value<string>(), AutoStopFilterTypes);
-        AppendFlagSanitised(parts, "--source-type", arguments["source_type"]?.Value<string>(), AutoStopSourceTypes);
+        AppendFlag(parts, "--name", arguments["name"]?.Value<string>(), allowSpaces: false);
         AppendFlagSanitised(parts, "--market", arguments["market"]?.Value<string>(), AutoStopMarkets);
-        AppendFlag(parts, "--timeframe-ms", arguments["timeframe_ms"]?.Value<string>());
-        AppendFlag(parts, "--symbols", arguments["symbols"]?.Value<string>(), allowSpaces: false);
-        AppendFlag(parts, "--quotes", arguments["quotes"]?.Value<string>(), allowSpaces: false);
         AppendFlag(parts, "--asset", arguments["asset"]?.Value<string>(), allowSpaces: false);
-        AppendFlag(parts, "--algorithm-comment", arguments["algorithm_comment"]?.Value<string>());
-        AppendFlag(parts, "--report-comment", arguments["report_comment"]?.Value<string>());
-        if (arguments["pause_algo"]?.Value<bool>() == true) parts.Add("--pause-algo");
+        AppendFlag(parts, "--keywords", arguments["keywords"]?.Value<string>(), allowSpaces: false);
+        if (arguments["exclude_keywords"]?.Value<bool>() == true) parts.Add("--exclude-keywords");
+        if (arguments["panic_sell"]?.Value<bool>() == true) parts.Add("--panic-sell");
         return string.Join(" ", parts) + profileSuffix + confirm;
     }
 
@@ -1318,18 +1314,14 @@ public sealed class McpServer
         if (!int.TryParse(idx, out _)) idx = "0";
         parts.Add(idx);
         AppendFlag(parts, "--max-loss", arguments["max_loss"]?.Value<string>());
-        AppendFlag(parts, "--info", arguments["info"]?.Value<string>());
-        AppendFlagSanitised(parts, "--filter-type", arguments["filter_type"]?.Value<string>(), AutoStopFilterTypes);
-        AppendFlagSanitised(parts, "--source-type", arguments["source_type"]?.Value<string>(), AutoStopSourceTypes);
+        AppendFlag(parts, "--name", arguments["name"]?.Value<string>(), allowSpaces: false);
         AppendFlagSanitised(parts, "--market", arguments["market"]?.Value<string>(), AutoStopMarkets);
-        AppendFlag(parts, "--timeframe-ms", arguments["timeframe_ms"]?.Value<string>());
-        AppendFlag(parts, "--symbols", arguments["symbols"]?.Value<string>(), allowSpaces: false);
-        AppendFlag(parts, "--quotes", arguments["quotes"]?.Value<string>(), allowSpaces: false);
         AppendFlag(parts, "--asset", arguments["asset"]?.Value<string>(), allowSpaces: false);
-        AppendFlag(parts, "--algorithm-comment", arguments["algorithm_comment"]?.Value<string>());
-        AppendFlag(parts, "--report-comment", arguments["report_comment"]?.Value<string>());
-        if (arguments["pause_algo"]?.Value<bool>() == true) parts.Add("--pause-algo");
-        if (arguments["no_pause_algo"]?.Value<bool>() == true) parts.Add("--no-pause-algo");
+        AppendFlag(parts, "--keywords", arguments["keywords"]?.Value<string>(), allowSpaces: false);
+        if (arguments["exclude_keywords"]?.Value<bool>() == true) parts.Add("--exclude-keywords");
+        if (arguments["include_keywords"]?.Value<bool>() == true) parts.Add("--include-keywords");
+        if (arguments["panic_sell"]?.Value<bool>() == true) parts.Add("--panic-sell");
+        if (arguments["no_panic_sell"]?.Value<bool>() == true) parts.Add("--no-panic-sell");
         if (arguments["enabled"] is JValue enVal && enVal.Type == JTokenType.Boolean)
             parts.Add($"--enabled {enVal.Value<bool>().ToString().ToLowerInvariant()}");
         return string.Join(" ", parts) + profileSuffix + confirm;
@@ -1349,10 +1341,6 @@ public sealed class McpServer
         return $"autostops delete {idx}{profileSuffix}{confirm}";
     }
 
-    private static readonly HashSet<string> AutoStopFilterTypes = new(StringComparer.OrdinalIgnoreCase)
-        { "GLOBAL_BY_SYMBOL", "ALGO_SYMBOLS", "ALGO_TOTAL", "CUSTOM" };
-    private static readonly HashSet<string> AutoStopSourceTypes = new(StringComparer.OrdinalIgnoreCase)
-        { "VALUE", "PRICE_DELTA_SUM", "PROFIT_FACTOR" };
     private static readonly HashSet<string> AutoStopMarkets = new(StringComparer.OrdinalIgnoreCase)
         { "SPOT", "MARGIN", "FUTURES", "DELIVERY" };
 

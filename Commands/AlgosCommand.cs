@@ -152,6 +152,8 @@ public sealed class AlgosCommand : ICommand
             "bulk-edit" => BulkEdit(subArgs, targetProfile, confirmFlag),
             // Create a new algorithm via clone-from-source.
             "create" => CreateAlgo(subArgs, targetProfile, confirmFlag),
+            // List the connected core's default per-type templates (isConfigList).
+            "templates" or "tpl" => ListCoreTemplates(targetProfile),
             "start-verify" or "sv" => StartAndVerify(subArgs, targetProfile),
             "verify" => VerifyAlgo(subArgs, targetProfile),
             _ => CommandResult.Fail($"Unknown subcommand: {subCmd}. {Usage}")
@@ -182,6 +184,62 @@ public sealed class AlgosCommand : ICommand
     #endregion
 
     #region List / Search / Get
+
+    // List the connected core's default per-type algorithm templates. The core
+    // broadcasts these as an AlgorithmListData with isConfigList=true (the same
+    // set the vendor GUI's "add new algorithm" dialog seeds from); they carry
+    // the core's current-version default argument set and are the clone source
+    // used by `algos create` and `import v2`.
+    private CommandResult ListCoreTemplates(string? targetProfile)
+    {
+        CoreConnection? conn = ResolveConnection(targetProfile, out CommandResult? error);
+        if (conn == null)
+        {
+            return error!;
+        }
+
+        if (conn.AlgoStore.ConfigTemplateCount == 0)
+        {
+            // The config-list rides the algorithms subscription; a transient
+            // refresh provokes it on cores that don't push it eagerly.
+            conn.ForceRefreshAlgos();
+        }
+
+        IReadOnlyCollection<AlgorithmData> templates = conn.AlgoStore.ConfigTemplates;
+        if (templates.Count == 0)
+        {
+            return CommandResult.Ok(
+                $"[{conn.Name}] No core config-list templates received yet. " +
+                "They arrive with the algorithms subscription shortly after connect.");
+        }
+
+        var data = templates
+            .OrderBy(t => t.groupType.ToString(), StringComparer.Ordinal)
+            .ThenBy(t => t.signature, StringComparer.Ordinal)
+            .Select(t =>
+            {
+                int argCount = 0;
+                if (!string.IsNullOrWhiteSpace(t.argsJson))
+                {
+                    try { argCount = (JObject.Parse(t.argsJson)["Arguments"] as JObject)?.Count ?? 0; }
+                    catch { /* leave 0 */ }
+                }
+                return (object)new
+                {
+                    t.signature,
+                    t.name,
+                    GroupType = t.groupType.ToString(),
+                    Market = t.marketType.ToString(),
+                    IsTrading = t.isTradingAlgo,
+                    ArgCount = argCount,
+                };
+            })
+            .ToList();
+
+        return CommandResult.Ok(
+            $"[{conn.Name}] {data.Count} core default template(s) — clone source for `algos create` / `import v2`:",
+            data);
+    }
 
     private CommandResult ListAlgos(string? targetProfile)
     {
@@ -1979,12 +2037,14 @@ public sealed class AlgosCommand : ICommand
     ///   carries on the source algorithm at this moment.  New fields shipped
     ///   in a future MTCore binary flow through to the new algorithm because
     ///   we copy the whole argsJson verbatim.</item>
-    ///   <item><b>Layer 2 — schema-version stamp.</b>  A synthetic
-    ///   <c>_mcp_metadata</c> JObject is injected into <c>argsJson.Arguments</c>
-    ///   carrying <c>created_by_mcp_version</c>, <c>algo_type</c>,
-    ///   <c>source_algo_id</c>, <c>source_profile</c>, <c>source_exchange</c>,
-    ///   <c>created_at_utc</c>.  This creates a history of what schema was
-    ///   in use at creation time, observable via <c>mt_algos_config</c>.</item>
+    ///   <item><b>Layer 2 — unknown-field count.</b>  The created algorithm's
+    ///   argument names are compared against the small set the MCP layer knows;
+    ///   the count of unrecognised (passed-through) arguments is reported in the
+    ///   dry-run preview as evidence that nothing was dropped. (Earlier builds
+    ///   also injected a synthetic <c>_mcp_metadata</c> block into
+    ///   <c>argsJson.Arguments</c>; that was removed because MTCore 0.7.24554's
+    ///   stricter argument parser rejects unknown synthetic keys and the
+    ///   resulting algorithm could not be started — see issue #44.)</item>
     ///   <item><b>Layer 3 — unknown-field passthrough.</b>  Overrides flow
     ///   through <see cref="AlgorithmStore.UpdateParameter"/> which touches
     ///   only <c>Arguments.&lt;key&gt;.value</c>; every other field
@@ -1996,7 +2056,7 @@ public sealed class AlgosCommand : ICommand
     ///
     /// CLI:
     ///   algos create [@profile]
-    ///       --algo-type SHOTS|AVERAGES|WATCHERS|SIGNALS|SAVER|DEPTHSHOTS|VECTOR
+    ///       --algo-type SHOTS|SHOT_DETECT|AVERAGES|WATCHERS|SIGNALS|SAVER|DEPTHSHOTS|VECTOR
     ///       [--signature SG]
     ///       [--source-id N]                        (pin a specific source)
     ///       [--new-name "..."]                     (default: <source>_copy_<ts>)
@@ -2047,7 +2107,7 @@ public sealed class AlgosCommand : ICommand
             // Auto-discover by --algo-type (group_type) and optional --signature.
             if (string.IsNullOrWhiteSpace(algoTypeRaw))
                 return CommandResult.Fail(
-                    "algo_type_required: specify --algo-type SHOTS|AVERAGES|WATCHERS|SIGNALS|SAVER|DEPTHSHOTS|VECTOR " +
+                    "algo_type_required: specify --algo-type SHOTS|SHOT_DETECT|AVERAGES|WATCHERS|SIGNALS|SAVER|DEPTHSHOTS|VECTOR " +
                     "OR specify --source-id N to clone a specific algorithm.");
             if (!Enum.TryParse<AlgorithmGroupType>(algoTypeRaw.ToUpperInvariant(), out var wantGroupType) ||
                 !Enum.IsDefined(typeof(AlgorithmGroupType), wantGroupType) ||
@@ -2070,25 +2130,34 @@ public sealed class AlgosCommand : ICommand
             {
                 presetSource = $"auto_discover_on_target_profile (group_type={wantGroupType}, signature={sigFilter ?? source.signature ?? "?"}, sample_id={source.id})";
             }
+            else if (conn.AlgoStore.FindConfigTemplate(wantGroupType, sigFilter) is { } coreTemplate)
+            {
+                // Prefer the core's own default template for this type (broadcast
+                // as the isConfigList AlgorithmListData — the same set the vendor
+                // GUI's "add new algorithm" dialog seeds from). It always carries
+                // the connected core's CURRENT-version argument set, so the
+                // created algorithm is startable, and it needs no bundled file.
+                source = coreTemplate;
+                presetSource = $"clone_from_core_config_template (group_type={wantGroupType}, signature={source.signature ?? "?"})";
+            }
             else
             {
-                // Fall back to the bundled algoConfigs.json templates. The vendor
-                // mtclient ships a templates file with its desktop distribution
-                // and clones from it on first use — same pattern here. Without
-                // this fallback a freshly-provisioned bench (no algos loaded
-                // yet) had no MCP path to create the first algo at all.
+                // Last resort (offline / config-list not yet received): the
+                // bundled algoConfigs.json. Its argument set may predate the
+                // connected core, so a created algorithm may not be startable
+                // until the core broadcasts its config-list (issue #44).
                 source = TryLoadAlgoTemplateFromConfig(wantGroupType, sigFilter, out var templatePath);
                 if (source == null)
                 {
                     return CommandResult.Fail(
                         $"template_not_available: no algorithm of group_type={wantGroupType}" +
                         (sigFilter != null ? $" + signature={sigFilter}" : "") +
-                        $" found on {conn.Name} and no matching template in algoConfigs.json. " +
+                        $" found on {conn.Name}, no core config-list template received yet, and no matching bundled template. " +
                         "Either (a) specify --source-id N to clone a specific algorithm, " +
-                        "(b) create at least one algorithm of this type manually via the GUI / paste-from-clipboard first, " +
-                        "or (c) drop an algoConfigs.json template at <app-dir>/algoConfigs.json, ~/Documents/algoConfigs.json, or /tmp/algoConfigs.json.");
+                        "(b) ensure the profile is connected so the core broadcasts its default templates, " +
+                        "or (c) create at least one algorithm of this type manually via the GUI / paste-from-clipboard first.");
                 }
-                presetSource = $"clone_from_template_file (path={templatePath}, group_type={wantGroupType}, signature={source.signature ?? "?"})";
+                presetSource = $"clone_from_bundled_template_file (path={templatePath}, group_type={wantGroupType}, signature={source.signature ?? "?"})";
             }
         }
 
@@ -2146,9 +2215,10 @@ public sealed class AlgosCommand : ICommand
             }
         }
 
-        // Inject Layer 2 metadata into argsJson.
-        int unknownFieldsPreserved = InjectMcpMetadata(fresh, presetSource, source, conn,
-            algoTypeRaw, sigFilter, finalName);
+        // Layer 2 evidence: count passthrough (unknown-to-MCP) arguments. Does
+        // NOT mutate argsJson — synthetic keys in the wire arguments break
+        // start on MTCore 0.7.24554 (issue #44).
+        int unknownFieldsPreserved = CountTemplateUnknownArgs(fresh);
 
         // Dry-run preview (default).
         if (dryRun)
@@ -2214,48 +2284,26 @@ public sealed class AlgosCommand : ICommand
     }
 
     /// <summary>
-    /// Inject the Stage-resilience metadata into <paramref name="fresh"/>'s
-    /// argsJson under a synthetic <c>_mcp_metadata</c> key.  Returns the
-    /// count of unknown-to-MCP fields preserved verbatim from the source
-    /// template (Layer 3 evidence — observable in the dry-run preview).
+    /// Count the arguments in <paramref name="fresh"/>'s argsJson whose names
+    /// the MCP layer does not recognise (passthrough fields preserved verbatim
+    /// from the source/template — Layer 2 evidence, shown in the dry-run
+    /// preview). Read-only: it does NOT mutate argsJson. Synthetic keys in the
+    /// wire arguments break algorithm start on MTCore 0.7.24554's stricter
+    /// argument parser (issue #44), so nothing is injected.
     /// </summary>
-    private static int InjectMcpMetadata(AlgorithmData fresh, string presetSource,
-        AlgorithmData source, CoreConnection conn, string? algoTypeHint, string? sigFilter, string newName)
+    private static int CountTemplateUnknownArgs(AlgorithmData fresh)
     {
         if (string.IsNullOrWhiteSpace(fresh.argsJson)) return 0;
-        int unknownPreserved = 0;
         try
         {
             JObject root = JObject.Parse(fresh.argsJson);
             if (root["Arguments"] is JObject args)
             {
-                // Inject metadata as a synthetic Arguments entry.  We use a key
-                // prefixed with `_` to signal "not a user-facing parameter".
-                args["_mcp_metadata"] = new JObject
-                {
-                    ["created_by_mcp_version"] = AlgoCreateSchemaVersion,
-                    ["algo_type_hint"] = algoTypeHint ?? "",
-                    ["signature_hint"] = sigFilter ?? "",
-                    ["source_algo_id"] = source.id,
-                    ["source_name"] = source.name,
-                    ["source_signature"] = source.signature,
-                    ["source_group_type"] = source.groupType.ToString(),
-                    ["source_profile"] = conn.Name,
-                    ["source_exchange"] = conn.Profile.Exchange.ToString(),
-                    ["new_name"] = newName,
-                    ["preset_source"] = presetSource,
-                    ["created_at_utc"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
-                };
-                // Layer 3 evidence: count Arguments entries whose names we don't
-                // know.  This is a heuristic — "known" = matches a small static
-                // set of parameter-name patterns documented in the codebase.
-                // The count is purely informational; ALL entries are preserved.
-                unknownPreserved = CountUnknownArgs(args);
+                return CountUnknownArgs(args);
             }
-            fresh.argsJson = root.ToString(Newtonsoft.Json.Formatting.None);
         }
-        catch { /* best-effort metadata; never block creation on JSON quirk */ }
-        return unknownPreserved;
+        catch { /* best-effort evidence; never block creation on a JSON quirk */ }
+        return 0;
     }
 
     /// <summary>
@@ -2272,7 +2320,7 @@ public sealed class AlgosCommand : ICommand
         "criticalErrorRestartDelay", "whiteList", "blackList",
         "quoteAssets", "useListingOnly",
         "coinDeltaFilterList", "deltaFilterList", "autoStopFilterList",
-        "triggerList", "_mcp_metadata",
+        "triggerList",
     };
 
     private static int CountUnknownArgs(JObject args)
@@ -2448,11 +2496,13 @@ public sealed class AlgosCommand : ICommand
                           || (int)algo.marketType == 0;
         bool   isTradingAlgo = algo.isTradingAlgo;
 
-        // SG/SHOTS algorithms are market scanners. The parent algo row can stay
-        // symbol-less while the per-market work happens underneath the group, so
-        // do not apply the single-symbol silent-init heuristic to them.
+        // SG/SHOTS (and the 0.7.24554 SHOT_DETECT) algorithms are market
+        // scanners. The parent algo row can stay symbol-less while the per-market
+        // work happens underneath the group, so do not apply the single-symbol
+        // silent-init heuristic to them.
         bool isShotGroup = string.Equals(algo.signature, "SG", StringComparison.OrdinalIgnoreCase)
-                        || algo.groupType == AlgorithmGroupType.SHOTS;
+                        || algo.groupType == AlgorithmGroupType.SHOTS
+                        || algo.groupType == AlgorithmGroupType.SHOT_DETECT;
 
         // Silent init failure pattern: a single-market trading algo reports
         // running, but no symbol/market resolved (Init failed).
