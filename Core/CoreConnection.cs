@@ -107,6 +107,10 @@ public sealed class CoreConnection : IDisposable
     /// <summary>Per-connection TPSL store. Created on first SubscribeTPSL().</summary>
     public TPSLStore? TPSLStore { get; private set; }
 
+    /// <summary>Per-connection auto-stop store (MTCore 0.7.24554+ AUTO_STOP
+    /// subscription). Populated by ForceRefreshAutoStops().</summary>
+    public AutoStopStore AutoStopStore { get; } = new();
+
     /// <summary>Per-connection trading performance store. Created on first SubscribeTradingPerformance().</summary>
     public TradingPerformanceStore? TradingPerfStore { get; private set; }
 
@@ -1420,6 +1424,55 @@ public sealed class CoreConnection : IDisposable
 
         return SendAndWait<ReportListData>(
             cb => _udpClient.SendAutoStopsAlgorithmsRequest(request, cb), timeoutMs);
+    }
+
+    /// <summary>Force-refresh the auto-stop store via a transient AUTO_STOP
+    /// subscribe: take the AutoStopListEvent snapshot, feed it into
+    /// AutoStopStore, then unsubscribe. Mirrors ForceRefreshTPSL. Replaces the
+    /// pre-24554 profile-settings-blob read for balance auto-stops. Returns true
+    /// if at least one AUTO_STOP event arrived.</summary>
+    public bool ForceRefreshAutoStops(int timeoutMs = 5_000)
+    {
+        if (_udpClient == null) { return false; }
+        int subId = -1;
+        var done = new System.Threading.ManualResetEventSlim(false);
+        int eventsReceived = 0;
+        try
+        {
+            subId = _udpClient.SendAutoStopSubscribe(
+                Profile.Exchange,
+                (AutoStopEventData data) =>
+                {
+                    AutoStopStore.ProcessEvent(data);
+                    System.Threading.Interlocked.Increment(ref eventsReceived);
+                    done.Set();
+                },
+                -1);
+            if (done.Wait(timeoutMs))
+            {
+                // Grace window for any incremental events trailing the snapshot.
+                System.Threading.Thread.Sleep(300);
+            }
+            return eventsReceived > 0;
+        }
+        finally
+        {
+            if (subId != -1 && _udpClient != null)
+            {
+                try { _udpClient.SendAutoStopUnsubscribe(ref subId, Profile.Exchange); }
+                catch { /* best-effort */ }
+            }
+            done.Dispose();
+        }
+    }
+
+    /// <summary>Send a balance auto-stop request (Add/Update/Run/Stop/Remove) to
+    /// Core over the AUTO_STOP_REQUEST channel. Fire-and-forget on the wire; the
+    /// resulting state is confirmed by a subsequent ForceRefreshAutoStops().</summary>
+    public void SendAutoStopBalanceRequest(AutoStopRequestData request)
+    {
+        request.exchangeType = Profile.Exchange;
+        _udpClient?.SendAutoStopRequest(request);
     }
 
     #endregion

@@ -9,6 +9,94 @@ Versions follow [SemVer](https://semver.org).
 
 ## Unreleased
 
+### Algorithm create: clean wire arguments (issue #44)
+
+* **`mt_algos_create` no longer injects a synthetic `_mcp_metadata` block into
+  the algorithm's wire arguments.** MTCore 0.7.24554's argument parser rejects
+  unknown synthetic keys, so a created/cloned algorithm carrying that block
+  could not be started (`StartAlgorithm | Value cannot be null. (Parameter
+  'key')`). Clone/copy/paste-based creation now produces startable algorithms on
+  0.7.24554 — verified live (clone → `START ✓ / VERIFIED / isRunning=true`). The
+  provenance count (passthrough/unknown argument count) is still reported in the
+  dry-run preview; it is now computed read-only without mutating `argsJson`.
+### Algorithm create / import: use the core's live default templates (issue #44)
+
+The core broadcasts a default-parameter template for every algorithm type (an
+`AlgorithmListData` with `isConfigList=true` — the same set the desktop GUI's
+"add new algorithm" dialog uses). The client previously discarded this and fell
+back to a bundled template file whose argument set could be older or incomplete
+than the connected core, so a created/imported algorithm could fail to start
+with `StartAlgorithm | Value cannot be null. (Parameter 'obj')`. The client now
+keeps these templates and uses them as the source of current-version arguments:
+
+* **`mt_algos_templates`** (new) — list the connected core's default per-type
+  templates (signature, type, market, argument count). Read-only.
+* **`mt_algos_create`** now clones the core's live template for the requested
+  type when no existing algorithm is found on the target, ahead of the bundled
+  file. A created algorithm therefore carries the connected core's full
+  current-version argument set and is startable. Verified live: creating a
+  brand-new `SHOT_DETECT` (a type absent from the bundled file entirely) yields
+  the full 86-argument set and `START ✓` with no error.
+* **`mt_import_v2`** now re-bases each imported algorithm onto the core's live
+  template before saving, so a V2 file exported from an older core imports with
+  the connected core's current argument set (the file's explicit values applied
+  on top). Verified live: a V2 import is `Templated … from the core's
+  current-version defaults`, lands the full 85-argument set, and `START`s with no
+  error. The V2 parser also now reads either `argsJson` or `args` from a bundled
+  template, fixing a pre-existing offline-import failure.
+
+The bundled template file remains only as an offline / not-yet-connected
+fallback; when connected, the client always prefers the core's own defaults.
+
+### MoonTrader 0.7.24554 new-feature surfacing
+
+* **Shot Detect algorithm** — `SHOT_DETECT` added to the `mt_algos_create`
+  `algo_type` enumerations (registry, CLI usage, error text, README) **and the
+  MCP argument builder** (it was previously accepted everywhere except the
+  `mt_algos_create` dispatcher, which silently dropped it); the new
+  `SHOT_DETECT_ORDER_BEHAVIOR` / `SHOT_DETECT_BUFFER_TYPE` argument types now
+  render as `enum` (not `complex`) in `mt_algos_config`; and the `mt_algos_verify`
+  silent-init (BUG13) carve-out now exempts `SHOT_DETECT` group parents the same
+  way it exempts SHOTS scanners.
+* **Risk Limit** — `mt_core_license` now surfaces the per-account license caps
+  added in 0.7.24554: `ManualOrderLimits`, `AlgoOrderLimits`, the balance-limit
+  policy (`BalanceLimitInfo`: percent/fixed/asset), and `ExchangeUID`.
+* **Wire-version handshake guard** — the client pins an expected core build
+  (`CoreStatusStore.ExpectedCoreBuild`, bumped with the vendor DLL) and compares
+  it to the connected core's reported `buildVersion` on the initial status
+  update. `mt_core_license` reports `BuildVersionMatch` and `mt_core_health`
+  raises a warning on mismatch, since a build skew means struct layouts can
+  silently disagree. buildVersion is serialized ahead of the changed
+  CoreStatusData fields, so it reads correctly even under skew.
+* Reference Price for the Averages algorithm (`priceDistanceType` /
+  `klineInterval`) remains reachable via the `algos config set
+  algorithmParameters` escape hatch; a first-class set path + template default
+  are deferred pending a live-confirmed default.
+
+### Vendor upgrade to MoonTrader 0.7.24554
+
+* **Bumped the vendored protocol stack to MTCore 0.7.24554** —
+  `lib/MTShared.dll` and `lib/LiteNetLib.dll` (LiteNetLib v2.1.2.0; the new
+  MTShared requires its `OnNtpResponse` entrypoint) refreshed together, and
+  `scripts/fetch_vendor_libs.py` `VENDOR_VERSION` bumped to `724554`. These must
+  move in lockstep with the core — mixing a 723902 client DLL with a 724554 core
+  silently mis-reads several wire structs.
+* **Auto-stops rewritten onto the new AUTO_STOP request/event subsystem.**
+  0.7.24554 removed the `AutoStopAlgorithmData` type and the
+  `AutoStopAlgorithm.Balance.Filters` settings-blob model that
+  `mt_autostops_*` wrote to (the model that PR #41 had aligned to the old
+  vendor shape). Balance auto-stops are now read from a live AUTO_STOP
+  subscription snapshot (`AutoStopStore`, fed by `AutoStopListEvent` +
+  incremental Added/Updated/Removed events) and mutated via
+  `AUTO_STOP_REQUEST` (Add/Update/Run/Stop/Remove) carrying the real
+  `AutoStopOnBalanceData`. `mt_autostops_add`/`edit` field set follows the
+  new type: `max_loss` (maxLoss), `name`, `market`, `asset`, `keywords`
+  (+`exclude_keywords`), `panic_sell` (panicSellIfTriggered); the removed
+  filter_type/source_type/timeframe/comment fields are gone. `start`/`stop`/
+  `edit`/`delete` index args are positions in the `mt_autostops_list`
+  snapshot. `baseline` and `reports` are unchanged (they ride the surviving
+  AUTO_STOPS_ALGORITHM family).
+
 ### Build
 
 * **Linux test runs can now load the vendor assembly.** The committed

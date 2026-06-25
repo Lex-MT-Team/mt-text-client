@@ -6,7 +6,9 @@ using MTShared.Structs;
 using MTShared.Types;
 using MTTextClient.Commands;
 using MTTextClient.Core;
+using MTTextClient.Import;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using Xunit;
 
 namespace MTTextClient.Tests.Unit;
@@ -15,46 +17,110 @@ public sealed class PublicIssueRegressionUnitTests
 {
     [Fact]
     [Trait("Category", "Unit")]
-    public void Issue34_autostops_parser_accepts_real_mtshared_array_shape()
+    public void Issue44_import_templates_from_live_core_args_not_stale_file()
     {
-        string raw = JsonConvert.SerializeObject(new[]
+        // The reporter's path: a V2 file exported from an older core carries an
+        // argument set that predates the connected core, which rejects it on
+        // start. Seeding the parser from the core's live config-list template
+        // (current-version argsJson) makes the imported algorithm carry the full
+        // current argument set, with the file's explicit overrides applied.
+        var parser = new V2FormatParser(""); // no bundled file
+        parser.SetTemplates(new[]
         {
-            new AutoStopAlgorithmData
+            new AlgorithmData
             {
-                id = 123,
-                info = "risk guard",
-                marketType = MarketType.FUTURES,
-                minMargin = -5,
-                isRunning = true,
-                asset = "usdt",
-                panicIfTriggered = true,
-                timeFrame = AutoStopsTimeFrame.D1,
-                symbolFilter = "btcusdt",
-                marketTypes = new List<MarketType>(),
-            }
+                name = "Shots Group",
+                signature = "SG",
+                groupType = AlgorithmGroupType.SHOTS,
+                isTradingAlgo = true,
+                // current core arg set — includes a NEW arg older files lack
+                argsJson = """{"Arguments":{"distance":{"value":1.0},"toggleRiskLimitFilter":{"value":false}}}""",
+            },
         });
 
-        (bool ok, List<AutoStopAlgorithmData> filters, string? error) = InvokeAutoStopsParser(raw);
+        const string v2 = "VERSION: 2\n###START###\nalgorithmName=0=Shots Group;\nversion=0=9;\ngroupId=0=0;\ndistance=4=5.5;\n";
+        V2FormatParser.ParseResult result = parser.Parse(v2);
 
-        ok.Should().BeTrue(error);
-        filters.Should().ContainSingle();
-        filters[0].minMargin.Should().Be(-5);
-        filters[0].symbolFilter.Should().Be("btcusdt");
+        result.Algorithms.Should().HaveCount(1);
+        var args = JObject.Parse(result.Algorithms[0].argsJson!)["Arguments"] as JObject;
+        args.Should().NotBeNull();
+        // file override applied
+        args!["distance"]!["value"]!.Value<double>().Should().Be(5.5);
+        // new current-version arg present (would be missing from a stale file)
+        args.Should().ContainKey("toggleRiskLimitFilter");
     }
 
     [Fact]
     [Trait("Category", "Unit")]
-    public void Issue34_autostops_parser_rejects_legacy_wrapper_shape()
+    public void Issue44_create_does_not_inject_synthetic_args_into_wire()
     {
-        const string raw = """
-        {"isEnabled":true,"Values":[{"isEnabled":true,"valueRange":{"min":-5.0}}]}
-        """;
+        // MTCore 0.7.24554's argument parser rejects unknown synthetic keys in
+        // the algorithm arguments, so a created algorithm carrying the old
+        // `_mcp_metadata` block could not be started (Value cannot be null).
+        // The create path's evidence helper must count passthrough args WITHOUT
+        // mutating argsJson.
+        const string argsJson = """{"Arguments":{"info":{"value":"x"},"customField":{"value":1}}}""";
+        var algo = new AlgorithmData { argsJson = argsJson };
 
-        (bool ok, List<AutoStopAlgorithmData> filters, string? error) = InvokeAutoStopsParser(raw);
+        MethodInfo count = typeof(AlgosCommand).GetMethod(
+            "CountTemplateUnknownArgs", BindingFlags.NonPublic | BindingFlags.Static)!;
+        int unknown = (int)count.Invoke(null, new object[] { algo })!;
 
-        ok.Should().BeFalse();
-        filters.Should().BeEmpty();
-        error.Should().Contain("legacy mt-text-client wrapper");
+        // argsJson is untouched — no synthetic key injected.
+        algo.argsJson.Should().Be(argsJson);
+        algo.argsJson.Should().NotContain("_mcp");
+        // customField is unknown to the MCP layer; info is known.
+        unknown.Should().BeGreaterThan(0);
+    }
+
+    // Issue #34 was originally fixed (PR #41) by writing the
+    // AutoStopAlgorithm.Balance.Filters settings blob as a real
+    // AutoStopAlgorithmData[]. MTCore 0.7.24554 removed that type and the
+    // settings-blob model entirely in favour of the live AUTO_STOP
+    // request/event subsystem, so the parser these tests guarded no longer
+    // exists. The regression guard now pins the new wire model: the store
+    // ingests the core's AutoStopListEvent snapshot keyed by id, and a balance
+    // request carries the real vendor AutoStopOnBalanceData (not a client blob).
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void Issue34_autostop_store_ingests_balance_snapshot_by_id()
+    {
+        var store = new AutoStopStore();
+        store.HasData.Should().BeFalse();
+
+        var snapshot = new AutoStopListEvent
+        {
+            AutoStopsOnBalance = new List<AutoStopOnBalanceData>
+            {
+                new() { id = 123, name = "risk guard", marketType = MarketType.FUTURES, maxLoss = -5, asset = "usdt", keywords = "btcusdt", panicSellIfTriggered = true, isRunning = true },
+                new() { id = 456, name = "second", marketType = MarketType.FUTURES, maxLoss = -10, asset = "usdt", isRunning = false },
+            },
+            AutoStopsOnReports = new List<AutoStopOnReportsData>(),
+        };
+        store.ProcessEvent(snapshot);
+
+        store.HasData.Should().BeTrue();
+        store.Balance.Should().HaveCount(2);
+        store.FindBalanceById(123)!.maxLoss.Should().Be(-5);
+        store.FindBalanceById(123)!.keywords.Should().Be("btcusdt");
+        store.FindBalanceById(999).Should().BeNull();
+
+        // Removed event drops by id; the snapshot order is stable by id.
+        store.ProcessEvent(new AutoStopOnBalanceRemovedEvent { AutoStopIds = new List<long> { 123 } });
+        store.Balance.Should().ContainSingle().Which.id.Should().Be(456);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void Issue34_balance_request_carries_real_vendor_type()
+    {
+        var autostop = new AutoStopOnBalanceData { id = 0, name = "g", marketType = MarketType.FUTURES, maxLoss = -5, asset = "usdt" };
+        var req = new AutoStopOnBalanceAddRequestData { AutoStop = autostop };
+
+        // The request wraps the genuine MTShared.Network.AutoStopOnBalanceData —
+        // no client-invented JSON blob — and self-stamps its RequestType.
+        req.AutoStop.Should().BeSameAs(autostop);
+        req.RequestType.Should().Be(nameof(AutoStopOnBalanceAddRequestData));
     }
 
     [Fact]
@@ -153,18 +219,5 @@ public sealed class PublicIssueRegressionUnitTests
 
         store.Clear();
         store.LastUpdateUtc.Should().Be(default);
-    }
-
-    private static (bool Ok, List<AutoStopAlgorithmData> Filters, string? Error) InvokeAutoStopsParser(string raw)
-    {
-        MethodInfo method = typeof(AutoStopsCommand).GetMethod(
-            "TryParseBalanceFilters",
-            BindingFlags.NonPublic | BindingFlags.Static)!;
-        object result = method.Invoke(null, new object?[] { raw })!;
-        Type t = result.GetType();
-        return (
-            (bool)t.GetField("Item1")!.GetValue(result)!,
-            (List<AutoStopAlgorithmData>)t.GetField("Item2")!.GetValue(result)!,
-            (string?)t.GetField("Item3")!.GetValue(result));
     }
 }
