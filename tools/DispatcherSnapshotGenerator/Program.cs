@@ -127,6 +127,7 @@ public static class Program
         toolName == "mt_algos_profiling" ||
         toolName == "mt_config_import_algos" ||
         toolName == "mt_algos_snapshot" ||
+        toolName == "mt_market_live_algorithms" ||
         toolName == "mt_algos_group_by_name";
 
     private static JObject BuildCanonicalArgs(JObject tool)
