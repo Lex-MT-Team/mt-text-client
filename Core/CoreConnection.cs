@@ -65,7 +65,8 @@ public sealed class CoreConnection : IDisposable
     private readonly ConcurrentDictionary<string, int> _markPriceSubscriptionIds = new ConcurrentDictionary<string, int>();
     private readonly ConcurrentDictionary<string, int> _klineSubscriptionIds = new ConcurrentDictionary<string, int>();
     private int _tickerSubscriptionId;
-    private int _profilingSubscriptionId;
+    private readonly ConcurrentDictionary<string, int> _profilingSubscriptionIds = new ConcurrentDictionary<string, int>();
+    private readonly ConcurrentDictionary<string, Action<MTShared.Network.AlgorithmProfilingData>> _profilingCallbacks = new ConcurrentDictionary<string, Action<MTShared.Network.AlgorithmProfilingData>>();
 
     private bool _isConnected;
     private bool _disposed;
@@ -154,6 +155,7 @@ public sealed class CoreConnection : IDisposable
     public event Action<CoreConnection>? OnCoreStatusReceived;
     public event Action<CoreConnection, int>? OnTradePairsLoaded;
     public event Action<CoreConnection>? OnAccountDataReceived;
+    public event Action<CoreConnection, string, MTShared.Network.AlgorithmProfilingData>? OnProfilingDataReceived;
     /// <summary>
     /// Fired when MTCore restarts while the UDP connection stays alive.
     /// Detected via connectionId or serverStartTime change in ConnectionInfoData.
@@ -401,11 +403,17 @@ public sealed class CoreConnection : IDisposable
             UnsubscribeLiveMarkets(MarketType.FUTURES, "", "");
             UnsubscribeAutoBuy();
             UnsubscribeGraphTool();
-            if (_profilingSubscriptionId != 0)
+            foreach (var kv in _profilingSubscriptionIds)
             {
-                _udpClient.SendAlgorithmProfilingDataUnsubscribe(
-                    ref _profilingSubscriptionId, Profile.Exchange, MarketType.FUTURES, "", 0);
+                int pid = kv.Value;
+                if (pid != 0)
+                {
+                    _udpClient.SendAlgorithmProfilingDataUnsubscribe(
+                        ref pid, Profile.Exchange, MarketType.FUTURES, "", 0);
+                }
             }
+            _profilingSubscriptionIds.Clear();
+            _profilingCallbacks.Clear();
         }
         catch { /* swallow on cleanup */ }
     }
@@ -2085,22 +2093,27 @@ public sealed class CoreConnection : IDisposable
             return;
         }
 
-        _profilingSubscriptionId = _udpClient.SendAlgorithmProfilingDataSubscribe(
-            Profile.Exchange, marketType, symbol, algorithmId,
-            (AlgorithmProfilingData data) =>
-            {
-                // Store latest profiling data - reuse existing store or log
-            },
-            _profilingSubscriptionId);
+        symbol = (symbol ?? string.Empty).ToLowerInvariant();
+        string key = $"{marketType}:{symbol}:{algorithmId}";
+        // Strong ref to the callback so the SDK's WeakDelegate isn't GC'd.
+        Action<MTShared.Network.AlgorithmProfilingData> cb = data => OnProfilingDataReceived?.Invoke(this, symbol, data);
+        _profilingCallbacks[key] = cb;
+        int existing = _profilingSubscriptionIds.TryGetValue(key, out int prev) ? prev : -1;
+        int newId = _udpClient.SendAlgorithmProfilingDataSubscribe(
+            Profile.Exchange, marketType, symbol, algorithmId, cb, existing);
+        _profilingSubscriptionIds[key] = newId;
     }
 
     public void UnsubscribeProfiling(MarketType marketType, string symbol, long algorithmId)
     {
-        if (_udpClient != null && _profilingSubscriptionId != 0)
+        symbol = (symbol ?? string.Empty).ToLowerInvariant();
+        string key = $"{marketType}:{symbol}:{algorithmId}";
+        if (_udpClient != null && _profilingSubscriptionIds.TryRemove(key, out int id) && id != 0)
         {
             _udpClient.SendAlgorithmProfilingDataUnsubscribe(
-                ref _profilingSubscriptionId, Profile.Exchange, marketType, symbol, algorithmId);
+                ref id, Profile.Exchange, marketType, symbol, algorithmId);
         }
+        _profilingCallbacks.TryRemove(key, out _);
     }
 
     #endregion
@@ -2922,7 +2935,7 @@ public sealed class CoreConnection : IDisposable
             _udpClient.SendMarketLiveAlgorithmsRequest(request,
                 data =>
                 {
-                    result = System.Text.Json.JsonSerializer.Serialize(data);
+                    result = Newtonsoft.Json.JsonConvert.SerializeObject(data);
                     wait.Set();
                 });
             wait.Wait(5000);
@@ -3193,6 +3206,7 @@ public sealed class CoreConnection : IDisposable
         OnCoreStatusReceived = null;
         OnTradePairsLoaded = null;
         OnAccountDataReceived = null;
+        OnProfilingDataReceived = null;
     }
 
     /// <summary>

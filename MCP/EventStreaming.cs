@@ -29,7 +29,7 @@ public sealed class NexusEvent
 /// </summary>
 public sealed class EventBroadcaster
 {
-    private const int MaxBuffer = 500;
+    private const int MaxBuffer = 5000;
 
     private long _seq = 0;
     private readonly ConcurrentQueue<NexusEvent> _buffer = new();

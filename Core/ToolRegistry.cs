@@ -1492,6 +1492,13 @@ public static class ToolRegistry
             Prop("market",   "string",  "Market type: FUTURES | INVERSE | SPOT (default: FUTURES)"),
             Prop("profile",  "string",  "Target server profile"));
 
+        yield return Tool("mt_market_live_algorithms",
+            "Return which algorithms are currently active on which market symbols (Markets Overview mapping). Synchronous request to MT-Core.",
+            Prop("market",   "string", "Market type: FUTURES | SPOT (default: FUTURES)"),
+            Prop("symbol",   "string", "Filter by symbol (optional; omit for all)"),
+            Prop("algo_ids", "string", "Comma-separated algorithm IDs (optional; omit for all)"),
+            Prop("profile",  "string", "Target server profile"));
+
         // State reconciliation tools
         yield return Tool("mt_algos_snapshot",
             "Return a structured snapshot of all groups and algorithms across all connected profiles. " +
