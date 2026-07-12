@@ -11,10 +11,12 @@ namespace MTTextClient;
 /// Provides REPL for algorithm lifecycle management, account data, core monitoring,
 /// server profile settings, V2 import, order/position management, and log analysis.
 ///
-/// Supports three modes:
+/// Supports four modes:
 ///   1) Interactive REPL (default)
 ///   2) Single-command  (pass command as CLI args)
 ///   3) MCP Server      (--mcp flag — stdio JSON-RPC for automation clients)
+///   4) MCP Daemon      (--daemon &lt;unix-socket-path&gt; — one shared connection
+///      stack over a Unix domain socket; many clients multiplex over it)
 /// </summary>
 public static class Program
 {
@@ -34,8 +36,16 @@ public static class Program
 
         // MCP daemon mode — one shared connection stack behind a Unix domain
         // socket; many clients multiplex over it. `--daemon <socket-path>`.
-        if (args.Length > 1 && args[0] == "--daemon")
+        // Require exactly one non-empty socket path; a malformed invocation
+        // fails loudly (exit 2 + usage) rather than silently falling through
+        // into ordinary command dispatch.
+        if (args.Length > 0 && args[0] == "--daemon")
         {
+            if (args.Length != 2 || string.IsNullOrWhiteSpace(args[1]))
+            {
+                Console.Error.WriteLine("usage: MTTextClient --daemon <unix-socket-path>");
+                Environment.Exit(2);
+            }
             var server = new McpServer();
             server.RunSocket(args[1]);
             return;
@@ -272,43 +282,5 @@ public static class Program
         }
 
         Console.ResetColor();
-    }
-}
-
-/// <summary>
-/// Switch output mode between table and JSON.
-/// </summary>
-public sealed class OutputCommand : ICommand
-{
-    private readonly OutputManager _output;
-
-    public OutputCommand(OutputManager output)
-    {
-        _output = output;
-    }
-
-    public string Name => "output";
-    public string Description => "Switch output format (table/json)";
-    public string Usage => "output table | output json";
-
-    public CommandResult Execute(string[] args)
-    {
-        if (args.Length == 0)
-        {
-            return CommandResult.Ok($"Current output mode: {_output.Mode}");
-        }
-
-        return args[0].ToLowerInvariant() switch
-        {
-            "table" => SetMode(OutputMode.Table),
-            "json" => SetMode(OutputMode.Json),
-            _ => CommandResult.Fail($"Unknown mode: {args[0]}. Use 'table' or 'json'.")
-        };
-    }
-
-    private CommandResult SetMode(OutputMode mode)
-    {
-        _output.Mode = mode;
-        return CommandResult.Ok($"Output mode set to: {mode}");
     }
 }
