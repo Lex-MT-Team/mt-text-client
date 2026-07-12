@@ -143,7 +143,8 @@ public sealed class SseClient
 {
     private readonly HttpListenerResponse _response;
     private readonly EventBroadcaster _broadcaster;
-    private bool _dead = false;
+    private volatile bool _dead = false;
+    private readonly object _sendLock = new();
 
     public SseClient(HttpListenerResponse response, EventBroadcaster broadcaster)
     {
@@ -160,18 +161,26 @@ public sealed class SseClient
     public void TrySend(NexusEvent evt)
     {
         if (_dead) return;
-        try
+        // The multi-worker pump can Publish from several threads at once (and
+        // the SSE replay loop runs on the HTTP thread), all funneling into this
+        // one non-thread-safe HttpResponse stream. Serialize per-client writes
+        // so frames don't splice/corrupt on the wire.
+        lock (_sendLock)
         {
-            string json = JsonConvert.SerializeObject(evt);
-            string frame = $"data: {json}\n\n";
-            byte[] bytes = Encoding.UTF8.GetBytes(frame);
-            _response.OutputStream.Write(bytes, 0, bytes.Length);
-            _response.OutputStream.Flush();
-        }
-        catch (IOException)
-        {
-            _dead = true;
-            _broadcaster.RemoveClient(this);
+            if (_dead) return;
+            try
+            {
+                string json = JsonConvert.SerializeObject(evt);
+                string frame = $"data: {json}\n\n";
+                byte[] bytes = Encoding.UTF8.GetBytes(frame);
+                _response.OutputStream.Write(bytes, 0, bytes.Length);
+                _response.OutputStream.Flush();
+            }
+            catch (IOException)
+            {
+                _dead = true;
+                _broadcaster.RemoveClient(this);
+            }
         }
     }
 

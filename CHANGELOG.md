@@ -9,6 +9,47 @@ Versions follow [SemVer](https://semver.org).
 
 ## Unreleased
 
+### MCP server: opt-in parallel request dispatch + shared-daemon mode
+
+The MCP server processed requests strictly one-at-a-time, so a single slow
+request (e.g. a fleet operation across many profiles) head-of-line-blocked every
+other request on the connection — and the only way to parallelize was to spawn
+duplicate processes, each rebuilding the full per-profile connection stack
+(memory, sockets, and reconnect pressure multiplied by the number of processes).
+
+* **Concurrent, per-profile-gated dispatch — opt-in via `MTC_MCP_PARALLEL=1`.**
+  The **default is unchanged**: the strictly-serial loop, responses in request
+  order — byte-identical wire behavior for existing integrations. With the flag
+  set, each request is dispatched on the thread pool; a per-profile lock
+  *serializes* requests to the *same* profile (one operation per connection at a
+  time, as before) while *different* profiles run in parallel. Same-profile
+  requests are mutually excluded but not ordered — a client that needs strict
+  order between two dependent same-profile calls should await each response
+  before sending the next (the normal request/response pattern). Fleet /
+  profile-less connection tools take an exclusive lock; in-process tools
+  (events/metrics) are ungated. Responses are id-correlated and may complete out
+  of order — valid JSON-RPC that id-correlating clients (the MCP SDK / mcp-proxy)
+  already expect; stdout framing is serialized. Per-profile locks are a fixed
+  stripe set, so arbitrary profile names cannot grow state without bound.
+* **`--daemon <socket>` mode.** Runs one shared `ConnectionManager` behind a
+  Unix domain socket; many clients multiplex over it, so parallel callers no
+  longer each spawn a full connection stack. It uses the same per-profile gate
+  and, being a new mode, always dispatches concurrently (it does not read
+  `MTC_MCP_PARALLEL`, which governs only the stdio path).
+* **Concurrency-safety hardening** (behavior-preserving — the serial default's
+  wire output is unchanged): the V2 import parser is now per-call and the
+  algorithm-clipboard file access is synchronized, closing races newly possible
+  only under concurrent dispatch; `_activeConnectionName` failover, the
+  connection-array cache, and SSE per-client writes close pre-existing races from
+  the always-on multi-worker connection pump / SSE HTTP thread.
+
+Validated on the real binary through a live `mcp-proxy` (StreamableHTTP) with the
+MCP SDK client against real cores: 60 concurrent id-correlated calls all routed
+back correctly; 4 profiles run in parallel (~0.6 s) while 4 requests to one
+profile serialize (~2.1 s); 162 mixed concurrent calls (per-profile + exclusive
+fleet + ungated) completed with no loss or deadlock. Static + Unit and real-core
+Smoke are green in **both** dispatch modes.
+
 ### Algorithm create: clean wire arguments (issue #44)
 
 * **`mt_algos_create` no longer injects a synthetic `_mcp_metadata` block into

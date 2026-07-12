@@ -28,13 +28,21 @@ public static class AlgorithmClipboard
 
     public static readonly string ClipboardFile = Path.Combine(ClipboardDir, "algo-clipboard.json");
 
+    // The clipboard is a single process-wide file. Concurrent copies from
+    // different profiles (parallel dispatch) would otherwise collide on the
+    // write / read (IOException, or a torn read of a half-written file).
+    private static readonly object _fileLock = new();
+
     /// <summary>
     /// Write <paramref name="exportJson"/> to the clipboard file (overwrites).
     /// </summary>
     public static void Save(string exportJson)
     {
-        Directory.CreateDirectory(ClipboardDir);
-        File.WriteAllText(ClipboardFile, exportJson);
+        lock (_fileLock)
+        {
+            Directory.CreateDirectory(ClipboardDir);
+            File.WriteAllText(ClipboardFile, exportJson);
+        }
     }
 
     /// <summary>
@@ -42,15 +50,21 @@ public static class AlgorithmClipboard
     /// </summary>
     public static string? Load()
     {
-        if (!File.Exists(ClipboardFile)) return null;
-        string s = File.ReadAllText(ClipboardFile);
-        return string.IsNullOrWhiteSpace(s) ? null : s;
+        lock (_fileLock)
+        {
+            if (!File.Exists(ClipboardFile)) return null;
+            string s = File.ReadAllText(ClipboardFile);
+            return string.IsNullOrWhiteSpace(s) ? null : s;
+        }
     }
 
     /// <summary>Deletes the clipboard file. No-op if absent.</summary>
     public static void Clear()
     {
-        if (File.Exists(ClipboardFile)) File.Delete(ClipboardFile);
+        lock (_fileLock)
+        {
+            if (File.Exists(ClipboardFile)) File.Delete(ClipboardFile);
+        }
     }
 
     /// <summary>

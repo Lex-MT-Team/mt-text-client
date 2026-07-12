@@ -3,7 +3,10 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.IO;
+using System.Net.Sockets;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using MTTextClient.Commands;
 using MTTextClient.Core;
 using MTTextClient.Output;
@@ -39,6 +42,39 @@ public sealed class McpServer
     private readonly OutputManager _output;
     private readonly CommandRegistry _registry;
     private TextWriter _stdoutWriter = Console.Out;
+
+    // ── Parallel dispatch (A) ────────────────────────────────────────────────
+    // Requests are dispatched concurrently instead of one-at-a-time. A
+    // per-profile lock serializes requests to the SAME profile (preserving the
+    // one-request-per-connection guarantee); different profiles run in parallel.
+    // Fleet / no-profile requests take the fleet write-lock (exclusive against
+    // every per-profile op); per-profile requests take the read-lock. Stdout is
+    // serialized so concurrent JSON-RPC responses don't interleave (out-of-order
+    // by id is legal). See RRD: parallel-across-profiles, serial-within-profile.
+    private readonly object _stdoutLock = new();
+    private readonly ReaderWriterLockSlim _fleetLock = new(LockRecursionPolicy.NoRecursion);
+
+    // Per-profile serialization uses a FIXED stripe of locks rather than a
+    // per-name dictionary: a profile name always hashes to the same stripe (so
+    // same-profile requests serialize), different profiles almost always land
+    // on different stripes (so they run in parallel), and the fixed size means
+    // arbitrary/untrusted profile strings can never grow the map without bound.
+    // Occasional hash collisions just add a little harmless false serialization.
+    private const int ProfileStripeCount = 256; // power of two
+    private readonly object[] _profileStripes = CreateStripes(ProfileStripeCount);
+
+    private static object[] CreateStripes(int n)
+    {
+        var a = new object[n];
+        for (int i = 0; i < n; i++) a[i] = new object();
+        return a;
+    }
+
+    private object ProfileLock(string profile)
+    {
+        int h = profile.GetHashCode(StringComparison.OrdinalIgnoreCase);
+        return _profileStripes[h & (ProfileStripeCount - 1)];
+    }
 
     // Event streaming
     private readonly EventBroadcaster _events = new();
@@ -168,8 +204,25 @@ public sealed class McpServer
         _sseServer = new SseEventServer(_events, _metrics);
         _sseServer.Start();
 
+        // Parallel dispatch is OPT-IN (MTC_MCP_PARALLEL=1). The default is the
+        // historical strictly-serial loop: requests are processed one at a time
+        // and responses come back in request order — byte-identical wire
+        // behavior for existing integrations. With the flag set, requests are
+        // dispatched concurrently through the per-profile gate and responses
+        // are id-correlated (out-of-order is valid JSON-RPC and is what
+        // id-correlating clients such as the MCP SDK / mcp-proxy expect).
+        bool parallel = Environment.GetEnvironmentVariable("MTC_MCP_PARALLEL") == "1";
+        LogStderr($"MCP dispatch mode: {(parallel ? "PARALLEL (per-profile gated)" : "serial (legacy default)")}");
+        if (parallel)
+        {
+            PrimeThreadPool();
+        }
+
         using var reader = new StreamReader(Console.OpenStandardInput(), Encoding.UTF8);
 
+        // In parallel mode the read loop only READS + DISPATCHES; each request
+        // is handled on the thread pool so a slow/blocking request can no
+        // longer head-of-line-block every other request on the connection.
         while (true)
         {
             string? line = reader.ReadLine();
@@ -183,30 +236,188 @@ public sealed class McpServer
                 continue;
             }
 
-            try
+            if (!parallel)
             {
-                JObject? request = JObject.Parse(line);
-                JObject? response = HandleRequest(request);
+                JObject? response = DispatchLine(line);
                 if (response != null)
                 {
                     WriteStdout(response);
                 }
+                continue;
             }
-            catch (Exception ex)
+
+            string captured = line;
+            _ = Task.Run(() =>
             {
-                // Recover the request id from the raw line so the
-                // JSON-RPC error envelope echoes the caller's id instead of
-                // null. A null id breaks request/response correlation in
-                // compliant clients.
-                JToken? recoveredId = null;
-                try { recoveredId = JObject.Parse(line)["id"]; } catch { /* truly malformed */ }
-                LogStderr($"Error processing request: {ex.Message}");
-                WriteStdout(MakeErrorResponse(recoveredId, -32700, $"Parse error: {ex.Message}"));
-            }
+                JObject? response = DispatchLine(captured);
+                if (response != null)
+                {
+                    WriteStdout(response);
+                }
+            });
         }
 
         _manager.Dispose();
         LogStderr("MCP Server shutting down.");
+    }
+
+    /// <summary>Parse one JSON-RPC line and run it through the per-profile gate.
+    /// Returns the response envelope (or null for notifications).</summary>
+    private JObject? DispatchLine(string line)
+    {
+        try
+        {
+            JObject request = JObject.Parse(line);
+            return HandleRequestGated(request);
+        }
+        catch (Exception ex)
+        {
+            // Recover the request id from the raw line so the JSON-RPC error
+            // envelope echoes the caller's id instead of null. A null id breaks
+            // request/response correlation in compliant clients.
+            JToken? recoveredId = null;
+            try { recoveredId = JObject.Parse(line)["id"]; } catch { /* truly malformed */ }
+            LogStderr($"Error processing request: {ex.Message}");
+            return MakeErrorResponse(recoveredId, -32700, $"Parse error: {ex.Message}");
+        }
+    }
+
+    // Bump the thread-pool floor so a burst of concurrent (synchronously
+    // blocking) requests doesn't stall behind the pool's slow growth. The
+    // handlers are synchronous request/reply, so an in-flight request occupies
+    // a pool thread for its duration — fine for tens of profiles.
+    private static void PrimeThreadPool()
+    {
+        ThreadPool.GetMinThreads(out int w, out int io);
+        ThreadPool.SetMinThreads(Math.Max(w, 64), Math.Max(io, 64));
+    }
+
+    private enum GateKind { Ungated, Profile, Fleet }
+
+    /// <summary>Route a request through the concurrency gate: different profiles
+    /// run in parallel, the same profile serializes, fleet/no-profile ops run
+    /// exclusively against all per-profile ops, and in-process tools are
+    /// ungated.</summary>
+    private JObject? HandleRequestGated(JObject request)
+    {
+        (GateKind kind, string? key) = ResolveGateScope(request);
+        switch (kind)
+        {
+            case GateKind.Profile:
+                // Read side: many profiles concurrent; per-profile lock keeps a
+                // single profile's requests ordered (one op per connection).
+                _fleetLock.EnterReadLock();
+                try
+                {
+                    lock (ProfileLock(key!)) { return HandleRequest(request); }
+                }
+                finally { _fleetLock.ExitReadLock(); }
+
+            case GateKind.Fleet:
+                // Write side: exclusive against every per-profile op, because a
+                // fleet command fans out across all connections at once.
+                _fleetLock.EnterWriteLock();
+                try { return HandleRequest(request); }
+                finally { _fleetLock.ExitWriteLock(); }
+
+            default:
+                return HandleRequest(request); // in-process / no connection touch
+        }
+    }
+
+    /// <summary>Decide the gate scope for a request. Only tools/call touches
+    /// connections; among those, event/metrics tools are in-process, fleet
+    /// tools and profile-less connection tools are exclusive, and everything
+    /// with a profile gates on that profile.</summary>
+    private static (GateKind, string?) ResolveGateScope(JObject request)
+    {
+        if (request["method"]?.Value<string>() != "tools/call")
+            return (GateKind.Ungated, null); // initialize / tools/list / ping / notifications
+
+        JObject? p = request["params"] as JObject;
+        string tool = p?["name"]?.Value<string>() ?? "";
+
+        // In-process tools that never touch a CoreConnection.
+        if (tool.StartsWith("mt_events_", StringComparison.Ordinal) ||
+            tool == "mt_metrics_get" || tool == "mt_rate_status")
+            return (GateKind.Ungated, null);
+
+        // Fleet commands fan out over every connection → exclusive.
+        if (tool.StartsWith("mt_fleet", StringComparison.Ordinal))
+            return (GateKind.Fleet, null);
+
+        string? profile = (p?["arguments"] as JObject)?["profile"]?.Value<string>();
+        if (!string.IsNullOrWhiteSpace(profile))
+            return (GateKind.Profile, profile);
+
+        // No profile and not a known in-process tool: could touch the active
+        // connection or all of them — serialize conservatively.
+        return (GateKind.Fleet, null);
+    }
+
+    /// <summary>Run as a persistent daemon (B): a single shared ConnectionManager
+    /// behind a Unix domain socket. Many clients/shims multiplex over it, so
+    /// parallel harness tasks no longer each spawn a full connection stack — the
+    /// 77-profile stack is paid once. Each client's requests flow through the
+    /// same per-profile gate as stdio, so parallelism/ordering are identical.</summary>
+    public void RunSocket(string socketPath)
+    {
+        _stdoutWriter = Console.Out;
+        Console.SetOut(Console.Error);
+        LogStderr($"MCP Server {SERVER_VERSION} starting as daemon on {socketPath} ...");
+
+        _sseServer = new SseEventServer(_events, _metrics);
+        _sseServer.Start();
+        PrimeThreadPool();
+
+        if (File.Exists(socketPath)) File.Delete(socketPath);
+        using var listener = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+        listener.Bind(new UnixDomainSocketEndPoint(socketPath));
+        listener.Listen(256);
+        LogStderr($"MCP daemon listening on {socketPath}");
+
+        while (true)
+        {
+            Socket client;
+            try { client = listener.Accept(); }
+            catch (Exception ex) { LogStderr($"accept failed: {ex.Message}"); break; }
+            var t = new Thread(() => ServeSocketClient(client)) { IsBackground = true, Name = "mcp-client" };
+            t.Start();
+        }
+
+        _manager.Dispose();
+        LogStderr("MCP daemon shutting down.");
+    }
+
+    // Per-client read loop for the daemon. Shares the one ConnectionManager and
+    // the per-profile gates with every other client; only stdout framing is
+    // per-client (a client's own responses must not interleave).
+    private void ServeSocketClient(Socket client)
+    {
+        try
+        {
+            using var stream = new NetworkStream(client, ownsSocket: true);
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            var writer = new StreamWriter(stream, new UTF8Encoding(false)) { AutoFlush = false };
+            var writeLock = new object();
+
+            string? line;
+            while ((line = reader.ReadLine()) != null)
+            {
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                string captured = line;
+                _ = Task.Run(() =>
+                {
+                    JObject? response = DispatchLine(captured);
+                    if (response != null)
+                    {
+                        string json = response.ToString(Formatting.None);
+                        lock (writeLock) { writer.WriteLine(json); writer.Flush(); }
+                    }
+                });
+            }
+        }
+        catch (Exception ex) { LogStderr($"client loop ended: {ex.Message}"); }
     }
 
     private JObject? HandleRequest(JObject request)
@@ -1875,8 +2086,12 @@ public sealed class McpServer
     private void WriteStdout(JObject response)
     {
         string? json = response.ToString(Formatting.None);
-        _stdoutWriter.WriteLine(json);
-        _stdoutWriter.Flush();
+        // Serialize concurrent responses so JSON-RPC frames never interleave.
+        lock (_stdoutLock)
+        {
+            _stdoutWriter.WriteLine(json);
+            _stdoutWriter.Flush();
+        }
     }
 
     // ── Event streaming tool handler ────────────────────────────────────────

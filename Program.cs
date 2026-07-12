@@ -32,6 +32,15 @@ public static class Program
             return;
         }
 
+        // MCP daemon mode — one shared connection stack behind a Unix domain
+        // socket; many clients multiplex over it. `--daemon <socket-path>`.
+        if (args.Length > 1 && args[0] == "--daemon")
+        {
+            var server = new McpServer();
+            server.RunSocket(args[1]);
+            return;
+        }
+
         PrintBanner();
         InitializeCommands();
         WireEvents();

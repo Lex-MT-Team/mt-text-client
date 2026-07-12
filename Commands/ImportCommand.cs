@@ -28,15 +28,10 @@ namespace MTTextClient.Commands;
 public sealed class ImportCommand : ICommand
 {
     private readonly ConnectionManager _manager;
-    private readonly V2FormatParser _parser;
 
     public ImportCommand(ConnectionManager manager)
     {
         _manager = manager;
-
-        // Look for algoConfigs.json in known locations
-        string? configPath = FindAlgoConfigs();
-        _parser = new V2FormatParser(configPath ?? "");
     }
 
     public string Name => "import";
@@ -110,7 +105,14 @@ public sealed class ImportCommand : ICommand
             return CommandResult.Fail($"File not found: {args[0]}");
         }
 
-        V2FormatParser.ParseResult parseResult = _parser.Parse(v2Text);
+        // Per-call parser: V2FormatParser holds mutable template state
+        // (SetTemplates below reseeds it from the connected core). A shared
+        // instance would let two concurrent different-profile imports clobber
+        // each other's templates, saving one venue's argument set onto another
+        // (reintroducing #44). A local per invocation keeps that state confined
+        // to this request, which the per-profile gate then fully serializes.
+        var parser = new V2FormatParser(FindAlgoConfigs() ?? "");
+        V2FormatParser.ParseResult parseResult = parser.Parse(v2Text);
         List<AlgorithmData>? algorithms = parseResult.Algorithms;
         List<string>? errors = parseResult.Errors;
         List<V2FormatParser.GroupInfo>? groups = parseResult.Groups;
@@ -184,8 +186,8 @@ public sealed class ImportCommand : ICommand
         }
         if (conn.AlgoStore.ConfigTemplateCount > 0)
         {
-            _parser.SetTemplates(conn.AlgoStore.ConfigTemplates);
-            V2FormatParser.ParseResult liveParse = _parser.Parse(v2Text);
+            parser.SetTemplates(conn.AlgoStore.ConfigTemplates);
+            V2FormatParser.ParseResult liveParse = parser.Parse(v2Text);
             if (liveParse.Algorithms.Count > 0)
             {
                 algorithms = liveParse.Algorithms;

@@ -111,6 +111,22 @@ mcp-proxy --port 8585 --allow-origin '*' -- "path/to/MTTextClient.exe" --mcp
 
 Then point your MCP-compatible client to `http://localhost:8585/sse`.
 
+**Dispatch mode.** By default the server is strictly serial — it handles one
+request to completion before reading the next, so responses come back in request
+order. Set `MTC_MCP_PARALLEL=1` to enable concurrent dispatch: requests to
+*different* profiles run in parallel, while requests to the *same* profile are
+serialized (one operation per connection at a time). Responses are correlated by
+JSON-RPC `id` and may complete out of order, which id-correlating MCP clients
+(the MCP SDK, `mcp-proxy`) handle transparently. The default is unchanged and
+byte-identical for existing integrations. See
+[docs/parallel-dispatch.md](docs/parallel-dispatch.md).
+
+**Shared-connection daemon** (`--daemon <socket-path>`): instead of stdio, run
+one long-lived server that owns the connection stack behind a Unix domain
+socket, so multiple clients share a single set of connections rather than each
+spawning their own. It uses the same dispatch gate and always dispatches
+concurrently, so daemon clients must correlate responses by `id`.
+
 ## Server Profiles
 
 Connection profiles are stored in `~/.config/mt-textclient/profiles.json`:
