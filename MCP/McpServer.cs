@@ -2723,7 +2723,10 @@ public sealed class McpServer
             return new JObject { ["error"] = "No active connection" };
 
         string marketStr = arguments["market"]?.Value<string>() ?? "FUTURES";
-        if (!Enum.TryParse<MarketType>(marketStr, ignoreCase: true, out var market))
+        // Enum.TryParse accepts out-of-range numeric strings (e.g. "99"), which
+        // would forward an undefined MarketType to the core; require a defined value.
+        if (!Enum.TryParse<MarketType>(marketStr, ignoreCase: true, out var market) ||
+            !Enum.IsDefined(typeof(MarketType), market))
             market = MarketType.FUTURES;
 
         string symbol = arguments["symbol"]?.Value<string>() ?? "";

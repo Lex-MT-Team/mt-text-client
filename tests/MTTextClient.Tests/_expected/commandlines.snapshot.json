@@ -33,6 +33,7 @@
   "mt_core_shutdown": "<internal-handler>",
   "mt_algos_tpsl_change": "<internal-handler>",
   "mt_algos_profiling": "<internal-handler>",
+  "mt_market_live_algorithms": "<internal-handler>",
   "mt_algos_snapshot": "<internal-handler>",
   "mt_algos_group_by_name": "<internal-handler>",
   "mt_connect": "connect <profile>",
