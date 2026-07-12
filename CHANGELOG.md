@@ -50,6 +50,33 @@ profile serialize (~2.1 s); 162 mixed concurrent calls (per-profile + exclusive
 fleet + ungated) completed with no loss or deadlock. Static + Unit and real-core
 Smoke are green in **both** dispatch modes.
 
+### Daemon mode: production hardening
+
+Hardens `--daemon` for long-lived operation. Behavior of the stdio (`--mcp`) path
+is unchanged.
+
+* **Graceful shutdown.** `SIGTERM`/`SIGINT` now cancel the accept loop and drive
+  an ordered shutdown — the SSE server is stopped, the listener closed, the
+  **socket file unlinked**, and the shared `ConnectionManager` disposed. A
+  restart always finds a clean socket path; no manual cleanup between runs.
+* **One daemon per socket.** On start the daemon probes the socket: a live daemon
+  already listening → it exits `3` instead of clobbering it; a genuinely stale
+  socket file → it is unlinked and replaced.
+* **Socket permissions.** The unix socket is created `0660` (owner + group
+  read/write, no world access) so only the owning user/group can connect.
+* **SSE bound to loopback, opt-out.** The optional SSE event server binds
+  `127.0.0.1`/`localhost` only (the previous all-interfaces `http://+` wildcard
+  attempt is removed) and can be disabled with `MTC_SSE_DISABLE=1`.
+* **Bounded in-flight work.** Total concurrently-dispatched requests across all
+  clients are bounded by a semaphore (default `256`, set via
+  `MTC_DAEMON_MAX_INFLIGHT`); the read loop backpressures rather than spawning
+  unbounded concurrent work under a burst. The same bound applies to the parallel
+  stdio path.
+
+Covered by `DaemonLifecycleTests` (socket `0660`, live-socket refusal, stale
+socket replacement, two concurrent clients, survival of a client disconnect, and
+`SIGTERM` unlinking the socket and exiting).
+
 ### Algorithm create: clean wire arguments (issue #44)
 
 * **`mt_algos_create` no longer injects a synthetic `_mcp_metadata` block into

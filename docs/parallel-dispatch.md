@@ -82,6 +82,61 @@ flag governs only the stdio `--mcp` path). Daemon clients therefore must
 correlate responses by `id`; the same out-of-order and same-profile-ordering
 notes above apply unconditionally.
 
+## Running the daemon in production
+
+The daemon is a long-lived process. Its lifecycle, socket, and resource limits
+are hardened as follows.
+
+### Startup — one daemon per socket
+
+On start the daemon inspects the socket path:
+
+- **A live daemon is already listening** (a probe connection is accepted) → it
+  logs and **exits `3`** rather than clobbering the running instance. Supervisors
+  that restart on non-zero exit should treat `3` as "already running", not a
+  crash loop.
+- **A stale socket file** (nothing accepts a connection — a leftover from a
+  previous run, or an unrelated file) → it is unlinked and replaced.
+
+### Graceful shutdown
+
+`SIGTERM` and `SIGINT` cancel the accept loop and drive an ordered shutdown: the
+SSE server is stopped, the listener is closed, the **socket file is unlinked**,
+and the shared `ConnectionManager` is disposed (closing every core connection).
+A restart therefore always finds a clean path — no manual socket cleanup between
+runs. On platforms without POSIX signals the registration is skipped silently.
+
+### Socket location and permissions
+
+The daemon `chmod`s its socket to **`0660`** (owner + group read/write, no world
+access), so only the owning user and group can connect. Place the socket in a
+directory only trusted principals can traverse — a per-service runtime directory
+such as `/run/<service>/` owned by the service user with mode `0770`, rather than
+a world-traversable temp dir. The socket path is the only access-control surface;
+there is no in-band authentication.
+
+### Event stream (SSE) — loopback-only, opt-out
+
+The optional SSE event server binds **loopback only** (`127.0.0.1` / `localhost`)
+— it is never exposed off-host. It is on by default and can be turned off with
+`MTC_SSE_DISABLE=1` (the Unix socket remains the primary surface; disabling SSE
+just drops the optional local event channel and frees its port).
+
+### Bounding in-flight work
+
+Total concurrently-dispatched requests across **all** clients are bounded by a
+semaphore; the per-client read loop blocks when the bound is reached, which
+backpressures the client rather than spawning unbounded work (and unbounded
+thread-pool threads) under a burst. The bound defaults to **256** and is set with
+`MTC_DAEMON_MAX_INFLIGHT`. The same bound applies to the parallel stdio path.
+
+### Environment variables
+
+| Variable | Default | Effect |
+|---|---|---|
+| `MTC_DAEMON_MAX_INFLIGHT` | `256` | Max requests dispatched concurrently across all clients (also bounds the parallel stdio path). |
+| `MTC_SSE_DISABLE` | unset | `1` disables the loopback SSE event server. |
+
 ## Concurrency-safety
 
 Enabling concurrent dispatch was gated on a review of every piece of process-wide

@@ -365,8 +365,10 @@ public sealed class SseEventServer
         _cts = new CancellationTokenSource();
         _listener = new HttpListener();
 
-        // Try wildcard prefix first; fall back to localhost (no admin rights needed on Windows)
-        string[] prefixes = { $"http://+:{_port}/", $"http://localhost:{_port}/" };
+        // Loopback only — the SSE event stream is never exposed off-host. (A
+        // previous build tried a http://+ all-interfaces wildcard first; that is
+        // deliberately removed.)
+        string[] prefixes = { $"http://127.0.0.1:{_port}/", $"http://localhost:{_port}/" };
         foreach (string prefix in prefixes)
         {
             _listener.Prefixes.Clear();
