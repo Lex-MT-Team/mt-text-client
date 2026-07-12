@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.IO;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -74,6 +75,20 @@ public sealed class McpServer
     {
         int h = profile.GetHashCode(StringComparison.OrdinalIgnoreCase);
         return _profileStripes[h & (ProfileStripeCount - 1)];
+    }
+
+    // Bounds total in-flight requests across every client so a burst can't spawn
+    // unbounded concurrent work (and unbounded thread-pool threads); the read
+    // loop blocks on the semaphore, which backpressures the client. Configurable
+    // via MTC_DAEMON_MAX_INFLIGHT (default 256). Also applies to the parallel
+    // stdio path.
+    private static readonly int MaxInflight = ReadMaxInflight();
+    private readonly SemaphoreSlim _inflight = new(MaxInflight, MaxInflight);
+
+    private static int ReadMaxInflight()
+    {
+        string? v = Environment.GetEnvironmentVariable("MTC_DAEMON_MAX_INFLIGHT");
+        return int.TryParse(v, out int n) && n > 0 ? n : 256;
     }
 
     // Event streaming
@@ -249,13 +264,18 @@ public sealed class McpServer
             }
 
             string captured = line;
+            _inflight.Wait(); // backpressure: bound total in-flight requests
             _ = Task.Run(() =>
             {
-                JObject? response = DispatchLine(captured);
-                if (response != null)
+                try
                 {
-                    WriteStdout(response);
+                    JObject? response = DispatchLine(captured);
+                    if (response != null)
+                    {
+                        WriteStdout(response);
+                    }
                 }
+                finally { _inflight.Release(); }
             });
         }
 
@@ -368,27 +388,90 @@ public sealed class McpServer
         Console.SetOut(Console.Error);
         LogStderr($"MCP Server {SERVER_VERSION} starting as daemon on {socketPath} ...");
 
-        _sseServer = new SseEventServer(_events, _metrics);
-        _sseServer.Start();
+        // Refuse to clobber a live daemon; clean up only a genuinely stale socket.
+        if (File.Exists(socketPath))
+        {
+            if (IsSocketAlive(socketPath))
+            {
+                LogStderr($"a daemon is already listening on {socketPath}; refusing to start.");
+                Environment.Exit(3);
+            }
+            try { File.Delete(socketPath); }
+            catch (Exception ex) { LogStderr($"could not remove stale socket {socketPath}: {ex.Message}"); Environment.Exit(3); }
+        }
+
+        // SSE is loopback-only and opt-out. The daemon's unix socket is the
+        // primary surface; SSE is an optional local event channel.
+        if (Environment.GetEnvironmentVariable("MTC_SSE_DISABLE") == "1")
+        {
+            LogStderr("SSE event server disabled (MTC_SSE_DISABLE=1).");
+        }
+        else
+        {
+            _sseServer = new SseEventServer(_events, _metrics);
+            _sseServer.Start();
+        }
         PrimeThreadPool();
 
-        if (File.Exists(socketPath)) File.Delete(socketPath);
         using var listener = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
         listener.Bind(new UnixDomainSocketEndPoint(socketPath));
         listener.Listen(256);
-        LogStderr($"MCP daemon listening on {socketPath}");
+        TrySetSocketMode0660(socketPath);
+        LogStderr($"MCP daemon listening on {socketPath} (max in-flight {MaxInflight}).");
 
-        while (true)
+        // Graceful shutdown: SIGTERM/SIGINT cancels the accept loop, then we stop
+        // SSE, close the listener, unlink the socket, and dispose connections.
+        using var shutdown = new CancellationTokenSource();
+        using var sigTerm = TryRegisterSignal(PosixSignal.SIGTERM, shutdown);
+        using var sigInt = TryRegisterSignal(PosixSignal.SIGINT, shutdown);
+
+        while (!shutdown.IsCancellationRequested)
         {
             Socket client;
-            try { client = listener.Accept(); }
+            try { client = listener.AcceptAsync(shutdown.Token).AsTask().GetAwaiter().GetResult(); }
+            catch (OperationCanceledException) { break; }
             catch (Exception ex) { LogStderr($"accept failed: {ex.Message}"); break; }
             var t = new Thread(() => ServeSocketClient(client)) { IsBackground = true, Name = "mcp-client" };
             t.Start();
         }
 
+        LogStderr("MCP daemon shutting down — stopping SSE, unlinking socket, closing connections.");
+        try { _sseServer?.Stop(); } catch { /* best effort */ }
+        try { listener.Close(); } catch { /* best effort */ }
+        try { if (File.Exists(socketPath)) File.Delete(socketPath); } catch { /* best effort */ }
         _manager.Dispose();
-        LogStderr("MCP daemon shutting down.");
+        LogStderr("MCP daemon stopped.");
+    }
+
+    private static bool IsSocketAlive(string socketPath)
+    {
+        try
+        {
+            using var probe = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+            probe.Connect(new UnixDomainSocketEndPoint(socketPath));
+            return true; // something accepted a connection → a live daemon
+        }
+        catch { return false; } // refused/no listener → stale
+    }
+
+    private static void TrySetSocketMode0660(string socketPath)
+    {
+        try
+        {
+            File.SetUnixFileMode(socketPath,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite |
+                UnixFileMode.GroupRead | UnixFileMode.GroupWrite); // 0660
+        }
+        catch (Exception ex) { LogStderr($"could not set socket mode 0660: {ex.Message}"); }
+    }
+
+    private static PosixSignalRegistration? TryRegisterSignal(PosixSignal signal, CancellationTokenSource cts)
+    {
+        try
+        {
+            return PosixSignalRegistration.Create(signal, ctx => { ctx.Cancel = true; cts.Cancel(); });
+        }
+        catch { return null; } // signal unsupported on this platform
     }
 
     // Per-client read loop for the daemon. Shares the one ConnectionManager and
@@ -408,14 +491,19 @@ public sealed class McpServer
             {
                 if (string.IsNullOrWhiteSpace(line)) continue;
                 string captured = line;
+                _inflight.Wait(); // backpressure: block reading until an in-flight slot frees
                 _ = Task.Run(() =>
                 {
-                    JObject? response = DispatchLine(captured);
-                    if (response != null)
+                    try
                     {
-                        string json = response.ToString(Formatting.None);
-                        lock (writeLock) { writer.WriteLine(json); writer.Flush(); }
+                        JObject? response = DispatchLine(captured);
+                        if (response != null)
+                        {
+                            string json = response.ToString(Formatting.None);
+                            lock (writeLock) { writer.WriteLine(json); writer.Flush(); }
+                        }
                     }
+                    finally { _inflight.Release(); }
                 });
             }
         }
