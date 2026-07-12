@@ -16,6 +16,9 @@ public sealed class ConnectionManager : IDisposable
 {
     private readonly ConcurrentDictionary<string, CoreConnection> _connections = new(StringComparer.OrdinalIgnoreCase);
     private string _activeConnectionName = string.Empty;
+    // Guards the read-modify-write of _activeConnectionName so concurrent
+    // connect/disconnect (parallel dispatch) can't interleave its failover picks.
+    private readonly object _activeLock = new();
     private bool _disposed;
 
     // Consolidated polling pump — one thread for all connections
@@ -25,6 +28,7 @@ public sealed class ConnectionManager : IDisposable
     private CoreConnection[] _cachedArray = Array.Empty<CoreConnection>();
     private int _cachedVersion;
     private int _currentVersion;
+    private readonly object _cacheLock = new();
 
     // Persistent profiles — auto-reconnect when connection drops
     private readonly ConcurrentDictionary<string, ServerProfile> _persistentProfiles =
@@ -60,7 +64,7 @@ public sealed class ConnectionManager : IDisposable
                 throw new ArgumentException($"Connection '{value}' not found.");
             }
 
-            _activeConnectionName = value;
+            lock (_activeLock) { _activeConnectionName = value; }
         }
     }
 
@@ -160,20 +164,23 @@ public sealed class ConnectionManager : IDisposable
             State.Publish(c.Name, nextState);
             OnConnectionLost?.Invoke(c);
             // If active connection was lost, try to pick another
-            if (_activeConnectionName.Equals(c.Name, StringComparison.OrdinalIgnoreCase))
+            lock (_activeLock)
             {
-                CoreConnection? next = null;
-                foreach (CoreConnection x in _connections.Values)
+                if (_activeConnectionName.Equals(c.Name, StringComparison.OrdinalIgnoreCase))
                 {
-                    if (x.IsConnected && !x.Name.Equals(c.Name, StringComparison.OrdinalIgnoreCase))
+                    CoreConnection? next = null;
+                    foreach (CoreConnection x in _connections.Values)
                     {
-                        next = x;
-                        break;
+                        if (x.IsConnected && !x.Name.Equals(c.Name, StringComparison.OrdinalIgnoreCase))
+                        {
+                            next = x;
+                            break;
+                        }
                     }
-                }
-                if (next != null)
-                {
-                    _activeConnectionName = next.Name;
+                    if (next != null)
+                    {
+                        _activeConnectionName = next.Name;
+                    }
                 }
             }
         };
@@ -234,9 +241,12 @@ public sealed class ConnectionManager : IDisposable
         }
 
         // First connection becomes active automatically
-        if (string.IsNullOrEmpty(_activeConnectionName))
+        lock (_activeLock)
         {
-            _activeConnectionName = profile.Name;
+            if (string.IsNullOrEmpty(_activeConnectionName))
+            {
+                _activeConnectionName = profile.Name;
+            }
         }
 
         return conn;
@@ -252,18 +262,21 @@ public sealed class ConnectionManager : IDisposable
         {
             Interlocked.Increment(ref _currentVersion);
             conn.Dispose();
-            if (_activeConnectionName.Equals(profileName, StringComparison.OrdinalIgnoreCase))
+            lock (_activeLock)
             {
-                CoreConnection? next2 = null;
-                foreach (CoreConnection x in _connections.Values)
+                if (_activeConnectionName.Equals(profileName, StringComparison.OrdinalIgnoreCase))
                 {
-                    if (x.IsConnected)
+                    CoreConnection? next2 = null;
+                    foreach (CoreConnection x in _connections.Values)
                     {
-                        next2 = x;
-                        break;
+                        if (x.IsConnected)
+                        {
+                            next2 = x;
+                            break;
+                        }
                     }
+                    _activeConnectionName = next2?.Name ?? string.Empty;
                 }
-                _activeConnectionName = next2?.Name ?? string.Empty;
             }
             return true;
         }
@@ -278,7 +291,7 @@ public sealed class ConnectionManager : IDisposable
             Disconnect(name);
         }
 
-        _activeConnectionName = string.Empty;
+        lock (_activeLock) { _activeConnectionName = string.Empty; }
     }
 
     // ── Health Records ───────────────────────────────
@@ -364,16 +377,24 @@ public sealed class ConnectionManager : IDisposable
     /// <summary>Get all connections as a cached array (for pump hot path — no allocation).</summary>
     public CoreConnection[] GetAllArray()
     {
-        int ver = _currentVersion;
-        if (ver != _cachedVersion)
+        // The multi-worker pump reads this concurrently while connect/disconnect
+        // bumps _currentVersion. Serialize the compare-rebuild-publish so a
+        // reader never sees _cachedArray from one rebuild with _cachedVersion
+        // from another (torn publication that would pin a stale snapshot). The
+        // lock is uncontended except on the rare version change.
+        lock (_cacheLock)
         {
-            ICollection<CoreConnection>? vals = _connections.Values;
-            CoreConnection[]? arr = new CoreConnection[vals.Count];
-            vals.CopyTo(arr, 0);
-            _cachedArray = arr;
-            _cachedVersion = ver;
+            int ver = _currentVersion;
+            if (ver != _cachedVersion)
+            {
+                ICollection<CoreConnection>? vals = _connections.Values;
+                CoreConnection[]? arr = new CoreConnection[vals.Count];
+                vals.CopyTo(arr, 0);
+                _cachedArray = arr;
+                _cachedVersion = ver;
+            }
+            return _cachedArray;
         }
-        return _cachedArray;
     }
 
     /// <summary>Get all connections.</summary>
@@ -392,7 +413,7 @@ public sealed class ConnectionManager : IDisposable
     {
         if (_connections.TryGetValue(profileName, out CoreConnection? conn))
         {
-            _activeConnectionName = profileName;
+            lock (_activeLock) { _activeConnectionName = profileName; }
             return conn;
         }
         return null;

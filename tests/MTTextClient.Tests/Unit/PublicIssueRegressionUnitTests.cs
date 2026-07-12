@@ -52,6 +52,38 @@ public sealed class PublicIssueRegressionUnitTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public void Import_parsers_are_isolated_so_concurrent_imports_cannot_cross_contaminate()
+    {
+        // Parallel dispatch runs different-profile imports concurrently. Each
+        // reseeds its parser from its OWN connected core (SetTemplates). If the
+        // parser were shared, one venue's template set would overwrite another's
+        // mid-flight and algos would be SAVEd with the wrong core's argument set
+        // (a silent reintroduction of #44). ImportCommand now uses a per-call
+        // parser; this pins the property that makes that safe — two parser
+        // instances are fully independent.
+        const string v2 = "VERSION: 2\n###START###\nalgorithmName=0=X;\nversion=0=9;\ngroupId=0=0;\ndistance=4=1.0;\n";
+
+        var bybit = new V2FormatParser("");
+        bybit.SetTemplates(new[] { new AlgorithmData { name = "X", signature = "SA",
+            groupType = AlgorithmGroupType.SHOTS,
+            argsJson = """{"Arguments":{"distance":{"value":0},"venueMarker":{"value":"BYBIT"}}}""" } });
+
+        var binance = new V2FormatParser("");
+        binance.SetTemplates(new[] { new AlgorithmData { name = "X", signature = "SA",
+            groupType = AlgorithmGroupType.SHOTS,
+            argsJson = """{"Arguments":{"distance":{"value":0},"venueMarker":{"value":"BINANCE"}}}""" } });
+
+        // Interleave the reseed+parse the way two concurrent imports would.
+        var a = JObject.Parse(bybit.Parse(v2).Algorithms[0].argsJson!)["Arguments"]!;
+        var b = JObject.Parse(binance.Parse(v2).Algorithms[0].argsJson!)["Arguments"]!;
+
+        a["venueMarker"]!["value"]!.Value<string>().Should().Be("BYBIT");
+        b["venueMarker"]!["value"]!.Value<string>().Should().Be("BINANCE",
+            because: "each parser keeps its own core's templates — no cross-contamination");
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public void Issue44_create_does_not_inject_synthetic_args_into_wire()
     {
         // MTCore 0.7.24554's argument parser rejects unknown synthetic keys in
