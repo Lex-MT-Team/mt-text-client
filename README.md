@@ -866,6 +866,57 @@ reconcile failures.
 
 ---
 
+## Automation Tooling (external companions)
+
+Two browser-based tools sit alongside this repo in the parent `D:\Automation`
+workspace. They are **not part of this repository**, but both build directly on
+MTTextClient's MCP server — this project is their engine. End-to-end pipeline:
+
+```
+MTTextClient (--mcp)  ──MCP/stdio──►  test_runner_builder  ──results JSON──►  uploader_to_zephyr  ──REST──►  Zephyr Scale
+  (this repo)                          (dashboard + proxy :8585)               (uploader + proxy :3131)        (test mgmt)
+```
+
+### test_runner_builder — depends on this project
+
+An HTML/JS dashboard plus a Node.js proxy (`proxy_fixed9.js`, port `8585`) for
+authoring and running suites/sequences of MCP tool calls with assertions.
+
+Its dependence on MTTextClient is direct and structural:
+
+- The proxy **spawns a persistent `MTTextClient.exe --mcp` child** (the binary
+  built from this repo via `dotnet build -c Release`) and drives it over MCP
+  stdio — the dashboard is a front-end for the 258 tools this server exposes.
+- Before spawning, the proxy **syncs `profiles.json`** into
+  `~/.config/mt-textclient/profiles.json`, so the same server profiles used here
+  drive the runner.
+- Every "test" in the dashboard is a `tools/call` against this server; features
+  like multi-profile fan-out, response captures/variables, and profile-scoped
+  assertions all operate on MTTextClient tool responses.
+
+```bash
+node proxy_fixed9.js         # builds/syncs profiles, spawns MTTextClient.exe --mcp, listens on :8585
+# then open the active mt-test-runner_*.html in a browser
+```
+
+### uploader_to_zephyr — downstream of the test runner
+
+An HTML uploader plus a Node.js CORS proxy (`zephyr-proxy.js`, port `3131`) that
+pushes results to the Zephyr Scale test-management platform.
+
+It depends on this project **indirectly**: it consumes the results JSON that
+test_runner_builder exports from MTTextClient runs (single-profile, history, and
+multi-profile formats), then finds/creates the matching test cases and cycle and
+PUTs execution results via the Zephyr Scale REST API. It is the final stage of
+the pipeline above.
+
+```bash
+node zephyr-proxy.js         # CORS proxy on :3131, injects the pasted Zephyr JWT
+# then open the active mt-zephyr-uploader*.html, load the runner's exported JSON, upload
+```
+
+---
+
 ## Environment Variables
 
 | Variable | Default | Description |
