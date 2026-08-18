@@ -74,20 +74,42 @@ public sealed class AlgorithmStore
     /// <summary>
     /// Process incoming algorithm data from subscription callback.
     /// The callback delivers (NetworkMessageType, NetworkData) where the concrete types are:
-    ///   - ALGORITHM_LIST_RESULT → AlgorithmListData (contains List of AlgorithmData + groups)
+    ///   - ALGORITHMS_RESULT → AlgorithmListData (contains List of AlgorithmData + groups)
     ///   - ALGORITHM_STATUS_DATA → AlgorithmStatusData
     ///   - ALGORITHM_SYMBOL_STATUS_DATA → AlgorithmSymbolStatusData
     ///   - ALGORITHM_CONFIG_UPDATE → AlgorithmData (single update)
+    ///
+    /// NOTE: MoonTrader 0.7.25267 renamed ALGORITHM_LIST_RESULT → ALGORITHMS_RESULT
+    /// and dropped the per-item AlgorithmData.actionType, so the list is now an
+    /// authoritative snapshot rather than an ADD/UPDATE/DELETE delta stream.
     /// </summary>
     public void ProcessData(NetworkMessageType msgType, NetworkData data)
     {
         LastUpdateUtc = DateTime.UtcNow;
         switch (msgType)
         {
-            case NetworkMessageType.ALGORITHM_LIST_RESULT:
-                if (data is AlgorithmListData listData)
+            case NetworkMessageType.ALGORITHMS_RESULT:
+                // 0.7.25267 wraps everything on this channel in AlgorithmEventData
+                // subtypes: AlgorithmListEventData carries a full snapshot in .Data;
+                // Algorithms{Added,Updated,Removed}EventData carry incremental deltas
+                // in .Algorithms. (A bare AlgorithmListData is accepted defensively.)
+                switch (data)
                 {
-                    ProcessAlgorithmList(listData);
+                    case AlgorithmListEventData listEvent when listEvent.Data != null:
+                        ProcessAlgorithmList(listEvent.Data);
+                        break;
+                    case AlgorithmsRemovedEventData removed:
+                        RemoveAlgorithms(removed.Algorithms);
+                        break;
+                    case AlgorithmsAddedEventData added:
+                        UpsertAlgorithms(added.Algorithms);
+                        break;
+                    case AlgorithmsUpdatedEventData updated:
+                        UpsertAlgorithms(updated.Algorithms);
+                        break;
+                    case AlgorithmListData bareList:
+                        ProcessAlgorithmList(bareList);
+                        break;
                 }
                 break;
 
@@ -121,8 +143,11 @@ public sealed class AlgorithmStore
     }
 
     /// <summary>
-    /// Process AlgorithmListData with proper ADD/UPDATE/DELETE semantics.
-    /// Matches the pattern used by MTController's CoreAlgorithmsManager.
+    /// Process AlgorithmListData. As of 0.7.25267 the wire no longer carries a
+    /// per-item actionType, so an ALGORITHMS_RESULT is an authoritative snapshot
+    /// of the current algorithms and folders: we rebuild both maps from it
+    /// (rather than applying ADD/UPDATE/DELETE deltas), which also reflects
+    /// server-side deletions that a pure upsert would leave stale.
     /// </summary>
     private void ProcessAlgorithmList(AlgorithmListData listData)
     {
@@ -143,56 +168,46 @@ public sealed class AlgorithmStore
             return;
         }
 
-        // Process groups
+        // Snapshot: replace the folder set.
+        _groups.Clear();
         if (listData.groups != null)
         {
             foreach (AlgorithmGroupData group in listData.groups)
             {
-                switch (group.actionType)
-                {
-                    case AlgorithmData.ActionType.ADD:
-                    case AlgorithmData.ActionType.UPDATE:
-                    case AlgorithmData.ActionType.SAVE_GROUP:
-                        _groups[group.id] = group;
-                        break;
-
-                    case AlgorithmData.ActionType.DELETE:
-                    case AlgorithmData.ActionType.DELETE_GROUP:
-                        _groups.TryRemove(group.id, out _);
-                        break;
-
-                    default:
-                        // INIT or other — just store
-                        _groups[group.id] = group;
-                        break;
-                }
+                _groups[group.id] = group;
             }
         }
 
-        // Process algorithms
+        // Snapshot: replace the algorithm set.
+        _algorithms.Clear();
         if (listData.algorithms != null)
         {
             foreach (AlgorithmData algo in listData.algorithms)
             {
-                switch (algo.actionType)
-                {
-                    case AlgorithmData.ActionType.ADD:
-                    case AlgorithmData.ActionType.UPDATE:
-                    case AlgorithmData.ActionType.SAVE:
-                    case AlgorithmData.ActionType.SAVE_START:
-                        _algorithms[algo.id] = algo;
-                        break;
-
-                    case AlgorithmData.ActionType.DELETE:
-                        _algorithms.TryRemove(algo.id, out _);
-                        break;
-
-                    default:
-                        // INIT or other — just store
-                        _algorithms[algo.id] = algo;
-                        break;
-                }
+                _algorithms[algo.id] = algo;
             }
+        }
+    }
+
+    /// <summary>Apply an incremental add/update delta (0.7.25267
+    /// Algorithms{Added,Updated}EventData) without disturbing other entries.</summary>
+    private void UpsertAlgorithms(List<AlgorithmData>? algorithms)
+    {
+        if (algorithms == null) { return; }
+        foreach (AlgorithmData algo in algorithms)
+        {
+            _algorithms[algo.id] = algo;
+        }
+    }
+
+    /// <summary>Apply an incremental removal delta (0.7.25267
+    /// AlgorithmsRemovedEventData).</summary>
+    private void RemoveAlgorithms(List<AlgorithmData>? algorithms)
+    {
+        if (algorithms == null) { return; }
+        foreach (AlgorithmData algo in algorithms)
+        {
+            _algorithms.TryRemove(algo.id, out _);
         }
     }
 

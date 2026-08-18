@@ -9,6 +9,47 @@ Versions follow [SemVer](https://semver.org).
 
 ## Unreleased
 
+### Vendor upgrade: MoonTrader 0.7.25267 — algorithm wire-protocol migration
+
+MTCore 0.7.25267 redesigned the algorithm wire surface. The pinned vendor DLL
+and `ExpectedCoreBuild`/`VENDOR_VERSION` are bumped 0.7.24637 → 0.7.25267, and
+the wire layer is ported to the new shapes. Against a 25267 core the previous
+build silently mis-deserialized the algorithm list — `algos list` returned zero
+algorithms even though the GUI showed them — because the result message type and
+its payload both changed.
+
+* **Read path.** The algorithms subscription now delivers `ALGORITHMS_RESULT`
+  (was `ALGORITHM_LIST_RESULT`) wrapping the snapshot in
+  `AlgorithmListEventData.Data`; incremental changes arrive as
+  `Algorithms{Added,Updated,Removed}EventData`. `AlgorithmListData` lost its
+  per-item `actionType`, so a full result is treated as an authoritative
+  snapshot (replace) and the delta events upsert/remove by id.
+* **Write path.** The single `AlgorithmData.actionType`-driven request was
+  replaced by a family of dedicated request types, all sent via
+  `SendAlgorithmRequest(AlgorithmRequestData, priority)`: run/stop by id
+  (`Algorithm{Run,Stop}RequestData`), run/stop all
+  (`Algorithms{RunAll,StopAll}RequestData`), create/save
+  (`Algorithm{Add,Update}RequestData` with `runAlgorithm`), delete
+  (`AlgorithmRemoveRequestData`), toggle debug
+  (`AlgorithmToggleDebagRequestData`), and folder ops that replace the old
+  group requests (`AlgorithmFolder{Add,Clone,Remove}RequestData`). Because
+  start/stop/delete are now addressed purely by id, the previous
+  Serialize/Deserialize normalization and type-name-resolution workarounds for
+  START are no longer needed. `CoreConnection` exposes typed wrappers
+  (`SendAlgorithmRun/Stop/RunAll/StopAll/Save/Delete/ToggleDebug`,
+  `SendFolderAdd/Clone/Delete`) that build the requests and await the response.
+  The core answers these on the notification channel with
+  `AlgorithmUpdateNotificationData` — including bulk run-all/stop-all (it does
+  *not* use the `List` variant there) — so the await accepts *either*
+  `AlgorithmUpdateNotificationData` or `AlgorithmListUpdateNotificationData` and
+  never hangs to timeout on a per-operation type mismatch (which had surfaced as
+  `algos stop-all` spinning until the 30 s timeout).
+* **Trading performance.** `TradingPerformanceListData` moved from
+  `isInitial` + `tradingPerformances` (with parallel per-timeframe count lists)
+  to `isSnapshot` + `metricChanges` (`TradingPerformanceMetricData` with a single
+  `metrics[]` array) + `deletedKeys`; the store applies snapshots and deltas
+  accordingly.
+
 ### MCP server: opt-in parallel request dispatch + shared-daemon mode
 
 The MCP server processed requests strictly one-at-a-time, so a single slow

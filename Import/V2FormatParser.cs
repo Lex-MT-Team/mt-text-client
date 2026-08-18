@@ -421,7 +421,6 @@ public sealed class V2FormatParser
             isTradingAlgo = isTradingAlgo,
             isRunning = false,
             isProcessing = false,
-            actionType = AlgorithmData.ActionType.SAVE,
             argsJson = argsObj.ToString(Formatting.None),
             marketType = MarketType.FUTURES, // Default; overridden below
             symbol = ""

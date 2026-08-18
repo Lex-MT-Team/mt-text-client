@@ -109,8 +109,10 @@ public static class Program
             obj[n] = c;
 
         // Pretty-print with a trailing newline so the file plays nicely with
-        // editors and git diffs.
-        return JsonConvert.SerializeObject(obj, Formatting.Indented) + "\n";
+        // editors and git diffs. Json.NET indents with Environment.NewLine;
+        // pin to LF so the rendered snapshot is byte-identical across
+        // platforms (the committed file is LF).
+        return JsonConvert.SerializeObject(obj, Formatting.Indented).Replace("\r\n", "\n") + "\n";
     }
 
     private static bool IsInternallyDispatched(string toolName) =>

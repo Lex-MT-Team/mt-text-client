@@ -212,8 +212,11 @@ public sealed class McpServer
     public void Run()
     {
         // Redirect Console.Out -> stderr so LiteNetLib log noise
-        // does not corrupt the JSON-RPC stdio channel.
-        _stdoutWriter = Console.Out;
+        // does not corrupt the JSON-RPC stdio channel. Write responses
+        // through an explicit UTF-8 writer: on Windows, Console.Out encodes
+        // with the legacy console codepage, which mangles non-ASCII chars in
+        // tool descriptions (e.g. '→' becomes 0x1A) and corrupts the JSON.
+        _stdoutWriter = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false));
         Console.SetOut(Console.Error);
         LogStderr($"MCP Server {SERVER_VERSION} starting on stdio...");
 
@@ -2750,7 +2753,7 @@ public sealed class McpServer
                 ["symbol"] = algo.symbol,
                 ["market"] = algo.marketType.ToString(),
                 ["duplicate_on_destination"] = isDup,
-                ["status"] = algo.actionType.ToString(),
+                ["status"] = algo.isRunning ? "running" : "stopped",
             });
         }
 
@@ -3372,15 +3375,14 @@ public sealed class McpServer
                 string groupName = groupToken["name"]?.Value<string>() ?? "";
                 int groupType = groupToken["groupType"]?.Value<int>() ?? 0;
 
-                var groupRequest = new AlgorithmData
+                var folder = new AlgorithmGroupData
                 {
-                    groupID = groupId,
+                    id = groupId,
                     name = groupName,
                     groupType = (AlgorithmGroupType)groupType,
-                    actionType = AlgorithmData.ActionType.SAVE_GROUP
                 };
 
-                NotificationMessageData? notification = conn.SendAlgorithmRequest(groupRequest);
+                NotificationMessageData? notification = conn.SendFolderAdd(folder);
                 if (notification == null)
                     results.Add($"  Group '{groupName}': sent (timed out)");
                 else if (notification.IsOk)
@@ -3476,13 +3478,12 @@ public sealed class McpServer
                 isClone = isClone,
                 isRunning = false,
                 isProcessing = false,
-                actionType = AlgorithmData.ActionType.SAVE,
                 argsJson = argsObj.ToString(Formatting.None),
                 marketType = marketType,
                 symbol = algoSymbol
             };
 
-            NotificationMessageData? notification = conn.SendAlgorithmRequest(algoData);
+            NotificationMessageData? notification = conn.SendAlgorithmSave(algoData);
             if (notification == null)
             {
                 results.Add($"  {algoName} ({signature}): sent (timed out)");

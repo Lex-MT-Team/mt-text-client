@@ -32,7 +32,7 @@ import urllib.error
 import urllib.request
 
 
-VENDOR_VERSION = "724554"
+VENDOR_VERSION = "725267"
 CDN_BASE = "https://cdn3.moontrader.com/beta"
 # Cloudflare rejects the default urllib User-Agent with a 403; supply one.
 _UA = "mt-text-client-fetch-vendor-libs/1.0 (+https://github.com/Lex-MT-Team/mt-text-client)"

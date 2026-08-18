@@ -244,7 +244,11 @@ public sealed class PublicIssueRegressionUnitTests
                 new() { id = 7, name = "MW", signature = "MW" },
             },
         };
-        store.ProcessData(NetworkMessageType.ALGORITHM_LIST_RESULT, listData);
+        // 0.7.25267: the algorithms channel delivers ALGORITHMS_RESULT wrapping the
+        // snapshot in AlgorithmListEventData.Data (was ALGORITHM_LIST_RESULT + bare list).
+        store.ProcessData(
+            NetworkMessageType.ALGORITHMS_RESULT,
+            new AlgorithmListEventData { Data = listData });
 
         store.LastUpdateUtc.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromSeconds(5));
         store.Count.Should().Be(1);

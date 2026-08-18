@@ -780,30 +780,155 @@ public sealed class CoreConnection : IDisposable
 
     #region Algorithm Lifecycle Requests
 
-    /// <summary>
-    /// Send an algorithm request (START, STOP, SAVE, DELETE, TOGGLE_DEBUG, etc.).
-    /// MTCore responds with AlgorithmUpdateNotificationData on the notification
-    /// channel. See internal vendor wire-pattern reference notes.
-    /// </summary>
-    public NotificationMessageData? SendAlgorithmRequest(AlgorithmData algoData, int timeoutMs = 30_000)
+    // MoonTrader 0.7.25267 replaced the single AlgorithmData.actionType-driven
+    // request with a family of dedicated wire types, all sent through
+    // UDPClient.SendAlgorithmRequest(AlgorithmRequestData, priority):
+    //   run/stop by id      → Algorithm{Run,Stop}RequestData
+    //   run/stop all        → Algorithms{RunAll,StopAll}RequestData
+    //   create              → AlgorithmAddRequestData     (runAlgorithm=start)
+    //   save existing       → AlgorithmUpdateRequestData  (runAlgorithm=start)
+    //   delete by id        → AlgorithmRemoveRequestData
+    //   toggle debug        → AlgorithmToggleDebagRequestData (vendor spelling)
+    //   folders (ex-groups) → AlgorithmFolder{Add,Clone,Remove}RequestData
+    // Single-algo ops are answered by AlgorithmUpdateNotificationData; bulk and
+    // folder ops by AlgorithmListUpdateNotificationData.
+
+    private void SendAlgoRequest(AlgorithmRequestData req) =>
+        _udpClient!.SendAlgorithmRequest(req, NetworkMessagePriority.DEFAULT);
+
+    // 0.7.25267 answers algorithm/folder requests on the notification channel with
+    // AlgorithmUpdateNotificationData — including the bulk run-all/stop-all and the
+    // folder ops (verified: stop-all responds with the singular, not the List,
+    // variant). Await EITHER AlgorithmUpdateNotificationData or
+    // AlgorithmListUpdateNotificationData so a wrapper never hangs to timeout on a
+    // type mismatch, regardless of which the core picks per operation.
+    private NotificationMessageData? AwaitAlgoNotification(Action send, int timeoutMs)
     {
         if (_udpClient == null) { return null; }
-        return SendAndAwaitNotification<AlgorithmUpdateNotificationData>(
-            send: () => _udpClient.SendAlgorithmRequest(algoData),
-            build: n => new NotificationMessageData
+
+        if (timeoutMs > 0)
+        {
+            if (!Circuit.AllowCall()) { return null; }
+            if (!RateLimit.ConsumeBlocking(500))
             {
-                notificationCode = n.success ? NotificationCode.OK : NotificationCode.ERROR,
-                msgString = n.message ?? string.Empty,
-            },
-            timeoutMs: timeoutMs);
+                Circuit.RecordFailure();
+                return null;
+            }
+        }
+
+        var wait = new System.Collections.Concurrent.BlockingCollection<NotificationMessageData>(boundedCapacity: 8);
+        int subId = -1;
+        try
+        {
+            subId = _udpClient.SendNotificationSubscribe(
+                Profile.Exchange,
+                (AbstractNotificationData data) =>
+                {
+                    NotificationMessageData? built = data switch
+                    {
+                        AlgorithmUpdateNotificationData u => new NotificationMessageData
+                        {
+                            notificationCode = u.success ? NotificationCode.OK : NotificationCode.ERROR,
+                            msgString = u.message ?? string.Empty,
+                        },
+                        AlgorithmListUpdateNotificationData l => new NotificationMessageData
+                        {
+                            notificationCode = l.success ? NotificationCode.OK : NotificationCode.ERROR,
+                            msgString = l.message ?? string.Empty,
+                        },
+                        _ => null,
+                    };
+                    if (built != null)
+                    {
+                        try { wait.TryAdd(built); }
+                        catch { /* collection disposed in finally — drop */ }
+                    }
+                },
+                -1);
+
+            send();
+
+            if (wait.TryTake(out var result, timeoutMs))
+            {
+                if (timeoutMs > 0) { Circuit.RecordSuccess(); }
+                return result;
+            }
+            if (timeoutMs > 0) { Circuit.RecordFailure(); }
+            return null;
+        }
+        finally
+        {
+            if (subId != -1 && _udpClient != null)
+            {
+                try { _udpClient.SendNotificationUnsubscribe(ref subId, Profile.Exchange); }
+                catch { /* unsubscribe is best-effort */ }
+            }
+            wait.Dispose();
+        }
     }
 
-    public bool TrySendAlgorithmRequestNoWait(AlgorithmData algoData)
+    /// <summary>Start a single algorithm by id (AlgorithmRunRequestData).</summary>
+    public NotificationMessageData? SendAlgorithmRun(long id, int timeoutMs = 30_000)
+    {
+        if (_udpClient == null) { return null; }
+        return AwaitAlgoNotification(
+            () => SendAlgoRequest(new AlgorithmRunRequestData { algorithmID = id, exchangeType = Profile.Exchange }),
+            timeoutMs);
+    }
+
+    /// <summary>Stop a single algorithm by id (AlgorithmStopRequestData).</summary>
+    public NotificationMessageData? SendAlgorithmStop(long id, int timeoutMs = 30_000)
+    {
+        if (_udpClient == null) { return null; }
+        return AwaitAlgoNotification(
+            () => SendAlgoRequest(new AlgorithmStopRequestData { algorithmID = id, exchangeType = Profile.Exchange }),
+            timeoutMs);
+    }
+
+    /// <summary>Start every algorithm on the connected core (AlgorithmsRunAllRequestData).</summary>
+    public NotificationMessageData? SendAlgorithmRunAll(int timeoutMs = 30_000)
+    {
+        if (_udpClient == null) { return null; }
+        return AwaitAlgoNotification(
+            () => SendAlgoRequest(new AlgorithmsRunAllRequestData { exchangeType = Profile.Exchange }),
+            timeoutMs);
+    }
+
+    /// <summary>Stop every algorithm on the connected core (AlgorithmsStopAllRequestData).</summary>
+    public NotificationMessageData? SendAlgorithmStopAll(int timeoutMs = 30_000)
+    {
+        if (_udpClient == null) { return null; }
+        return AwaitAlgoNotification(
+            () => SendAlgoRequest(new AlgorithmsStopAllRequestData { exchangeType = Profile.Exchange }),
+            timeoutMs);
+    }
+
+    /// <summary>
+    /// Persist an algorithm. A new algorithm (id &lt;= 0) is created via
+    /// AlgorithmAddRequestData; an existing one is updated via
+    /// AlgorithmUpdateRequestData. <paramref name="start"/> requests the core
+    /// to start it after persisting (the old SAVE_START).
+    /// </summary>
+    public NotificationMessageData? SendAlgorithmSave(AlgorithmData algo, bool start = false, int timeoutMs = 30_000)
+    {
+        if (_udpClient == null) { return null; }
+        AlgorithmRequestData req = algo.id <= 0
+            ? new AlgorithmAddRequestData { algorithm = algo, runAlgorithm = start, exchangeType = Profile.Exchange }
+            : new AlgorithmUpdateRequestData { algorithm = algo, runAlgorithm = start, exchangeType = Profile.Exchange };
+        return AwaitAlgoNotification(() => SendAlgoRequest(req), timeoutMs);
+    }
+
+    /// <summary>Fire-and-forget persist (used by bulk import). Same Add/Update
+    /// selection as <see cref="SendAlgorithmSave"/>, but does not await.</summary>
+    public bool TrySendAlgorithmSaveNoWait(AlgorithmData algo)
     {
         if (_udpClient == null) { return false; }
         try
         {
-            _udpClient.SendAlgorithmRequest(algoData);
+            AlgorithmRequestData req = algo.id <= 0
+                ? new AlgorithmAddRequestData { algorithm = algo, runAlgorithm = false, exchangeType = Profile.Exchange }
+                : new AlgorithmUpdateRequestData { algorithm = algo, runAlgorithm = false, exchangeType = Profile.Exchange };
+            SendAlgoRequest(req);
             return true;
         }
         catch
@@ -812,21 +937,49 @@ public sealed class CoreConnection : IDisposable
         }
     }
 
-    /// <summary>
-    /// Send an algorithm list request (START_ALL, STOP_ALL, SAVE_GROUP, DELETE_GROUP, CLONE_GROUP).
-    /// MTCore responds with AlgorithmListUpdateNotificationData.
-    /// </summary>
-    public NotificationMessageData? SendAlgorithmListRequest(AlgorithmListData listData, int timeoutMs = 30_000)
+    /// <summary>Delete a single algorithm by id (AlgorithmRemoveRequestData).</summary>
+    public NotificationMessageData? SendAlgorithmDelete(long id, int timeoutMs = 30_000)
     {
         if (_udpClient == null) { return null; }
-        return SendAndAwaitNotification<AlgorithmListUpdateNotificationData>(
-            send: () => _udpClient.SendAlgorithmListRequest(listData),
-            build: n => new NotificationMessageData
-            {
-                notificationCode = n.success ? NotificationCode.OK : NotificationCode.ERROR,
-                msgString = n.message ?? string.Empty,
-            },
-            timeoutMs: timeoutMs);
+        return AwaitAlgoNotification(
+            () => SendAlgoRequest(new AlgorithmRemoveRequestData { algorithmID = id, exchangeType = Profile.Exchange }),
+            timeoutMs);
+    }
+
+    /// <summary>Toggle an algorithm's debug/profiling flag (AlgorithmToggleDebagRequestData).</summary>
+    public NotificationMessageData? SendAlgorithmToggleDebug(long id, int timeoutMs = 30_000)
+    {
+        if (_udpClient == null) { return null; }
+        return AwaitAlgoNotification(
+            () => SendAlgoRequest(new AlgorithmToggleDebagRequestData { algorithmID = id, exchangeType = Profile.Exchange }),
+            timeoutMs);
+    }
+
+    /// <summary>Create a folder (ex-group) from an AlgorithmGroupData (AlgorithmFolderAddRequestData).</summary>
+    public NotificationMessageData? SendFolderAdd(AlgorithmGroupData folder, int timeoutMs = 30_000)
+    {
+        if (_udpClient == null) { return null; }
+        return AwaitAlgoNotification(
+            () => SendAlgoRequest(new AlgorithmFolderAddRequestData { folder = folder, exchangeType = Profile.Exchange }),
+            timeoutMs);
+    }
+
+    /// <summary>Clone a folder by id (AlgorithmFolderCloneRequestData).</summary>
+    public NotificationMessageData? SendFolderClone(long folderId, int timeoutMs = 30_000)
+    {
+        if (_udpClient == null) { return null; }
+        return AwaitAlgoNotification(
+            () => SendAlgoRequest(new AlgorithmFolderCloneRequestData { folderID = folderId, exchangeType = Profile.Exchange }),
+            timeoutMs);
+    }
+
+    /// <summary>Delete a folder by id and its algorithms (AlgorithmFolderRemoveRequestData).</summary>
+    public NotificationMessageData? SendFolderDelete(long folderId, int timeoutMs = 30_000)
+    {
+        if (_udpClient == null) { return null; }
+        return AwaitAlgoNotification(
+            () => SendAlgoRequest(new AlgorithmFolderRemoveRequestData { folderID = folderId, exchangeType = Profile.Exchange }),
+            timeoutMs);
     }
 
     /// <summary>
