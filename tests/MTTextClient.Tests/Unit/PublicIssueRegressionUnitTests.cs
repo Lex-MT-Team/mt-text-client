@@ -237,14 +237,17 @@ public sealed class PublicIssueRegressionUnitTests
         var store = new AlgorithmStore();
         store.LastUpdateUtc.Should().Be(default);
 
-        var listData = new AlgorithmListData
+        var listEvent = new AlgorithmListEventData
         {
-            algorithms = new List<AlgorithmData>
+            Data = new AlgorithmListData
             {
-                new() { id = 7, name = "MW", signature = "MW" },
+                algorithms = new List<AlgorithmData>
+                {
+                    new() { id = 7, name = "MW", signature = "MW" },
+                },
             },
         };
-        store.ProcessData(NetworkMessageType.ALGORITHM_LIST_RESULT, listData);
+        store.ProcessData(NetworkMessageType.ALGORITHMS_RESULT, listEvent);
 
         store.LastUpdateUtc.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromSeconds(5));
         store.Count.Should().Be(1);

@@ -73,8 +73,8 @@ public sealed class FleetCommand : ICommand
             "disconnect" or "disc" => HandleDisconnect(),
             "batchconnect" or "bc" => HandleBatchConnect(args.Length > 1 ? args[1..] : Array.Empty<string>()),
             "connhealth" or "ch" => HandleConnectionHealth(),
-            "batchstart" or "bsa" => HandleBatchAlgoOp(args.Length > 1 ? args[1..] : Array.Empty<string>(), AlgorithmData.ActionType.START),
-            "batchstop"  or "bso" => HandleBatchAlgoOp(args.Length > 1 ? args[1..] : Array.Empty<string>(), AlgorithmData.ActionType.STOP),
+            "batchstart" or "bsa" => HandleBatchAlgoOp(args.Length > 1 ? args[1..] : Array.Empty<string>(), AlgoActionType.START),
+            "batchstop"  or "bso" => HandleBatchAlgoOp(args.Length > 1 ? args[1..] : Array.Empty<string>(), AlgoActionType.STOP),
             "batchconfig" or "bcc" => HandleBatchConfig(args.Length > 1 ? args[1..] : Array.Empty<string>()),
             "autostops" or "as" => HandleFleetAutoStops(),
             "blacklist" or "bl" => HandleFleetBlacklist(),
@@ -1038,9 +1038,9 @@ private List<CoreConnection> ResolveTargetConnections(string[] profileNames, out
 /// across the specified profiles (default: all connected server).
 /// args: [algo_pattern, profile1?, profile2?, ...]
 /// </summary>
-private CommandResult HandleBatchAlgoOp(string[] args, AlgorithmData.ActionType actionType)
+private CommandResult HandleBatchAlgoOp(string[] args, AlgoActionType actionType)
 {
-    string opName = actionType == AlgorithmData.ActionType.START ? "batchstart" : "batchstop";
+    string opName = actionType == AlgoActionType.START ? "batchstart" : "batchstop";
     if (args.Length < 1)
         return CommandResult.Fail($"Usage: fleet {opName} <algo_pattern> [profile1 ...]");
 
@@ -1062,16 +1062,8 @@ private CommandResult HandleBatchAlgoOp(string[] args, AlgorithmData.ActionType 
 
         foreach (MTShared.Network.AlgorithmData algo in matches)
         {
-            var request = new MTShared.Network.AlgorithmData(algo) { actionType = actionType };
-
-            // Always resolve Core-internal type name for START to avoid silent init failure.
-            if (actionType == AlgorithmData.ActionType.START)
-            {
-                string? typeName = AlgoTypeNames.Resolve(algo.signature);
-                if (typeName != null) request.name = typeName;
-            }
-
-            MTShared.Network.NotificationMessageData? notif = conn.SendAlgorithmRequest(request);
+            // START/STOP carry only the algorithm id since MTCore 0.7.25589.
+            MTShared.Network.NotificationMessageData? notif = conn.SendAlgorithmRequest(algo, actionType);
             bool ok = notif == null || notif.IsOk;
 
             algoResults.Add(new
