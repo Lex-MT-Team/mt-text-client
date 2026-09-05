@@ -551,10 +551,13 @@ public sealed class AlgosCommand : ICommand
 
         var request = new AlgorithmData(algo);
 
-        // Match canonical client behaviour: bump the schema version on every
-        // save so the server marks the persisted record as current. Without
-        // this, older-version records can be silently skipped on reload.
-        request.version = 9;
+        // Match canonical client behaviour: stamp the current config-schema
+        // version on every save so the server marks the persisted record as
+        // current. Without this, older-version records can be silently skipped
+        // on reload. Read it from the vendor validator rather than hardcoding:
+        // a literal that falls behind MTShared downgrades the stored config and
+        // makes the core re-run its legacy parameter migrations on it.
+        request.version = MTShared.Utils.AlgorithmValidator.VERSION;
 
         // BUG FIX: Ensure proper algorithm type name for SAVE_START.
         // Core's SaveAlgorithm uses config.name to start the algo after saving.
