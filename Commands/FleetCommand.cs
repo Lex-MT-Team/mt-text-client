@@ -1062,7 +1062,23 @@ private CommandResult HandleBatchAlgoOp(string[] args, AlgoActionType actionType
 
         foreach (MTShared.Network.AlgorithmData algo in matches)
         {
-            // START/STOP carry only the algorithm id since MTCore 0.7.25589.
+            // START/STOP carry only the algorithm id since MTCore 0.7.25589 — and
+            // the core instantiates from the name it has stored, so an algo whose
+            // stored name is a display label starts nothing while reporting success.
+            if (actionType == AlgoActionType.START && !AlgoTypeNames.IsCoreTypeName(algo.name))
+            {
+                algoResults.Add(new
+                {
+                    id   = algo.id,
+                    name = algo.name,
+                    ok   = false,
+                    msg  = $"bad_stored_type_name: core has '{algo.name}'" +
+                           (AlgoTypeNames.Resolve(algo.signature) is { } exp ? $", needs '{exp}'" : "") +
+                           " — repair with `algos rename` before starting",
+                });
+                continue;
+            }
+
             MTShared.Network.NotificationMessageData? notif = conn.SendAlgorithmRequest(algo, actionType);
             bool ok = notif == null || notif.IsOk;
 

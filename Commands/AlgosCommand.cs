@@ -68,12 +68,24 @@ internal static class AlgoTypeNames
         ["MS"] = "Markets Saver",
     };
 
+    private static readonly HashSet<string> CoreTypeNames =
+        new(SignatureToName.Values, StringComparer.Ordinal);
+
     /// <summary>
     /// Resolves the Core-internal algorithm type name from a signature code.
     /// Returns null if the signature is unknown.
     /// </summary>
     public static string? Resolve(string? signature)
         => signature != null && SignatureToName.TryGetValue(signature, out string? name) ? name : null;
+
+    /// <summary>
+    /// True when <paramref name="name"/> is one of the type names MTCore's
+    /// algorithm factory switches on. A stored name that fails this check
+    /// cannot be instantiated: the factory falls through and returns null
+    /// without raising an error.
+    /// </summary>
+    public static bool IsCoreTypeName(string? name)
+        => name != null && CoreTypeNames.Contains(name);
 }
 
 public sealed class AlgosCommand : ICommand
@@ -496,6 +508,25 @@ public sealed class AlgosCommand : ICommand
             // (AlgorithmRun/StopRequestData) — the core resolves the algorithm from
             // its own store, so the old payload normalisation (wire round-trip plus
             // signature-derived type name) has no place to go and is no longer needed.
+            //
+            // The flip side: the core instantiates from the name it has stored, and
+            // its factory switches on exact type names ("Shots Group", "Averages", …).
+            // A stored name that is a display label instead falls through the switch
+            // and the core returns success while starting nothing. Refuse up front
+            // rather than report a start that did not happen.
+            if (actionType == AlgoActionType.START && !AlgoTypeNames.IsCoreTypeName(algo.name))
+            {
+                string? expected = AlgoTypeNames.Resolve(algo.signature);
+                string label = string.IsNullOrEmpty(algo.description) ? algo.name : algo.description;
+                return CommandResult.Fail(
+                    $"[{conn.Name}] Algorithm {id} ({label}): cannot START — the core has this algorithm " +
+                    $"stored under the type name '{algo.name}', which its algorithm factory does not know" +
+                    (expected != null ? $" (signature {algo.signature} needs '{expected}')" : "") +
+                    ". MTCore instantiates from its own stored name, so the request would report success " +
+                    "and start nothing. Repair the stored name first — `algos rename " + id +
+                    " <display name>` restores it and keeps the label in description.");
+            }
+
             NotificationMessageData? notification = conn.SendAlgorithmRequest(algo, actionType);
 
             if (notification == null)
