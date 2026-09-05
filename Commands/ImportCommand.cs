@@ -208,16 +208,16 @@ public sealed class ImportCommand : ICommand
         {
             foreach (V2FormatParser.GroupInfo group in groups)
             {
-                // Send SAVE_GROUP request to create the group
-                var groupRequest = new AlgorithmData
+                // Create the folder (AlgorithmFolderAddRequestData under the hood)
+                var groupRequest = new AlgorithmGroupData
                 {
-                    groupID = group.Id,
+                    id = group.Id,
                     name = group.Name,
                     groupType = (AlgorithmGroupType)group.GroupType,
-                    actionType = AlgorithmData.ActionType.SAVE_GROUP
                 };
 
-                NotificationMessageData? groupNotification = conn.SendAlgorithmRequest(groupRequest);
+                NotificationMessageData? groupNotification =
+                    conn.SendAlgorithmGroupRequest(groupRequest, AlgoActionType.SAVE_GROUP);
 
                 if (groupNotification == null)
                 {
@@ -270,8 +270,6 @@ public sealed class ImportCommand : ICommand
         int queuedCount = 0;
         foreach (AlgorithmData algo in algorithms)
         {
-            algo.actionType = AlgorithmData.ActionType.SAVE;
-
             // Remap groupID if we have a mapping.
             // (No > 0 guard — TryGetValue is itself the filter; groupID=0 is a legal map key.)
             if (groupIdMap.TryGetValue(algo.groupID, out long newGroupId))
@@ -279,7 +277,7 @@ public sealed class ImportCommand : ICommand
                 algo.groupID = newGroupId;
             }
 
-            if (conn.TrySendAlgorithmRequestNoWait(algo))
+            if (conn.TrySendAlgorithmRequestNoWait(algo, AlgoActionType.SAVE))
             {
                 queuedCount++;
                 results.Add($"  {algo.name} ({algo.signature}): queued");
@@ -503,8 +501,7 @@ public sealed class ImportCommand : ICommand
         }
 
         // Save to Core
-        var request = new AlgorithmData(algo) { actionType = AlgorithmData.ActionType.SAVE };
-        NotificationMessageData? notification = conn.SendAlgorithmRequest(request);
+        NotificationMessageData? notification = conn.SendAlgorithmRequest(algo, AlgoActionType.SAVE);
 
         if (notification == null)
         {

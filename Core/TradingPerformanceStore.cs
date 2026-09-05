@@ -7,11 +7,17 @@ using MTShared.Types;
 namespace MTTextClient.Core;
 
 /// <summary>
-/// In-memory store for Trading Performance data.
+/// In-memory store for Trading Performance data — the metrics MTCore's
+/// performance-filter breakers act on.
 /// Thread-safe. Receives updates via TRADING_PERFORMANCE_SUBSCRIBE.
 ///
 /// Push Events Handled:
-///   TRADING_PERFORMANCE_RESULT (126) → TradingPerformanceListData
+///   TRADING_PERFORMANCE_RESULT → TradingPerformanceListData
+///
+/// Since MTCore 0.7.25589 a drop is either a full snapshot (isSnapshot) or a
+/// delta: <c>metricChanges</c> upserts keys, <c>deletedKeys</c> drops them.
+/// Each entry is keyed by (marketType, symbol, algorithmId) and carries one
+/// metrics tuple per <see cref="TradingPerformanceTimeFrame"/>.
 /// </summary>
 public sealed class TradingPerformanceStore
 {
@@ -34,21 +40,32 @@ public sealed class TradingPerformanceStore
             return;
         }
 
-        // Initial data replaces everything
-        if (data.isInitial)
+        // A snapshot replaces everything; deltas merge.
+        if (data.isSnapshot)
         {
             _entries.Clear();
         }
 
-        if (data.tradingPerformances != null)
+        if (data.metricChanges != null)
         {
-            for (int i = 0; i < data.tradingPerformances.Count; i++)
+            for (int i = 0; i < data.metricChanges.Count; i++)
             {
-                TradingPerformanceData perf = data.tradingPerformances[i];
-                string key = BuildKey(perf.key);
-                TradingPerformanceSnapshot snapshot = CreateSnapshot(perf);
-                _entries[key] = snapshot;
+                TradingPerformanceMetricData metric = data.metricChanges[i];
+                if (metric == null)
+                {
+                    continue;
+                }
+                TradingPerformanceSnapshot snapshot = CreateSnapshot(metric);
+                _entries[BuildKey(metric.key)] = snapshot;
                 OnPerformanceUpdated?.Invoke(snapshot);
+            }
+        }
+
+        if (data.deletedKeys != null)
+        {
+            for (int i = 0; i < data.deletedKeys.Count; i++)
+            {
+                _entries.TryRemove(BuildKey(data.deletedKeys[i]), out _);
             }
         }
 
@@ -74,24 +91,50 @@ public sealed class TradingPerformanceStore
         return $"{key.marketType}:{key.symbol}:{key.algorithmId}";
     }
 
-    private static TradingPerformanceSnapshot CreateSnapshot(TradingPerformanceData perf)
+    private static TradingPerformanceSnapshot CreateSnapshot(TradingPerformanceMetricData metric)
     {
+        var metrics = new Dictionary<TradingPerformanceTimeFrame, TradingPerformanceMetricsSnapshot>();
+        TradingPerformanceMetrics[]? wire = metric.metrics;
+        if (wire != null)
+        {
+            foreach (TradingPerformanceTimeFrame tf in TradingPerformanceTimeFrames.AllValues)
+            {
+                // The wire array is sized by the sender: a core built against a
+                // different timeframe set may send fewer entries than we know.
+                int idx = TradingPerformanceTimeFrames.GetIndex(tf);
+                if (idx < 0 || idx >= wire.Length)
+                {
+                    continue;
+                }
+                TradingPerformanceMetrics m = wire[idx];
+                metrics[tf] = new TradingPerformanceMetricsSnapshot(
+                    m.total, m.priceDelta, m.profitFactor, m.profitTotal, m.lossTotal);
+            }
+        }
+
         return new TradingPerformanceSnapshot
         {
-            MarketType = (MarketType)perf.key.marketType,
-            Symbol = perf.key.symbol ?? "",
-            AlgorithmId = perf.key.algorithmId,
-            StartTime = perf.startTime,
-            Comment = perf.comment ?? "",
-            TotalsCount = perf.totals != null ? perf.totals.Count : 0,
-            PriceDeltasCount = perf.priceDeltas != null ? perf.priceDeltas.Count : 0,
-            ProfitFactorsCount = perf.profitFactors != null ? perf.profitFactors.Count : 0,
-            ProfitTotalsCount = perf.profitTotals != null ? perf.profitTotals.Count : 0,
-            LossTotalsCount = perf.lossTotals != null ? perf.lossTotals.Count : 0,
-            KeyGroup = TradingPerformanceKeyGroup.UNKNOWN,
+            MarketType = (MarketType)metric.key.marketType,
+            Symbol = metric.key.symbol ?? "",
+            AlgorithmId = metric.key.algorithmId,
+            StartTime = metric.startTime,
+            Comment = metric.comment ?? "",
+            Metrics = metrics,
             Timestamp = DateTime.UtcNow
         };
     }
+}
+
+/// <summary>One timeframe's performance metrics (see TradingPerformanceMetrics).</summary>
+public readonly record struct TradingPerformanceMetricsSnapshot(
+    double Total,
+    float PriceDelta,
+    float ProfitFactor,
+    double ProfitTotal,
+    double LossTotal)
+{
+    /// <summary>True when no trade contributed to this timeframe.</summary>
+    public bool IsEmpty => Total == 0d && ProfitTotal == 0d && LossTotal == 0d;
 }
 
 /// <summary>Snapshot of a single trading performance entry for display.</summary>
@@ -102,11 +145,10 @@ public sealed class TradingPerformanceSnapshot
     public long AlgorithmId { get; init; }
     public long StartTime { get; init; }
     public string Comment { get; init; } = "";
-    public int TotalsCount { get; init; }
-    public int PriceDeltasCount { get; init; }
-    public int ProfitFactorsCount { get; init; }
-    public int ProfitTotalsCount { get; init; }
-    public int LossTotalsCount { get; init; }
-    public TradingPerformanceKeyGroup KeyGroup { get; init; }
+
+    /// <summary>Metrics per timeframe, as sent by the core.</summary>
+    public IReadOnlyDictionary<TradingPerformanceTimeFrame, TradingPerformanceMetricsSnapshot> Metrics { get; init; }
+        = new Dictionary<TradingPerformanceTimeFrame, TradingPerformanceMetricsSnapshot>();
+
     public DateTime Timestamp { get; init; }
 }

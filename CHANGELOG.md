@@ -9,6 +9,60 @@ Versions follow [SemVer](https://semver.org).
 
 ## Unreleased
 
+### Vendor: MoonTrader 0.7.25589 — algorithm and trading-performance protocol
+
+MTShared 0.7.25589 replaced the algorithm wire contract. A client built for
+0.7.24637 still connects, reports balances, orders, positions and license, and
+lists **zero algorithms**: the `NetworkMessageType` values shifted and algorithm
+traffic is decoded under the wrong case. `ExpectedCoreBuild` and
+`fetch_vendor_libs.py`'s `VENDOR_VERSION` are bumped to match; every core build
+needs a client rebuilt against its `MTShared.dll`.
+
+The protocol itself, and the shape of the trading-performance feed, are written
+up in [`docs/mtcore-25589-protocol.md`](docs/mtcore-25589-protocol.md).
+
+* **Requests: one type per verb.** `AlgorithmData.actionType` is gone; each verb
+  is now an `AlgorithmRequestData` subclass dispatched by a `RequestType` string
+  (`AlgorithmRunRequestData`, `AlgorithmStopRequestData`, `AlgorithmAdd/Update/
+  RemoveRequestData`, `AlgorithmsRun/StopAllRequestData`, `AlgorithmToggleDebag
+  RequestData`, and the `AlgorithmFolder*` set), and `SendAlgorithmListRequest`
+  no longer exists. Commands now pass a verb (`AlgoActionType`) alongside the
+  algorithm, and `CoreConnection` builds the vendor request; folder operations
+  go through the new `SendAlgorithmGroupRequest`. `SAVE` picks add vs update by
+  id, as the core does.
+* **Events: everything inbound is an event.** `ALGORITHM_LIST_RESULT` is gone;
+  drops arrive on `ALGORITHMS_RESULT` as `AlgorithmListEventData` (snapshot),
+  `Algorithms{Added,Updated,Removed}EventData` or
+  `AlgorithmFolders{Added,Updated,Removed}EventData`. `AlgorithmStore` dispatches
+  on the payload type instead of the message type.
+* **Trading performance rebuilt on the new schema.** `TradingPerformanceData` was
+  replaced by a snapshot/delta list (`isSnapshot`, `metricChanges`,
+  `deletedKeys`) of `TradingPerformanceMetricData`, each carrying real
+  per-timeframe metrics. `perf list` (`mt_perf_list`) now prints
+  total / priceDelta / profitFactor / profit / loss per timeframe instead of the
+  old placeholder list cardinalities. Note the timeframe enum values are
+  millisecond magnitudes — the metrics array is indexed by position via
+  `TradingPerformanceTimeFrames.GetIndex`, not by casting the enum.
+* **`algos start` refuses an unstartable stored name.** The core instantiates a
+  run request from the name it has stored, and its factory switches on exact type
+  names (`"Shots Group"`, `"Averages Group"`, …); anything else falls through to
+  `null` while the request still answers OK. The pre-25589 workaround — sending a
+  signature-derived name with every START — has nowhere to live now that the
+  request carries only an id, so `algos start` and `fleet batchstart` check the
+  stored name first and name the repair (`algos rename`) instead of reporting a
+  start that did not happen.
+* **`algos save` stamps `AlgorithmValidator.VERSION`** (15) instead of a literal
+  9, which downgraded the stored config schema on every save.
+
+Breaking for embedders: `CoreConnection.SendAlgorithmRequest` and
+`TrySendAlgorithmRequestNoWait` take an `AlgoActionType`;
+`SendAlgorithmListRequest` is replaced by `SendAlgorithmGroupRequest`;
+`TradingPerformanceSnapshot` exposes `Metrics` (per timeframe) in place of the
+`*Count` fields and `KeyGroup`. MCP tool names and schemas are unchanged;
+`mt_algos_copy`'s per-algorithm `status` field now reports `RUNNING`/`STOPPED`
+(it used to echo the removed `actionType`).
+
+
 ### MCP server: opt-in parallel request dispatch + shared-daemon mode
 
 The MCP server processed requests strictly one-at-a-time, so a single slow

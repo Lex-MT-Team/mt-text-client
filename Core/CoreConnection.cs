@@ -782,14 +782,17 @@ public sealed class CoreConnection : IDisposable
 
     /// <summary>
     /// Send an algorithm request (START, STOP, SAVE, DELETE, TOGGLE_DEBUG, etc.).
-    /// MTCore responds with AlgorithmUpdateNotificationData on the notification
-    /// channel. See internal vendor wire-pattern reference notes.
+    /// MTCore 0.7.25589 routes each verb to its own AlgorithmRequestData subtype;
+    /// the reply still arrives as AlgorithmUpdateNotificationData on the
+    /// notification channel.
     /// </summary>
-    public NotificationMessageData? SendAlgorithmRequest(AlgorithmData algoData, int timeoutMs = 30_000)
+    public NotificationMessageData? SendAlgorithmRequest(
+        AlgorithmData algoData, AlgoActionType action, int timeoutMs = 30_000)
     {
         if (_udpClient == null) { return null; }
+        AlgorithmRequestData request = BuildAlgorithmRequest(algoData, action);
         return SendAndAwaitNotification<AlgorithmUpdateNotificationData>(
-            send: () => _udpClient.SendAlgorithmRequest(algoData),
+            send: () => _udpClient.SendAlgorithmRequest(request),
             build: n => new NotificationMessageData
             {
                 notificationCode = n.success ? NotificationCode.OK : NotificationCode.ERROR,
@@ -798,12 +801,12 @@ public sealed class CoreConnection : IDisposable
             timeoutMs: timeoutMs);
     }
 
-    public bool TrySendAlgorithmRequestNoWait(AlgorithmData algoData)
+    public bool TrySendAlgorithmRequestNoWait(AlgorithmData algoData, AlgoActionType action)
     {
         if (_udpClient == null) { return false; }
         try
         {
-            _udpClient.SendAlgorithmRequest(algoData);
+            _udpClient.SendAlgorithmRequest(BuildAlgorithmRequest(algoData, action));
             return true;
         }
         catch
@@ -813,20 +816,76 @@ public sealed class CoreConnection : IDisposable
     }
 
     /// <summary>
-    /// Send an algorithm list request (START_ALL, STOP_ALL, SAVE_GROUP, DELETE_GROUP, CLONE_GROUP).
+    /// Send a folder (algorithm group) request: SAVE_GROUP, CLONE_GROUP, DELETE_GROUP.
     /// MTCore responds with AlgorithmListUpdateNotificationData.
     /// </summary>
-    public NotificationMessageData? SendAlgorithmListRequest(AlgorithmListData listData, int timeoutMs = 30_000)
+    public NotificationMessageData? SendAlgorithmGroupRequest(
+        AlgorithmGroupData group, AlgoActionType action, int timeoutMs = 30_000)
     {
         if (_udpClient == null) { return null; }
+        AlgorithmRequestData request = BuildGroupRequest(group, action);
         return SendAndAwaitNotification<AlgorithmListUpdateNotificationData>(
-            send: () => _udpClient.SendAlgorithmListRequest(listData),
+            send: () => _udpClient.SendAlgorithmRequest(request),
             build: n => new NotificationMessageData
             {
                 notificationCode = n.success ? NotificationCode.OK : NotificationCode.ERROR,
                 msgString = n.message ?? string.Empty,
             },
             timeoutMs: timeoutMs);
+    }
+
+    /// <summary>
+    /// Translate an algorithm-level verb into the MTCore 0.7.25589 request subtype.
+    /// START/STOP/DELETE/TOGGLE_DEBUG carry only the id — the core resolves the
+    /// algorithm from its own store, so no payload normalisation is needed.
+    /// SAVE picks Add vs Update by id (id &lt;= 0 means "new algorithm").
+    /// </summary>
+    private AlgorithmRequestData BuildAlgorithmRequest(AlgorithmData algoData, AlgoActionType action)
+    {
+        AlgorithmRequestData request = action switch
+        {
+            AlgoActionType.START => new AlgorithmRunRequestData { algorithmID = algoData.id },
+            AlgoActionType.STOP => new AlgorithmStopRequestData { algorithmID = algoData.id },
+            AlgoActionType.START_ALL => new AlgorithmsRunAllRequestData(),
+            AlgoActionType.STOP_ALL => new AlgorithmsStopAllRequestData(),
+            AlgoActionType.DELETE => new AlgorithmRemoveRequestData { algorithmID = algoData.id },
+            AlgoActionType.TOGGLE_DEBUG => new AlgorithmToggleDebagRequestData { algorithmID = algoData.id },
+            AlgoActionType.SAVE or AlgoActionType.SAVE_START => algoData.id > 0
+                ? new AlgorithmUpdateRequestData
+                {
+                    algorithm = algoData,
+                    runAlgorithm = action == AlgoActionType.SAVE_START,
+                }
+                : new AlgorithmAddRequestData
+                {
+                    algorithm = algoData,
+                    runAlgorithm = action == AlgoActionType.SAVE_START,
+                },
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(action), action, "Not an algorithm-level action"),
+        };
+        request.exchangeType = Profile.Exchange;
+        return request;
+    }
+
+    /// <summary>
+    /// Translate a folder-level verb into the MTCore 0.7.25589 request subtype.
+    /// SAVE_GROUP picks Add vs Update by whether the store already knows the folder.
+    /// </summary>
+    private AlgorithmRequestData BuildGroupRequest(AlgorithmGroupData group, AlgoActionType action)
+    {
+        AlgorithmRequestData request = action switch
+        {
+            AlgoActionType.SAVE_GROUP => AlgoStore.FindGroupById(group.id) != null
+                ? new AlgorithmFolderUpdateRequestData { folder = group }
+                : new AlgorithmFolderAddRequestData { folder = group },
+            AlgoActionType.CLONE_GROUP => new AlgorithmFolderCloneRequestData { folderID = group.id },
+            AlgoActionType.DELETE_GROUP => new AlgorithmFolderRemoveRequestData { folderID = group.id },
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(action), action, "Not a folder-level action"),
+        };
+        request.exchangeType = Profile.Exchange;
+        return request;
     }
 
     /// <summary>

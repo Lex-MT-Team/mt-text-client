@@ -73,56 +73,85 @@ public sealed class AlgorithmStore
 
     /// <summary>
     /// Process incoming algorithm data from subscription callback.
-    /// The callback delivers (NetworkMessageType, NetworkData) where the concrete types are:
-    ///   - ALGORITHM_LIST_RESULT → AlgorithmListData (contains List of AlgorithmData + groups)
-    ///   - ALGORITHM_STATUS_DATA → AlgorithmStatusData
-    ///   - ALGORITHM_SYMBOL_STATUS_DATA → AlgorithmSymbolStatusData
-    ///   - ALGORITHM_CONFIG_UPDATE → AlgorithmData (single update)
+    /// The callback delivers (NetworkMessageType, NetworkData). Since MTCore
+    /// 0.7.25589 the payload — not the message type — carries the verb: every
+    /// algorithm drop arrives as ALGORITHMS_RESULT with an AlgorithmEventData
+    /// subtype, so dispatch is by concrete payload type:
+    ///   - AlgorithmListEventData         → full snapshot (AlgorithmListData)
+    ///   - Algorithms{Added,Updated}EventData / AlgorithmsRemovedEventData
+    ///   - AlgorithmFolders{Added,Updated,Removed}EventData
+    ///   - AlgorithmStatusData / AlgorithmSymbolStatusData (own message types)
     /// </summary>
     public void ProcessData(NetworkMessageType msgType, NetworkData data)
     {
         LastUpdateUtc = DateTime.UtcNow;
-        switch (msgType)
+        switch (data)
         {
-            case NetworkMessageType.ALGORITHM_LIST_RESULT:
-                if (data is AlgorithmListData listData)
+            case AlgorithmListEventData listEvent:
+                if (listEvent.Data != null)
                 {
-                    ProcessAlgorithmList(listData);
+                    ProcessAlgorithmList(listEvent.Data);
                 }
                 break;
 
-            case NetworkMessageType.ALGORITHM_CONFIG_UPDATE:
-                if (data is AlgorithmData algoData)
-                {
-                    _algorithms[algoData.id] = algoData;
-                }
+            case AlgorithmsAddedEventData added:
+                UpsertAlgorithms(added.Algorithms);
                 break;
 
-            case NetworkMessageType.ALGORITHM_STATUS_DATA:
-                if (data is AlgorithmStatusData statusData)
+            case AlgorithmsUpdatedEventData updated:
+                UpsertAlgorithms(updated.Algorithms);
+                break;
+
+            case AlgorithmsRemovedEventData removed:
+                if (removed.Algorithms != null)
                 {
-                    if (_algorithms.TryGetValue(statusData.id, out AlgorithmData? existing))
+                    foreach (AlgorithmData algo in removed.Algorithms)
                     {
-                        // Lock-protected atomic update of both fields so readers
-                        // never observe a torn state (isRunning=new, isProcessing=old).
-                        lock (existing)
-                        {
-                            existing.isRunning    = statusData.isRunning;
-                            existing.isProcessing = statusData.isProcessing;
-                        }
+                        _algorithms.TryRemove(algo.id, out _);
                     }
                 }
                 break;
 
-            case NetworkMessageType.ALGORITHM_SYMBOL_STATUS_DATA:
-                // AlgorithmSymbolStatusData — per-symbol status; store if needed later
+            case AlgorithmFoldersAddedEventData foldersAdded:
+                UpsertGroups(foldersAdded.Folders);
+                break;
+
+            case AlgorithmFoldersUpdatedEventData foldersUpdated:
+                UpsertGroups(foldersUpdated.Folders);
+                break;
+
+            case AlgorithmFoldersRemovedEventData foldersRemoved:
+                if (foldersRemoved.Folders != null)
+                {
+                    foreach (AlgorithmGroupData group in foldersRemoved.Folders)
+                    {
+                        _groups.TryRemove(group.id, out _);
+                    }
+                }
+                break;
+
+            case AlgorithmStatusData statusData:
+                if (_algorithms.TryGetValue(statusData.id, out AlgorithmData? existing))
+                {
+                    // Lock-protected atomic update of both fields so readers
+                    // never observe a torn state (isRunning=new, isProcessing=old).
+                    lock (existing)
+                    {
+                        existing.isRunning    = statusData.isRunning;
+                        existing.isProcessing = statusData.isProcessing;
+                    }
+                }
+                break;
+
+            case AlgorithmSymbolStatusData:
+                // per-symbol status; store if needed later
                 break;
         }
     }
 
     /// <summary>
-    /// Process AlgorithmListData with proper ADD/UPDATE/DELETE semantics.
-    /// Matches the pattern used by MTController's CoreAlgorithmsManager.
+    /// Apply a full algorithm-list snapshot. Config lists carry the core's
+    /// default per-type templates rather than live algos.
     /// </summary>
     private void ProcessAlgorithmList(AlgorithmListData listData)
     {
@@ -143,56 +172,31 @@ public sealed class AlgorithmStore
             return;
         }
 
-        // Process groups
-        if (listData.groups != null)
+        UpsertGroups(listData.groups);
+        UpsertAlgorithms(listData.algorithms);
+    }
+
+    private void UpsertAlgorithms(List<AlgorithmData>? algorithms)
+    {
+        if (algorithms == null)
         {
-            foreach (AlgorithmGroupData group in listData.groups)
-            {
-                switch (group.actionType)
-                {
-                    case AlgorithmData.ActionType.ADD:
-                    case AlgorithmData.ActionType.UPDATE:
-                    case AlgorithmData.ActionType.SAVE_GROUP:
-                        _groups[group.id] = group;
-                        break;
-
-                    case AlgorithmData.ActionType.DELETE:
-                    case AlgorithmData.ActionType.DELETE_GROUP:
-                        _groups.TryRemove(group.id, out _);
-                        break;
-
-                    default:
-                        // INIT or other — just store
-                        _groups[group.id] = group;
-                        break;
-                }
-            }
+            return;
         }
-
-        // Process algorithms
-        if (listData.algorithms != null)
+        foreach (AlgorithmData algo in algorithms)
         {
-            foreach (AlgorithmData algo in listData.algorithms)
-            {
-                switch (algo.actionType)
-                {
-                    case AlgorithmData.ActionType.ADD:
-                    case AlgorithmData.ActionType.UPDATE:
-                    case AlgorithmData.ActionType.SAVE:
-                    case AlgorithmData.ActionType.SAVE_START:
-                        _algorithms[algo.id] = algo;
-                        break;
+            _algorithms[algo.id] = algo;
+        }
+    }
 
-                    case AlgorithmData.ActionType.DELETE:
-                        _algorithms.TryRemove(algo.id, out _);
-                        break;
-
-                    default:
-                        // INIT or other — just store
-                        _algorithms[algo.id] = algo;
-                        break;
-                }
-            }
+    private void UpsertGroups(List<AlgorithmGroupData>? groups)
+    {
+        if (groups == null)
+        {
+            return;
+        }
+        foreach (AlgorithmGroupData group in groups)
+        {
+            _groups[group.id] = group;
         }
     }
 
