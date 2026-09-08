@@ -32,7 +32,9 @@ public sealed class DispatcherSnapshotTests
         File.Exists(path).Should().BeTrue(
             because: $"the snapshot baseline must be committed at {path}");
 
-        string committed = File.ReadAllText(path);
+        // Normalize CRLF: on Windows checkouts core.autocrlf rewrites the
+        // committed LF snapshot to CRLF in the working tree.
+        string committed = File.ReadAllText(path).Replace("\r\n", "\n");
         string rendered = SnapshotGen.Render(ToolRegistry.AllTools());
 
         rendered.Should().Be(committed,

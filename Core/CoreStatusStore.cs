@@ -31,7 +31,7 @@ public sealed class CoreStatusStore
     /// VENDOR_VERSION). A connected core reporting a different build means the
     /// wire layouts can disagree — several structs silently mis-deserialize under
     /// such skew, so callers should treat a mismatch as a hard warning.</summary>
-    public const string ExpectedCoreBuild = "0.7.24554";
+    public const string ExpectedCoreBuild = "0.7.25267";
 
     /// <summary>True when the connected core's reported build matches
     /// <see cref="ExpectedCoreBuild"/>. Defaults true until a build is observed.</summary>

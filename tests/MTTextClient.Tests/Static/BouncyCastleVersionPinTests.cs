@@ -91,7 +91,8 @@ public sealed class BouncyCastleVersionPinTests
         // actually exercised at runtime.
         Assembly? bc = TryLoad();
         bc.Should().NotBeNull();
-        string location = bc!.Location;
+        // Normalize separators so the bin-directory checks below also match Windows paths.
+        string location = bc!.Location.Replace('\\', '/');
         location.Should().NotBeNullOrWhiteSpace(
             because: "an assembly with no location is a dynamic / collectible load — not what we want here");
         (location.Contains(".nuget", StringComparison.OrdinalIgnoreCase) ||

@@ -383,10 +383,20 @@ public sealed class McpFixture : IAsyncLifetime
     /// </summary>
     private static void EnsurePatched()
     {
+        // Only auto-patch on macOS arm64 hosts. Linux x64 / Windows x64 leave it alone.
+        bool isMacArm64 = OperatingSystem.IsMacOS() &&
+            System.Runtime.InteropServices.RuntimeInformation.OSArchitecture
+                == System.Runtime.InteropServices.Architecture.Arm64;
+        if (!isMacArm64) return;
+
         var path = RepoPaths.MTSharedBuilt;
         if (!File.Exists(path)) return;
 
         // Read PE header offset at 0x3C, then Machine field at PE+4.
+        // Open ReadWrite only on the patching host: on Windows a sibling
+        // fixture's spawned MTTextClient.exe holds the DLL loaded, and an
+        // exclusive write handle is denied, which failed every test in the
+        // collection.
         using var fs = new FileStream(path, FileMode.Open, FileAccess.ReadWrite);
         Span<byte> u32 = stackalloc byte[4];
         fs.Position = 0x3C;
@@ -401,12 +411,7 @@ public sealed class McpFixture : IAsyncLifetime
         const ushort AMD64 = 0x8664;
         const ushort ARM64 = 0xAA64;
 
-        // Only auto-patch on macOS arm64 hosts. Linux x64 / Windows x64 leave it alone.
-        bool isMacArm64 = OperatingSystem.IsMacOS() &&
-            System.Runtime.InteropServices.RuntimeInformation.OSArchitecture
-                == System.Runtime.InteropServices.Architecture.Arm64;
-
-        if (machine == AMD64 && isMacArm64)
+        if (machine == AMD64)
         {
             fs.Position = peOff + 4;
             BitConverter.TryWriteBytes(u16, ARM64);
