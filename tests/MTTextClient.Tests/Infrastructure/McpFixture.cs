@@ -138,14 +138,14 @@ public sealed class McpFixture : IAsyncLifetime
 
     private async Task SpawnAsync()
     {
-        EnsurePatched();
-
         var psi = new ProcessStartInfo
         {
             FileName = RepoPaths.McpBinary,
             Arguments = "--mcp",
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
+            StandardOutputEncoding = System.Text.Encoding.UTF8,
+            StandardInputEncoding = System.Text.Encoding.UTF8,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
@@ -376,43 +376,7 @@ public sealed class McpFixture : IAsyncLifetime
         }
     }
 
-    /// <summary>
-    /// Self-heal the macOS arm64 PE patch on the built MTShared.dll so smoke
-    /// tests can spawn the binary even if <c>scripts/patch_mtshared_arm64.py</c>
-    /// hasn't been run since the last <c>dotnet build</c>.
-    /// </summary>
-    private static void EnsurePatched()
-    {
-        var path = RepoPaths.MTSharedBuilt;
-        if (!File.Exists(path)) return;
 
-        // Read PE header offset at 0x3C, then Machine field at PE+4.
-        using var fs = new FileStream(path, FileMode.Open, FileAccess.ReadWrite);
-        Span<byte> u32 = stackalloc byte[4];
-        fs.Position = 0x3C;
-        if (fs.Read(u32) != 4) return;
-        int peOff = BitConverter.ToInt32(u32);
-
-        Span<byte> u16 = stackalloc byte[2];
-        fs.Position = peOff + 4;
-        if (fs.Read(u16) != 2) return;
-        ushort machine = BitConverter.ToUInt16(u16);
-
-        const ushort AMD64 = 0x8664;
-        const ushort ARM64 = 0xAA64;
-
-        // Only auto-patch on macOS arm64 hosts. Linux x64 / Windows x64 leave it alone.
-        bool isMacArm64 = OperatingSystem.IsMacOS() &&
-            System.Runtime.InteropServices.RuntimeInformation.OSArchitecture
-                == System.Runtime.InteropServices.Architecture.Arm64;
-
-        if (machine == AMD64 && isMacArm64)
-        {
-            fs.Position = peOff + 4;
-            BitConverter.TryWriteBytes(u16, ARM64);
-            fs.Write(u16);
-        }
-    }
 }
 
 /// <summary>Wrapper over an MCP <c>tools/call</c> response.</summary>

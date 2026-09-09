@@ -30,7 +30,7 @@ public sealed class ReadmeParityTests
         string path = ResolveReadmePath();
         File.Exists(path).Should().BeTrue(because: "README.md must exist at repo root");
 
-        string readme = File.ReadAllText(path);
+        string readme = File.ReadAllText(path).Replace("\r\n", "\n");
         string rendered = ReadmeGen.Render(ToolRegistry.AllTools());
 
         readme.Should().Contain(rendered,

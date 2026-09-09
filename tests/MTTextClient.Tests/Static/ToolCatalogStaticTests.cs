@@ -33,6 +33,18 @@ public sealed class ToolCatalogStaticTests
     public ToolCatalogStaticTests(McpFixture mcp) => _mcp = mcp;
 
     [Fact]
+    public void ToolsList_PreservesUnicodeDescriptionsAcrossStdio()
+    {
+        foreach (var expected in MTTextClient.Core.ToolRegistry.AllTools())
+        {
+            string name = expected["name"]!.ToString();
+            var actual = _mcp.Tools.Single(t => t.GetProperty("name").GetString() == name);
+            actual.GetProperty("description").GetString().Should()
+                .Be(expected["description"]!.ToString(), $"{name} must preserve its UTF-8 description");
+        }
+    }
+
+    [Fact]
     public void ToolsList_HasAtLeastBaselineCount()
     {
         var baseline = LoadBaseline();

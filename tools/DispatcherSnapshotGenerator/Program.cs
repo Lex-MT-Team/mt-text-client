@@ -45,7 +45,7 @@ public static class Program
                 Console.Error.WriteLine($"[DispatcherSnapshotGenerator] Snapshot missing at {snapshotPath}. Run without --check to create it.");
                 return 1;
             }
-            string committed = File.ReadAllText(snapshotPath);
+            string committed = File.ReadAllText(snapshotPath).Replace("\r\n", "\n");
             if (committed != rendered)
             {
                 Console.Error.WriteLine($"[DispatcherSnapshotGenerator] Snapshot drift detected at {snapshotPath}. Re-run without --check to regenerate.");
@@ -110,7 +110,7 @@ public static class Program
 
         // Pretty-print with a trailing newline so the file plays nicely with
         // editors and git diffs.
-        return JsonConvert.SerializeObject(obj, Formatting.Indented) + "\n";
+        return JsonConvert.SerializeObject(obj, Formatting.Indented).Replace("\r\n", "\n") + "\n";
     }
 
     private static bool IsInternallyDispatched(string toolName) =>
