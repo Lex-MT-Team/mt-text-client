@@ -1,0 +1,42 @@
+<Project>
+  <!-- All four projects resolve the same verified pair, including a cold build.
+       Paths are defined before the files exist; restoration runs before RAR. -->
+  <PropertyGroup>
+    <VendorRoot>$(MSBuildThisFileDirectory)lib/</VendorRoot>
+    <MTCoreVendorRid Condition="'$(MTCoreVendorRid)' == '' and '$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</MTCoreVendorRid>
+    <MTCoreVendorRid Condition="'$(MTCoreVendorRid)' == '' and '$(MTC_VENDOR_RID)' != ''">$(MTC_VENDOR_RID)</MTCoreVendorRid>
+    <_VendorArch Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)' == 'Arm64'">arm64</_VendorArch>
+    <_VendorArch Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)' == 'X64'">x64</_VendorArch>
+    <_VendorOS Condition="$([MSBuild]::IsOSPlatform('OSX'))">osx</_VendorOS>
+    <_VendorOS Condition="$([MSBuild]::IsOSPlatform('Linux'))">linux</_VendorOS>
+    <_VendorOS Condition="$([MSBuild]::IsOSPlatform('Windows'))">win</_VendorOS>
+    <MTCoreVendorRid Condition="'$(MTCoreVendorRid)' == ''">$(_VendorOS)-$(_VendorArch)</MTCoreVendorRid>
+    <VendorDir>$(VendorRoot)$(MTCoreVendorRid)/</VendorDir>
+    <VendorPython Condition="'$(VendorPython)' == '' and $([MSBuild]::IsOSPlatform('Windows'))">python</VendorPython>
+    <VendorPython Condition="'$(VendorPython)' == ''">python3</VendorPython>
+    <_VendorForce Condition="'$(FetchVendorLibs)' == 'true'">--force</_VendorForce>
+    <_VendorOffline Condition="'$(VendorOffline)' == 'true'">--offline</_VendorOffline>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Remove="$(VendorRoot)**/*.dll" />
+    <Reference Include="MTShared">
+      <HintPath>$(VendorDir)MTShared.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="LiteNetLib">
+      <HintPath>$(VendorDir)LiteNetLib.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="RestorePinnedVendorLibs" BeforeTargets="ResolveAssemblyReferences"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <Error Condition="'$(FetchVendorLibs)' == 'true' and '$(VendorOffline)' == 'true'"
+           Text="FetchVendorLibs=true requires a download; do not combine it with VendorOffline=true." />
+    <Exec Command="&quot;$(VendorPython)&quot; &quot;$(MSBuildThisFileDirectory)scripts/fetch_vendor_libs.py&quot; --rid &quot;$(MTCoreVendorRid)&quot; $(_VendorForce) $(_VendorOffline)"
+          WorkingDirectory="$(MSBuildThisFileDirectory)" />
+    <Error Condition="!Exists('$(VendorDir)MTShared.dll') or !Exists('$(VendorDir)LiteNetLib.dll')"
+           Text="Vendor restore did not produce both assemblies for $(MTCoreVendorRid)." />
+  </Target>
+</Project>

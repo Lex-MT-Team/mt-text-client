@@ -213,7 +213,7 @@ public sealed class McpServer
     {
         // Redirect Console.Out -> stderr so LiteNetLib log noise
         // does not corrupt the JSON-RPC stdio channel.
-        _stdoutWriter = Console.Out;
+        _stdoutWriter = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false));
         Console.SetOut(Console.Error);
         LogStderr($"MCP Server {SERVER_VERSION} starting on stdio...");
 
@@ -2750,7 +2750,7 @@ public sealed class McpServer
                 ["symbol"] = algo.symbol,
                 ["market"] = algo.marketType.ToString(),
                 ["duplicate_on_destination"] = isDup,
-                ["status"] = algo.actionType.ToString(),
+                ["status"] = algo.isRunning ? "RUNNING" : "STOPPED",
             });
         }
 
@@ -3372,15 +3372,15 @@ public sealed class McpServer
                 string groupName = groupToken["name"]?.Value<string>() ?? "";
                 int groupType = groupToken["groupType"]?.Value<int>() ?? 0;
 
-                var groupRequest = new AlgorithmData
+                var groupRequest = new AlgorithmGroupData
                 {
-                    groupID = groupId,
+                    id = groupId,
                     name = groupName,
                     groupType = (AlgorithmGroupType)groupType,
-                    actionType = AlgorithmData.ActionType.SAVE_GROUP
                 };
 
-                NotificationMessageData? notification = conn.SendAlgorithmRequest(groupRequest);
+                NotificationMessageData? notification =
+                    conn.SendAlgorithmGroupRequest(groupRequest, AlgoActionType.ADD_GROUP);
                 if (notification == null)
                     results.Add($"  Group '{groupName}': sent (timed out)");
                 else if (notification.IsOk)
@@ -3476,13 +3476,13 @@ public sealed class McpServer
                 isClone = isClone,
                 isRunning = false,
                 isProcessing = false,
-                actionType = AlgorithmData.ActionType.SAVE,
                 argsJson = argsObj.ToString(Formatting.None),
                 marketType = marketType,
                 symbol = algoSymbol
             };
 
-            NotificationMessageData? notification = conn.SendAlgorithmRequest(algoData);
+            NotificationMessageData? notification =
+                conn.SendAlgorithmRequest(algoData, AlgoActionType.SAVE);
             if (notification == null)
             {
                 results.Add($"  {algoName} ({signature}): sent (timed out)");

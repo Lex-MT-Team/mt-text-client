@@ -160,18 +160,14 @@ tools without code changes.
 
 ---
 
-## 6. Apple Silicon notes
+## 6. Vendor assembly checks
 
-The MSBuild post-build target `PatchMTSharedArm64` re-applies the ARM64 PE
-patch to `lib/MTShared.dll` on every macOS build via
-`scripts/patch_mtshared_arm64.py` (idempotent; no-op on Linux/Windows). The
-repo ships the DLL already patched; the post-build run is a safety net for
-vendor refreshes. `McpFixture.EnsurePatched()` is a runtime safety guard
-and is a no-op on every well-formed build.
-
-If `python3` is missing on a developer machine, the post-build target
-emits a warning instead of failing
-(`ContinueOnError="WarnAndContinue"`).
+Every project restores the same hash-pinned vendor pair before reference
+resolution. `VendorBuildTests` checks all four project outputs against the
+host RID's pin and runs the Python fixture suite for cold extraction, offline
+reuse, corrupt-cache repair, and concurrent restoration. Tests do not rewrite
+the DLLs they load. Python is required; restoration failures stop the build.
+See [`lib/README.md`](../lib/README.md) for target selection and cache behavior.
 
 ---
 
@@ -180,9 +176,8 @@ emits a warning instead of failing
 | Path                                                    | Found by                                                    | Used for                                                  |
 |---------------------------------------------------------|-------------------------------------------------------------|-----------------------------------------------------------|
 | `<repo>/MTTextClient.csproj`                            | `RepoPaths.Root` walks up from `AppContext.BaseDirectory`   | locating the repo root                                    |
-| `<repo>/bin/Release/net8.0/MTTextClient`                | `RepoPaths.McpBinary`                                       | `McpFixture` subprocess spawn                             |
-| `<repo>/lib/MTShared.dll`                               | `RepoPaths.MTSharedSource`                                  | source-of-truth copy (ships ARM64-patched)                |
-| `<repo>/bin/Release/net8.0/MTShared.dll`                | `RepoPaths.MTSharedBuilt`                                   | runtime safety-net patch target                           |
+| `<repo>/bin/Release/net8.0/MTTextClient[.exe]`                | `RepoPaths.McpBinary`                                       | `McpFixture` subprocess spawn                             |
+| `<repo>/bin/Release/net8.0/MTShared.dll`                | `RepoPaths.MTSharedBuilt`                                   | verified application assembly                           |
 | `<test-project>/_expected/tools.minimum.json`           | `RepoPaths.ToolsMinimumFixture`                             | locked tool baseline                                      |
 | `<test-project>/_expected/commandlines.snapshot.json`   | loaded directly by `DispatcherSnapshotTests`                | per-tool CLI-string snapshot                              |
-| `<repo>/scripts/patch_mtshared_arm64.py`                | invoked by `MTTextClient.csproj` post-build target on macOS | ARM64 PE Machine-field flip                               |
+| `<repo>/scripts/patch_mtshared_arm64.py`                | called on staging files by `fetch_vendor_libs.py` | explicit PE Machine normalization before hash check                               |

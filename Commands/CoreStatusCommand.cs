@@ -327,7 +327,8 @@ public sealed class CoreStatusCommand : ICommand
         }
         else
         {
-            report += $"  CPU: {status.CoreCpuPercent}% | " +
+            report += $"  Core build: {license?.BuildVersion ?? "?"} | " +
+                      $"CPU: {status.CoreCpuPercent}% | " +
                       $"RAM: {status.AvgMemoryMB} MB ({status.MemoryUsagePercent}%, {status.FreeMemoryMB} MB free) | " +
                       $"Exchange: {status.AvgExchangeLatencyMs}ms | " +
                       $"Peer: {status.AvgPeerLatencyMs}ms";

@@ -21,8 +21,8 @@ namespace MTTextClient.Commands;
 /// import add-numeric <id> <delta>      — add delta to all numeric params of an algo (--confirm)
 ///
 /// FIX HISTORY:
-///   - Group creation on import via SAVE_GROUP action.
-///   - Group ID remapping — Core reassigns IDs on SAVE_GROUP, so algo groupIDs
+///   - Group creation on import via ADD_GROUP action.
+///   - Group ID remapping — Core reassigns IDs on ADD_GROUP, so algo groupIDs
 ///     must be remapped to the new server-assigned IDs before SAVE.
 /// </summary>
 public sealed class ImportCommand : ICommand
@@ -198,7 +198,7 @@ public sealed class ImportCommand : ICommand
 
         // Create groups FIRST, then remap algo groupIDs.
         // Core reassigns group IDs via GetNextID() in AddFolder(), so we must:
-        //   1. Send SAVE_GROUP with old ID
+        //   1. Send ADD_GROUP with old ID
         //   2. Wait for Core to broadcast new group data via AlgorithmListData
         //   3. Look up the new group by name in AlgoStore to find the server-assigned ID
         //   4. Remap all algo groupIDs from old → new before SAVE
@@ -208,16 +208,16 @@ public sealed class ImportCommand : ICommand
         {
             foreach (V2FormatParser.GroupInfo group in groups)
             {
-                // Send SAVE_GROUP request to create the group
-                var groupRequest = new AlgorithmData
+                // Create the folder (AlgorithmFolderAddRequestData under the hood)
+                var groupRequest = new AlgorithmGroupData
                 {
-                    groupID = group.Id,
+                    id = group.Id,
                     name = group.Name,
                     groupType = (AlgorithmGroupType)group.GroupType,
-                    actionType = AlgorithmData.ActionType.SAVE_GROUP
                 };
 
-                NotificationMessageData? groupNotification = conn.SendAlgorithmRequest(groupRequest);
+                NotificationMessageData? groupNotification =
+                    conn.SendAlgorithmGroupRequest(groupRequest, AlgoActionType.ADD_GROUP);
 
                 if (groupNotification == null)
                 {
@@ -270,8 +270,6 @@ public sealed class ImportCommand : ICommand
         int queuedCount = 0;
         foreach (AlgorithmData algo in algorithms)
         {
-            algo.actionType = AlgorithmData.ActionType.SAVE;
-
             // Remap groupID if we have a mapping.
             // (No > 0 guard — TryGetValue is itself the filter; groupID=0 is a legal map key.)
             if (groupIdMap.TryGetValue(algo.groupID, out long newGroupId))
@@ -279,7 +277,7 @@ public sealed class ImportCommand : ICommand
                 algo.groupID = newGroupId;
             }
 
-            if (conn.TrySendAlgorithmRequestNoWait(algo))
+            if (conn.TrySendAlgorithmRequestNoWait(algo, AlgoActionType.SAVE))
             {
                 queuedCount++;
                 results.Add($"  {algo.name} ({algo.signature}): queued");
@@ -503,8 +501,7 @@ public sealed class ImportCommand : ICommand
         }
 
         // Save to Core
-        var request = new AlgorithmData(algo) { actionType = AlgorithmData.ActionType.SAVE };
-        NotificationMessageData? notification = conn.SendAlgorithmRequest(request);
+        NotificationMessageData? notification = conn.SendAlgorithmRequest(algo, AlgoActionType.SAVE);
 
         if (notification == null)
         {

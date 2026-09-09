@@ -9,6 +9,31 @@ Versions follow [SemVer](https://semver.org).
 
 ## Unreleased
 
+### Pinned MoonTrader 0.7.25589 restore and protocol update
+
+A clean build now downloads the correct public MoonTrader assemblies for the
+selected OS and architecture. Application, test, and generator projects all
+use the same SHA-256-verified pair; old top-level bundled DLLs are removed.
+Verified files work offline, and a verified archive repairs a missing or corrupt
+DLL. Windows x64 joins the supported restore targets and PR-gate matrix.
+Automatic restore stays on the committed version pin, so a CDN release cannot
+silently change the protocol during an ordinary build.
+
+The client targets MTCore 0.7.25589's dedicated algorithm and folder requests
+and incremental notifications. Full algorithm snapshots now remove stale live
+algorithms and folders while retaining configuration templates. Performance
+responses expose the new per-timeframe totals, price deltas, profit factors,
+and profit/loss totals in place of the old single summary. CLI and MCP
+algorithm operations remain available through the existing command layer.
+Single-folder requests now consume the core's actual reply type, and imports
+always create folders even when a source ID collides with a destination ID.
+Healthy core reports now display the core build alongside system metrics;
+build-version mismatches continue to produce a warning.
+For C# embedders, algorithm send methods now take `AlgoActionType`, folder
+requests use `SendAlgorithmGroupRequest`, and `TradingPerformanceSnapshot.Metrics`
+replaces the old count fields and `KeyGroup`. `mt_algos_copy` reports
+`RUNNING`/`STOPPED` per algorithm. See `docs/mtcore-25589-protocol.md` for details.
+
 ### MCP server: opt-in parallel request dispatch + shared-daemon mode
 
 The MCP server processed requests strictly one-at-a-time, so a single slow

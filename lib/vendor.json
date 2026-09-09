@@ -1,0 +1,86 @@
+{
+  "version": "725589",
+  "core_build": "0.7.25589",
+  "platforms": {
+    "osx-arm64": {
+      "url": "https://cdn3.moontrader.com/beta/macosx-x86_64/MoonTrader-version_725589.tar.xz",
+      "sha256": "ca1e18dbd2252ad5ab77eb2dc30c97406cfc71cfb8f8784ef6eb143a65c27103",
+      "format": "tar.xz",
+      "machine": "arm64",
+      "files": {
+        "MTShared.dll": {
+          "path": "MoonTrader.app/Contents/Resources/Data/Managed/MTShared.dll",
+          "sha256": "7dea507918c3004531d99274861e3daff5c78183f223a67a1892d9b3bc54632e"
+        },
+        "LiteNetLib.dll": {
+          "path": "lib/LiteNetLib.dll",
+          "sha256": "3f70423511b4671f2db809248008c63ae77064b9014a52c6d45906726b893851"
+        }
+      }
+    },
+    "osx-x64": {
+      "url": "https://cdn3.moontrader.com/beta/macosx-x86_64/MoonTrader-version_725589.tar.xz",
+      "sha256": "ca1e18dbd2252ad5ab77eb2dc30c97406cfc71cfb8f8784ef6eb143a65c27103",
+      "format": "tar.xz",
+      "machine": "x64",
+      "files": {
+        "MTShared.dll": {
+          "path": "MoonTrader.app/Contents/Resources/Data/Managed/MTShared.dll",
+          "sha256": "a737d74006a52c328642dc6f9497f170ff15baf70afceb3d3add6b610441d29a"
+        },
+        "LiteNetLib.dll": {
+          "path": "lib/LiteNetLib.dll",
+          "sha256": "3f70423511b4671f2db809248008c63ae77064b9014a52c6d45906726b893851"
+        }
+      }
+    },
+    "linux-x64": {
+      "url": "https://cdn3.moontrader.com/beta/linux-x86_64/MTCore-version_725589.tar.xz",
+      "sha256": "e68117a12bed81c3c94c216e635443fd1318e61800fdd949781e654eb54c08fe",
+      "format": "tar.xz",
+      "machine": "x64",
+      "files": {
+        "MTShared.dll": {
+          "path": "BotClient/lib/MTShared.dll",
+          "sha256": "ccb1308def0b9d9afe2afbb8e727e3e73f5c4cc185e1f05008f1fa910a50032b"
+        },
+        "LiteNetLib.dll": {
+          "path": "lib/LiteNetLib.dll",
+          "sha256": "3f70423511b4671f2db809248008c63ae77064b9014a52c6d45906726b893851"
+        }
+      }
+    },
+    "linux-arm64": {
+      "url": "https://cdn3.moontrader.com/beta/linux-arm64/MTCore-version_725589.tar.xz",
+      "sha256": "734d7fac318e2bd34ce1a77f48383ace12864df31da5010ce4c90c9ba948ff2b",
+      "format": "tar.xz",
+      "machine": "arm64",
+      "files": {
+        "MTShared.dll": {
+          "path": "BotClient/lib/MTShared.dll",
+          "sha256": "96e669036639ce23429e6fb2e3a1d71226745df4fcb1f21b8cbb05742e05c328"
+        },
+        "LiteNetLib.dll": {
+          "path": "lib/LiteNetLib.dll",
+          "sha256": "3f70423511b4671f2db809248008c63ae77064b9014a52c6d45906726b893851"
+        }
+      }
+    },
+    "win-x64": {
+      "url": "https://cdn3.moontrader.com/beta/windows-x86_64/MTCore-version_725589.exe",
+      "sha256": "2dd8256930eb5fac9e8bb348073f9c41178922bacf5ace8f77aa5fd3d9c1c960",
+      "format": "7z-sfx",
+      "machine": "x64",
+      "files": {
+        "MTShared.dll": {
+          "path": "BotClient/lib/MTShared.dll",
+          "sha256": "9eb6f0d74d9efcda6992675a3fb79e195a83eab8df91fb2ddf48721f8485a886"
+        },
+        "LiteNetLib.dll": {
+          "path": "lib/LiteNetLib.dll",
+          "sha256": "3f70423511b4671f2db809248008c63ae77064b9014a52c6d45906726b893851"
+        }
+      }
+    }
+  }
+}

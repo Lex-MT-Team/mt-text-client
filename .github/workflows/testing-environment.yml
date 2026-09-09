@@ -72,8 +72,7 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Setup Python 3 (for the macOS PE patch script)
-        if: runner.os == 'macOS'
+      - name: Setup Python 3 (vendor restore)
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
@@ -107,8 +106,6 @@ jobs:
         run: dotnet restore MTTextClient.sln
 
       - name: Build (Release)
-        # On macOS the post-build PatchMTSharedArm64 target re-applies the
-        # PE Machine-field flip; on Linux the condition is false.
         run: dotnet build MTTextClient.sln -c Release --no-restore
 
       - name: Run Smoke

@@ -5,17 +5,7 @@ name: CI (PR-gate)
 # .github/workflows/testing-environment.yml (manual / scheduled, separate
 # self-hosted runner).
 #
-# Runner matrix — Apple Silicon build hygiene:
-#   * ubuntu-latest  — x64 Linux. MTShared.dll runs unmodified (vendor AMD64
-#                       Machine field matches the host arch). The
-#                       Apple-Silicon PE patch target is a no-op here
-#                       (Condition="$([MSBuild]::IsOSPlatform('OSX'))" is false).
-#   * macos-latest   — Apple Silicon (M-series) arm64. The MSBuild
-#                       post-build target PatchMTSharedArm64 (in
-#                       MTTextClient.csproj) re-applies the ARM64 PE patch
-#                       via scripts/patch_mtshared_arm64.py. The repo
-#                       ships lib/MTShared.dll already patched, so the
-#                       script is an idempotent safety net.
+# The same pinned vendor restore runs on Linux x64, macOS arm64 and Windows x64.
 
 on:
   pull_request:
@@ -29,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -40,8 +30,7 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Setup Python 3 (for PE patch script on macOS)
-        if: matrix.os == 'macos-latest'
+      - name: Setup Python 3 (vendor restore and offline archive tests)
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
@@ -50,10 +39,10 @@ jobs:
         run: dotnet restore MTTextClient.sln
 
       - name: Build (Release)
-        # On macOS the post-build PatchMTSharedArm64 target re-runs the
-        # PE Machine-field flip; on Linux the Condition is false and the
-        # target is a no-op.
         run: dotnet build MTTextClient.sln -c Release --no-restore
+
+      - name: Verify build with offline vendor cache
+        run: dotnet build MTTextClient.sln -c Release --no-restore -p:VendorOffline=true
 
       - name: Run Static + Unit tests
         run: >

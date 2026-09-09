@@ -68,12 +68,24 @@ internal static class AlgoTypeNames
         ["MS"] = "Markets Saver",
     };
 
+    private static readonly HashSet<string> CoreTypeNames =
+        new(SignatureToName.Values, StringComparer.Ordinal);
+
     /// <summary>
     /// Resolves the Core-internal algorithm type name from a signature code.
     /// Returns null if the signature is unknown.
     /// </summary>
     public static string? Resolve(string? signature)
         => signature != null && SignatureToName.TryGetValue(signature, out string? name) ? name : null;
+
+    /// <summary>
+    /// True when <paramref name="name"/> is one of the type names MTCore's
+    /// algorithm factory switches on. A stored name that fails this check
+    /// cannot be instantiated: the factory falls through and returns null
+    /// without raising an error.
+    /// </summary>
+    public static bool IsCoreTypeName(string? name)
+        => name != null && CoreTypeNames.Contains(name);
 }
 
 public sealed class AlgosCommand : ICommand
@@ -128,12 +140,12 @@ public sealed class AlgosCommand : ICommand
             "list-all" or "ls-all" => ListAllAlgos(),
             "search" => SearchAlgos(subArgs, targetProfile),
             "get" => GetAlgo(subArgs, targetProfile),
-            "start" => AlgoAction(subArgs, AlgorithmData.ActionType.START, targetProfile),
-            "stop" => AlgoAction(subArgs, AlgorithmData.ActionType.STOP, targetProfile),
-            "start-all" => AlgoAction(Array.Empty<string>(), AlgorithmData.ActionType.START_ALL, targetProfile),
-            "stop-all" => AlgoAction(Array.Empty<string>(), AlgorithmData.ActionType.STOP_ALL, targetProfile),
-            "save" => SaveAlgo(subArgs, AlgorithmData.ActionType.SAVE, targetProfile),
-            "save-start" => SaveAlgo(subArgs, AlgorithmData.ActionType.SAVE_START, targetProfile),
+            "start" => AlgoAction(subArgs, AlgoActionType.START, targetProfile),
+            "stop" => AlgoAction(subArgs, AlgoActionType.STOP, targetProfile),
+            "start-all" => AlgoAction(Array.Empty<string>(), AlgoActionType.START_ALL, targetProfile),
+            "stop-all" => AlgoAction(Array.Empty<string>(), AlgoActionType.STOP_ALL, targetProfile),
+            "save" => SaveAlgo(subArgs, AlgoActionType.SAVE, targetProfile),
+            "save-start" => SaveAlgo(subArgs, AlgoActionType.SAVE_START, targetProfile),
             "delete" => DeleteAlgo(subArgs, targetProfile, confirmFlag),
             "toggle-debug" => ToggleDebug(subArgs, targetProfile),
             "rename" => RenameAlgo(subArgs, targetProfile),
@@ -465,7 +477,7 @@ public sealed class AlgosCommand : ICommand
 
     #region Start / Stop
 
-    private CommandResult AlgoAction(string[] args, AlgorithmData.ActionType actionType, string? targetProfile)
+    private CommandResult AlgoAction(string[] args, AlgoActionType actionType, string? targetProfile)
     {
         CoreConnection? conn = ResolveConnection(targetProfile, out CommandResult? error);
         if (conn == null)
@@ -479,7 +491,7 @@ public sealed class AlgosCommand : ICommand
         }
 
         // Individual start/stop
-        if (actionType == AlgorithmData.ActionType.START || actionType == AlgorithmData.ActionType.STOP)
+        if (actionType == AlgoActionType.START || actionType == AlgoActionType.STOP)
         {
             if (args.Length < 1 || !long.TryParse(args[0], out long id))
             {
@@ -492,35 +504,30 @@ public sealed class AlgosCommand : ICommand
                 return CommandResult.Fail($"[{conn.Name}] Algorithm {id} not found.");
             }
 
-            // Build the START/STOP request shape
-            // produces the START/STOP request payload by round-tripping the cached
-            // AlgorithmData through the wire serializer: new() + Deserialize(Serialize()).
-            // The copy constructor leaves typed sub-structs in whatever state the cached
-            // object held them (e.g. null List<T> on template-derived algos), which trips
-            // the START handler with `Value cannot be null. (Parameter 'obj')`. The
-            // Deserialize path default-inits collection fields on the wire, matching the
-            // normal-form the server expects.
-            var request = new AlgorithmData();
-            ((NetworkData)request).Deserialize(((NetworkData)algo).Serialize());
-            request.actionType = actionType;
-
-            // BUG FIX: Core uses AlgorithmData.name in a switch to instantiate the correct
-            // algorithm class (e.g. "Shot", "Shots Group"). After rename, name may be a
-            // user display name which doesn't match any case → algo silently fails to start.
-            // Always resolve the proper type name from the signature for START operations.
-            if (actionType == AlgorithmData.ActionType.START)
+            // Since MTCore 0.7.25589 START/STOP carry only the algorithm id
+            // (AlgorithmRun/StopRequestData) — the core resolves the algorithm from
+            // its own store, so the old payload normalisation (wire round-trip plus
+            // signature-derived type name) has no place to go and is no longer needed.
+            //
+            // The flip side: the core instantiates from the name it has stored, and
+            // its factory switches on exact type names ("Shots Group", "Averages", …).
+            // A stored name that is a display label instead falls through the switch
+            // and the core returns success while starting nothing. Refuse up front
+            // rather than report a start that did not happen.
+            if (actionType == AlgoActionType.START && !AlgoTypeNames.IsCoreTypeName(algo.name))
             {
-                string? typeName = AlgoTypeNames.Resolve(algo.signature);
-                if (typeName != null)
-                {
-                    request.name = typeName;
-                }
-                // Match canonical client behaviour: mark the algo as in-progress
-                // before issuing START so the server sees the intended state.
-                request.isProcessing = true;
+                string? expected = AlgoTypeNames.Resolve(algo.signature);
+                string label = string.IsNullOrEmpty(algo.description) ? algo.name : algo.description;
+                return CommandResult.Fail(
+                    $"[{conn.Name}] Algorithm {id} ({label}): cannot START — the core has this algorithm " +
+                    $"stored under the type name '{algo.name}', which its algorithm factory does not know" +
+                    (expected != null ? $" (signature {algo.signature} needs '{expected}')" : "") +
+                    ". MTCore instantiates from its own stored name, so the request would report success " +
+                    "and start nothing. Repair the stored name first — `algos rename " + id +
+                    " <display name>` restores it and keeps the label in description.");
             }
 
-            NotificationMessageData? notification = conn.SendAlgorithmRequest(request);
+            NotificationMessageData? notification = conn.SendAlgorithmRequest(algo, actionType);
 
             if (notification == null)
             {
@@ -534,10 +541,9 @@ public sealed class AlgosCommand : ICommand
         }
         else
         {
-            // START_ALL / STOP_ALL — send via AlgorithmData (type 111), not AlgorithmListData (type 112).
-            // Core handles START_ALL/STOP_ALL in the AlgorithmRequest handler, not AlgorithmListRequest.
-            var request = new AlgorithmData { actionType = actionType };
-            NotificationMessageData? notification = conn.SendAlgorithmRequest(request);
+            // START_ALL / STOP_ALL — AlgorithmsRun/StopAllRequestData, no payload.
+            NotificationMessageData? notification =
+                conn.SendAlgorithmRequest(new AlgorithmData(), actionType);
 
             if (notification == null)
             {
@@ -555,7 +561,7 @@ public sealed class AlgosCommand : ICommand
 
     #region Save / Save-Start
 
-    private CommandResult SaveAlgo(string[] args, AlgorithmData.ActionType saveType, string? targetProfile)
+    private CommandResult SaveAlgo(string[] args, AlgoActionType saveType, string? targetProfile)
     {
         CoreConnection? conn = ResolveConnection(targetProfile, out CommandResult? error);
         if (conn == null)
@@ -565,7 +571,7 @@ public sealed class AlgosCommand : ICommand
 
         if (args.Length < 1 || !long.TryParse(args[0], out long id))
         {
-            return CommandResult.Fail($"Usage: algos {(saveType == AlgorithmData.ActionType.SAVE_START ? "save-start" : "save")} <id>");
+            return CommandResult.Fail($"Usage: algos {(saveType == AlgoActionType.SAVE_START ? "save-start" : "save")} <id>");
         }
 
         AlgorithmData? algo = conn.AlgoStore.FindById(id);
@@ -574,16 +580,19 @@ public sealed class AlgosCommand : ICommand
             return CommandResult.Fail($"[{conn.Name}] Algorithm {id} not found.");
         }
 
-        var request = new AlgorithmData(algo) { actionType = saveType };
+        var request = new AlgorithmData(algo);
 
-        // Match canonical client behaviour: bump the schema version on every
-        // save so the server marks the persisted record as current. Without
-        // this, older-version records can be silently skipped on reload.
-        request.version = 9;
+        // Match canonical client behaviour: stamp the current config-schema
+        // version on every save so the server marks the persisted record as
+        // current. Without this, older-version records can be silently skipped
+        // on reload. Read it from the vendor validator rather than hardcoding:
+        // a literal that falls behind MTShared downgrades the stored config and
+        // makes the core re-run its legacy parameter migrations on it.
+        request.version = MTShared.Utils.AlgorithmValidator.VERSION;
 
         // BUG FIX: Ensure proper algorithm type name for SAVE_START.
         // Core's SaveAlgorithm uses config.name to start the algo after saving.
-        if (saveType == AlgorithmData.ActionType.SAVE_START)
+        if (saveType == AlgoActionType.SAVE_START)
         {
             string? typeName = AlgoTypeNames.Resolve(algo.signature);
             if (typeName != null)
@@ -594,9 +603,9 @@ public sealed class AlgosCommand : ICommand
             request.isProcessing = true;
         }
 
-        NotificationMessageData? notification = conn.SendAlgorithmRequest(request);
+        NotificationMessageData? notification = conn.SendAlgorithmRequest(request, saveType);
 
-        string? actionName = saveType == AlgorithmData.ActionType.SAVE_START ? "SAVE+START" : "SAVE";
+        string? actionName = saveType == AlgoActionType.SAVE_START ? "SAVE+START" : "SAVE";
 
         if (notification == null)
         {
@@ -649,8 +658,7 @@ public sealed class AlgosCommand : ICommand
                 $"  algos stop {id}");
         }
 
-        var request = new AlgorithmData(algo) { actionType = AlgorithmData.ActionType.DELETE };
-        NotificationMessageData? notification = conn.SendAlgorithmRequest(request);
+        NotificationMessageData? notification = conn.SendAlgorithmRequest(algo, AlgoActionType.DELETE);
 
         if (notification == null)
         {
@@ -686,8 +694,7 @@ public sealed class AlgosCommand : ICommand
             return CommandResult.Fail($"[{conn.Name}] Algorithm {id} not found.");
         }
 
-        var request = new AlgorithmData(algo) { actionType = AlgorithmData.ActionType.TOGGLE_DEBUG };
-        NotificationMessageData? notification = conn.SendAlgorithmRequest(request);
+        NotificationMessageData? notification = conn.SendAlgorithmRequest(algo, AlgoActionType.TOGGLE_DEBUG);
 
         if (notification == null)
         {
@@ -733,7 +740,6 @@ public sealed class AlgosCommand : ICommand
         var request = new AlgorithmData(algo)
         {
             description = newName,
-            actionType = AlgorithmData.ActionType.SAVE
         };
 
         // Ensure the type name is correct (in case it was previously corrupted by rename)
@@ -743,7 +749,7 @@ public sealed class AlgosCommand : ICommand
             request.name = typeName;
         }
 
-        NotificationMessageData? notification = conn.SendAlgorithmRequest(request);
+        NotificationMessageData? notification = conn.SendAlgorithmRequest(request, AlgoActionType.SAVE);
 
         if (notification == null)
         {
@@ -954,18 +960,8 @@ public sealed class AlgosCommand : ICommand
             return CommandResult.Fail($"[{conn.Name}] Group {groupId} not found.");
         }
 
-        var cloneGroup = new AlgorithmGroupData(group)
-        {
-            actionType = AlgorithmData.ActionType.CLONE_GROUP
-        };
-
-        var listData = new AlgorithmListData
-        {
-            actionType = AlgorithmData.ActionType.CLONE_GROUP
-        };
-        listData.groups.Add(cloneGroup);
-
-        NotificationMessageData? notification = conn.SendAlgorithmListRequest(listData);
+        NotificationMessageData? notification =
+            conn.SendAlgorithmGroupRequest(group, AlgoActionType.CLONE_GROUP);
 
         if (notification == null)
         {
@@ -979,12 +975,9 @@ public sealed class AlgosCommand : ICommand
     }
 
     /// <summary>
-    /// DELETE_GROUP must use AlgorithmData (single request), NOT AlgorithmListData.
-    /// Core's CoreMessagesProcessor routes:
-    ///   - AlgorithmRequest (type 111) → handles DELETE_GROUP at line 1023
-    ///   - AlgorithmListRequest (type 112) → does NOT handle DELETE_GROUP (no case for it)
-    /// Previously we sent via SendAlgorithmListRequestAsync which hit AlgorithmListRequest,
-    /// where DELETE_GROUP fell through to default (no-op) returning success without deleting.
+    /// Delete a folder (algorithm group) and everything in it. Since MTCore
+    /// 0.7.25589 this is AlgorithmFolderRemoveRequestData over ALGORITHMS_REQUEST;
+    /// the old AlgorithmData-vs-AlgorithmListData routing split is gone.
     /// </summary>
     private CommandResult DeleteGroup(string[] args, string? targetProfile, bool confirmed)
     {
@@ -1026,16 +1019,10 @@ public sealed class AlgosCommand : ICommand
                 $"  algos delete-group {groupId} --confirm");
         }
 
-        // Send as AlgorithmData via AlgorithmRequest handler.
-        // Core's AlgorithmRequest handler routes DELETE_GROUP to AlgorithmManager.DeleteGroup(AlgorithmData),
-        // which accesses requestData.groupID to find and remove the folder.
-        var request = new AlgorithmData
-        {
-            groupID = groupId,
-            actionType = AlgorithmData.ActionType.DELETE_GROUP
-        };
-
-        NotificationMessageData? notification = conn.SendAlgorithmRequest(request);
+        // AlgorithmFolderRemoveRequestData carries the folder id; the core
+        // removes the folder and everything in it.
+        NotificationMessageData? notification =
+            conn.SendAlgorithmGroupRequest(group, AlgoActionType.DELETE_GROUP);
 
         if (notification == null)
         {
@@ -1239,13 +1226,12 @@ public sealed class AlgosCommand : ICommand
         var newAlgo = new AlgorithmData(algo)
         {
             id = -1,  // Signal new algorithm
-            actionType = AlgorithmData.ActionType.SAVE,
             isRunning = false,
             isProcessing = false,
             groupID = 0  // No group on destination (different server)
         };
 
-        NotificationMessageData? notification = destConn.SendAlgorithmRequest(newAlgo);
+        NotificationMessageData? notification = destConn.SendAlgorithmRequest(newAlgo, AlgoActionType.SAVE);
 
         if (notification == null)
         {
@@ -1467,7 +1453,8 @@ public sealed class AlgosCommand : ICommand
         // from the parsed JSON rather than from a source connection so the
         // paste works even when the source bench is offline.
         var newAlgo = BuildAlgorithmDataFromPayload(algoObj, destSymbol, destMarket, destConn);
-        NotificationMessageData? notification = destConn.SendAlgorithmRequest(newAlgo);
+        NotificationMessageData? notification =
+            destConn.SendAlgorithmRequest(newAlgo, AlgoActionType.SAVE);
         var resultWarnings = new List<string>();
         if (marketMismatch) resultWarnings.Add($"market_type_changed: {sourceMarketName} → {destMarket}");
         if (duplicate != null) resultWarnings.Add($"duplicate_detected: existing id={duplicate.id}");
@@ -1542,7 +1529,6 @@ public sealed class AlgosCommand : ICommand
             marketType = destMarket,
             isTradingAlgo = algoObj["isTradingAlgo"]?.Value<bool>() ?? true,
             argsJson = algoObj["argsJson"]?.Value<string>() ?? "",
-            actionType = AlgorithmData.ActionType.SAVE,
             isRunning = false,
             isProcessing = false,
             groupID = 0,
@@ -1728,8 +1714,8 @@ public sealed class AlgosCommand : ICommand
                 failCount++;
                 continue;
             }
-            var request = new AlgorithmData(entry.AlgoRef) { actionType = AlgorithmData.ActionType.SAVE };
-            NotificationMessageData? notif = conn.SendAlgorithmRequest(request, timeoutMs: 15_000);
+            NotificationMessageData? notif = conn.SendAlgorithmRequest(
+                entry.AlgoRef, AlgoActionType.SAVE, timeoutMs: 15_000);
             if (notif == null)
             {
                 rows.Add(new { entry.AlgorithmId, entry.Name, entry.Signature,
@@ -2165,7 +2151,6 @@ public sealed class AlgosCommand : ICommand
         var fresh = new AlgorithmData(source)
         {
             id = -1,
-            actionType = AlgorithmData.ActionType.SAVE,
             isRunning = false,
             isProcessing = false,
             groupID = 0,
@@ -2257,7 +2242,8 @@ public sealed class AlgosCommand : ICommand
         }
 
         // Commit path — dispatch via SendAlgorithmRequest (same wire as paste).
-        NotificationMessageData? notif = conn.SendAlgorithmRequest(fresh, timeoutMs: 15_000);
+        NotificationMessageData? notif = conn.SendAlgorithmRequest(
+            fresh, AlgoActionType.SAVE, timeoutMs: 15_000);
         if (notif == null)
             return CommandResult.Ok(
                 $"[{conn.Name}] algos create '{finalName}' sent (response timed out).",
@@ -2449,8 +2435,8 @@ public sealed class AlgosCommand : ICommand
         if (args.Length >= 2 && int.TryParse(args[1], out int customWait))
             waitSeconds = Math.Clamp(customWait, 1, 30);
 
-        // Start the algo (reuse existing AlgoAction which resolves type name)
-        CommandResult startResult = AlgoAction(new[] { id.ToString() }, AlgorithmData.ActionType.START, targetProfile);
+        // Start the algo (reuse existing AlgoAction)
+        CommandResult startResult = AlgoAction(new[] { id.ToString() }, AlgoActionType.START, targetProfile);
 
         // Wait for initialization window
         Thread.Sleep(waitSeconds * 1_000);

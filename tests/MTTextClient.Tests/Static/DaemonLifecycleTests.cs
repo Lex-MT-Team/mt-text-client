@@ -178,6 +178,9 @@ public sealed class DaemonLifecycleTests
         try
         {
             WaitForSocket(sock, 15).Should().BeTrue();
+            // A bound socket precedes signal registration. Wait for protocol
+            // readiness before testing graceful shutdown (also on fast Linux CI).
+            Initialize(sock)["result"].Should().NotBeNull();
             using (var killer = Process.Start(new ProcessStartInfo("kill", $"-s TERM {p.Id}") { UseShellExecute = false }))
                 killer!.WaitForExit(5_000);
 

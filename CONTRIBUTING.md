@@ -97,27 +97,17 @@ LiveTrade tests place LIMIT orders at or near market so they actually fill, and 
 
 ## Vendor libs — `lib/` layout + fetch-at-build
 
-`MTShared.dll` and `LiteNetLib.dll` are vendored from the published MoonTrader
-build. The csproj resolves them per host RID:
+`MTShared.dll` and `LiteNetLib.dll` are restored automatically from the public
+MoonTrader CDN before reference resolution. `lib/vendor.json` pins release
+0.7.25589, archive hashes, and final DLL hashes for macOS x64/ARM64, Linux
+x64/ARM64, and Windows x64. All four projects use `lib/<rid>/`; there is no
+committed DLL fallback. Python 3.9+ is required on every build host.
 
-1. `lib/MTShared.dll` — committed baseline. This is the API surface the
-   project is currently compiled against. The build picks this when it exists.
-2. `lib/<rid>/MTShared.dll` — per-RID copy produced by
-   [`scripts/fetch_vendor_libs.py`](scripts/fetch_vendor_libs.py). Used as a
-   fallback when the committed baseline is missing. Becomes the canonical
-   source once the wire layer is upgraded to track the latest vendor build
-   and the committed baseline is removed.
-
-`scripts/fetch_vendor_libs.py` downloads the right MoonTrader tarball for the
-host RID (`osx-arm64`, `osx-x64`, `linux-x64`, `linux-arm64`) from
-`https://cdn3.moontrader.com/beta/<channel>/`, verifies the SHA-256 against
-the vendor-published `version.txt` manifest, extracts `MTShared.dll` and
-`LiteNetLib.dll` into `lib/<rid>/`, and applies a PE Machine-field flip
-(x64 → ARM64) on `osx-arm64` because the vendor doesn't publish a
-macosx-arm64 build. The csproj's `FetchVendorLibs` MSBuild target runs the
-script before reference resolution when *neither* the legacy file nor the
-RID-specific copy exists (or when `-p:FetchVendorLibs=true` is passed).
-Set `MTC_VENDOR_RID=<rid>` to override the host-derived RID.
+The build detects its OS and process architecture. `RuntimeIdentifier`,
+`MTC_VENDOR_RID`, or the explicit `MTCoreVendorRid` property can select a target.
+Use `-p:VendorOffline=true` to require verified cached files. A version upgrade
+changes the pin and corresponding protocol code together; ordinary builds do
+not silently adopt a newer CDN release.
 
 `BouncyCastle.Cryptography` is pinned to `2.0.0` — it is the AES256
 implementation that `MTShared.dll`'s crypto path resolves to.

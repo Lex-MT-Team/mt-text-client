@@ -32,7 +32,7 @@ public static class RepoPaths
 
     /// <summary>Path to the built MCP binary.</summary>
     public static string McpBinary =>
-        Path.Combine(Root, "bin", "Release", "net8.0", "MTTextClient");
+        Path.Combine(Root, "bin", "Release", "net8.0", OperatingSystem.IsWindows() ? "MTTextClient.exe" : "MTTextClient");
 
     /// <summary>Path to the built MCP DLL (used for `dotnet bin/Release/net8.0/MTTextClient.dll --mcp`).</summary>
     public static string McpDll =>
@@ -42,11 +42,7 @@ public static class RepoPaths
     public static string ToolsMinimumFixture =>
         Path.Combine(AppContext.BaseDirectory, "_expected", "tools.minimum.json");
 
-    /// <summary>Source MTShared.dll under lib/ (always AMD64 in vendor build).</summary>
-    public static string MTSharedSource =>
-        Path.Combine(Root, "lib", "MTShared.dll");
-
-    /// <summary>Built MTShared.dll under bin/.../net8.0/ (must be ARM64-patched on macOS arm64).</summary>
+    /// <summary>Verified MTShared.dll copied into the application output.</summary>
     public static string MTSharedBuilt =>
         Path.Combine(Root, "bin", "Release", "net8.0", "MTShared.dll");
 }

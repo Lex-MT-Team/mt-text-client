@@ -32,7 +32,7 @@ public static class Program
     {
         bool check = args.Contains("--check");
         string readmePath = FindReadme();
-        string oldReadme = File.ReadAllText(readmePath);
+        string oldReadme = File.ReadAllText(readmePath).Replace("\r\n", "\n");
         string rendered = Render(ToolRegistry.AllTools());
         string newReadme = SpliceBetweenMarkers(oldReadme, rendered);
 
@@ -107,7 +107,7 @@ public static class Program
         sb.AppendLine($"_Total: {count} tools._");
         sb.AppendLine();
         sb.Append(EndMarker);
-        return sb.ToString();
+        return sb.ToString().Replace("\r\n", "\n");
     }
 
     /// <summary>

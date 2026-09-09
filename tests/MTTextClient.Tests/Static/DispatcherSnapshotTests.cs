@@ -32,7 +32,7 @@ public sealed class DispatcherSnapshotTests
         File.Exists(path).Should().BeTrue(
             because: $"the snapshot baseline must be committed at {path}");
 
-        string committed = File.ReadAllText(path);
+        string committed = File.ReadAllText(path).Replace("\r\n", "\n");
         string rendered = SnapshotGen.Render(ToolRegistry.AllTools());
 
         rendered.Should().Be(committed,
@@ -47,7 +47,7 @@ public sealed class DispatcherSnapshotTests
     public void CommittedSnapshot_ContainsEveryRegistryTool()
     {
         string path = ResolveSnapshotPath();
-        string committed = File.ReadAllText(path);
+        string committed = File.ReadAllText(path).Replace("\r\n", "\n");
         int toolCount = System.Linq.Enumerable.Count(ToolRegistry.AllTools());
 
         // Cheap surface check: the file should have one line per tool plus the
