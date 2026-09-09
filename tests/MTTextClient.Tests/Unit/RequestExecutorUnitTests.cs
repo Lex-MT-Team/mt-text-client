@@ -118,16 +118,19 @@ public sealed class RequestExecutorUnitTests
     [Fact]
     public async Task ExecuteAsync_AwaitsResult()
     {
-        Payload? result = await _exec.ExecuteAsync<Payload>(cb =>
+        Action<Payload?>? complete = null;
+        Task<Payload?> pending = _exec.ExecuteAsync<Payload>(cb =>
         {
-            // Fire callback from a worker thread after a short delay.
-            _ = Task.Run(async () =>
-            {
-                await Task.Delay(10);
-                cb(new Payload { Value = "async" });
-            });
+            complete = cb;
             return true;
-        }, timeoutMs: 1000);
+        });
+
+        // Complete after the sender returns, without racing thread-pool scheduling
+        // against a short request timeout. Timeout behavior has its own test.
+        pending.IsCompleted.Should().BeFalse(because: "the response has not arrived");
+        complete.Should().NotBeNull();
+        complete!(new Payload { Value = "async" });
+        Payload? result = await pending.WaitAsync(TimeSpan.FromSeconds(5));
 
         result.Should().NotBeNull();
         result!.Value.Should().Be("async");
