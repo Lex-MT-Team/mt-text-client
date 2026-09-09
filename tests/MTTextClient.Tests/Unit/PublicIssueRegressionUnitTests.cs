@@ -237,14 +237,17 @@ public sealed class PublicIssueRegressionUnitTests
         var store = new AlgorithmStore();
         store.LastUpdateUtc.Should().Be(default);
 
-        var listData = new AlgorithmListData
+        var listEvent = new AlgorithmListEventData
         {
-            algorithms = new List<AlgorithmData>
+            Data = new AlgorithmListData
             {
-                new() { id = 7, name = "MW", signature = "MW" },
+                algorithms = new List<AlgorithmData>
+                {
+                    new() { id = 7, name = "MW", signature = "MW" },
+                },
             },
         };
-        store.ProcessData(NetworkMessageType.ALGORITHM_LIST_RESULT, listData);
+        store.ProcessData(NetworkMessageType.ALGORITHMS_RESULT, listEvent);
 
         store.LastUpdateUtc.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromSeconds(5));
         store.Count.Should().Be(1);
@@ -252,4 +255,68 @@ public sealed class PublicIssueRegressionUnitTests
         store.Clear();
         store.LastUpdateUtc.Should().Be(default);
     }
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void Algorithm_snapshots_replace_live_state_and_preserve_templates()
+    {
+        var store = new AlgorithmStore();
+        void Apply(AlgorithmListData data) => store.ProcessData(
+            NetworkMessageType.ALGORITHMS_RESULT, new AlgorithmListEventData { Data = data });
+        Apply(new AlgorithmListData
+        {
+            isConfigList = true,
+            algorithms = new() { new() { id = 99, signature = "SG" } },
+        });
+        Apply(new AlgorithmListData
+        {
+            algorithms = new() { new() { id = 1 }, new() { id = 2 } },
+            groups = new() { new() { id = 10 } },
+        });
+        Apply(new AlgorithmListData { algorithms = new() { new() { id = 2 } } });
+        store.GetAll().Select(a => a.id).Should().Equal(2);
+        store.GroupCount.Should().Be(0);
+        store.ConfigTemplateCount.Should().Be(1);
+        Apply(new AlgorithmListData());
+        store.Count.Should().Be(0);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void Algorithm_folder_deltas_preserve_other_folders_and_apply_removal()
+    {
+        var store = new AlgorithmStore();
+        store.ProcessData(NetworkMessageType.ALGORITHMS_RESULT, new AlgorithmFoldersAddedEventData
+        {
+            Folders = new() { new() { id = 10, name = "first" }, new() { id = 20, name = "second" } },
+        });
+        store.ProcessData(NetworkMessageType.ALGORITHMS_RESULT, new AlgorithmFoldersUpdatedEventData
+        {
+            Folders = new() { new() { id = 20, name = "renamed" } },
+        });
+        store.FindGroupById(10)!.name.Should().Be("first");
+        store.FindGroupById(20)!.name.Should().Be("renamed");
+        store.ProcessData(NetworkMessageType.ALGORITHMS_RESULT, new AlgorithmFoldersRemovedEventData
+        {
+            Folders = new() { new() { id = 10 } },
+        });
+        store.GetAllGroups().Select(g => g.id).Should().Equal(20);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void Imported_folder_with_existing_id_requests_add_and_preserves_destination()
+    {
+        using var connection = new CoreConnection(new ServerProfile());
+        connection.AlgoStore.ProcessData(NetworkMessageType.ALGORITHMS_RESULT,
+            new AlgorithmFoldersAddedEventData
+            {
+                Folders = new List<AlgorithmGroupData> { new() { id = 10, name = "existing" } }
+            });
+        var imported = new AlgorithmGroupData { id = 10, name = "imported" };
+        MethodInfo build = typeof(CoreConnection).GetMethod("BuildGroupRequest", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var request = build.Invoke(connection, new object[] { imported, AlgoActionType.ADD_GROUP });
+        request.Should().BeOfType<AlgorithmFolderAddRequestData>();
+        connection.AlgoStore.GetAllGroups().Single().name.Should().Be("existing");
+    }
+
 }

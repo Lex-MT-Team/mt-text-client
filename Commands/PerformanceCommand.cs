@@ -114,11 +114,20 @@ public sealed class PerformanceCommand : ICommand
         for (int i = 0; i < entries.Count; i++)
         {
             TradingPerformanceSnapshot entry = entries[i];
-            sb.AppendLine($"  [{i}] {entry.KeyGroup}: {entry.Symbol} (Market: {entry.MarketType})");
+            string symbol = string.IsNullOrEmpty(entry.Symbol) ? "(all symbols)" : entry.Symbol;
+            sb.AppendLine($"  [{i}] {symbol} (Market: {entry.MarketType})");
             sb.AppendLine($"      Algo ID: {entry.AlgorithmId} | Comment: {entry.Comment}");
             sb.AppendLine($"      Start: {entry.StartTime}");
-            sb.AppendLine($"      Totals: {entry.TotalsCount} | PriceDeltas: {entry.PriceDeltasCount}");
-            sb.AppendLine($"      ProfitFactors: {entry.ProfitFactorsCount} | ProfitTotals: {entry.ProfitTotalsCount} | LossTotals: {entry.LossTotalsCount}");
+            foreach (KeyValuePair<TradingPerformanceTimeFrame, TradingPerformanceMetricsSnapshot> kv in entry.Metrics)
+            {
+                if (kv.Value.IsEmpty)
+                {
+                    continue;
+                }
+                sb.AppendLine(
+                    $"      {kv.Key,-9} total={kv.Value.Total:0.####} priceDelta={kv.Value.PriceDelta:0.####} " +
+                    $"pf={kv.Value.ProfitFactor:0.####} profit={kv.Value.ProfitTotal:0.####} loss={kv.Value.LossTotal:0.####}");
+            }
             sb.AppendLine();
         }
 
