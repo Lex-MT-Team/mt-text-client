@@ -23,94 +23,7 @@
     <EmbeddedResource Remove="tools\**" />
   </ItemGroup>
 
-  <!-- Vendor-lib resolution.
-       The MTShared.dll / LiteNetLib.dll referenced below come from the
-       published MoonTrader build. They are platform-dependent (different
-       SHA per RID even for the same vendor version), so the project ships
-       a small download-at-build helper (scripts/fetch_vendor_libs.py) that
-       fetches the right tarball for the host RID, verifies it against the
-       vendor's SHA-256 manifest, and extracts the two DLLs into
-       lib/<rid>/.
-       The HintPath below prefers lib/<rid>/<dll> when present, falling
-       back to the committed lib/<dll> baseline. See lib/README.md. -->
-  <Choose>
-    <When Condition="$([MSBuild]::IsOSPlatform('OSX')) AND '$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)' == 'Arm64'">
-      <PropertyGroup><MTCoreVendorRid>osx-arm64</MTCoreVendorRid></PropertyGroup>
-    </When>
-    <When Condition="$([MSBuild]::IsOSPlatform('OSX'))">
-      <PropertyGroup><MTCoreVendorRid>osx-x64</MTCoreVendorRid></PropertyGroup>
-    </When>
-    <When Condition="$([MSBuild]::IsOSPlatform('Linux')) AND '$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)' == 'Arm64'">
-      <PropertyGroup><MTCoreVendorRid>linux-arm64</MTCoreVendorRid></PropertyGroup>
-    </When>
-    <Otherwise>
-      <PropertyGroup><MTCoreVendorRid>linux-x64</MTCoreVendorRid></PropertyGroup>
-    </Otherwise>
-  </Choose>
-
-  <PropertyGroup>
-    <_MTSharedRidPath>$(MSBuildThisFileDirectory)lib/$(MTCoreVendorRid)/MTShared.dll</_MTSharedRidPath>
-    <_LiteNetLibRidPath>$(MSBuildThisFileDirectory)lib/$(MTCoreVendorRid)/LiteNetLib.dll</_LiteNetLibRidPath>
-    <_MTSharedLegacyPath>$(MSBuildThisFileDirectory)lib/MTShared.dll</_MTSharedLegacyPath>
-    <_LiteNetLibLegacyPath>$(MSBuildThisFileDirectory)lib/LiteNetLib.dll</_LiteNetLibLegacyPath>
-    <!-- Resolution order: legacy committed file wins when present, RID copy
-         is the fallback. The committed lib/MTShared.dll is the active
-         API surface the code is compiled against; the RID-specific copy
-         (produced by scripts/fetch_vendor_libs.py from the latest vendor
-         build) is the migration target. When mt-text-client's wire layer
-         is upgraded to track the latest vendor MTShared.dll, the legacy
-         file will be removed from the repo and the RID copy becomes the
-         single source of truth. -->
-    <MTSharedHintPath Condition="Exists('$(_MTSharedLegacyPath)')">$(_MTSharedLegacyPath)</MTSharedHintPath>
-    <MTSharedHintPath Condition="'$(MTSharedHintPath)' == '' AND Exists('$(_MTSharedRidPath)')">$(_MTSharedRidPath)</MTSharedHintPath>
-    <LiteNetLibHintPath Condition="Exists('$(_LiteNetLibLegacyPath)')">$(_LiteNetLibLegacyPath)</LiteNetLibHintPath>
-    <LiteNetLibHintPath Condition="'$(LiteNetLibHintPath)' == '' AND Exists('$(_LiteNetLibRidPath)')">$(_LiteNetLibRidPath)</LiteNetLibHintPath>
-    <!-- Force the vendor-fetch step even when a HintPath already resolves;
-         useful for testing newer pinned vendor versions. -->
-    <FetchVendorLibs Condition="'$(FetchVendorLibs)' == ''">false</FetchVendorLibs>
-  </PropertyGroup>
-
-  <ItemGroup>
-    <Reference Include="MTShared">
-      <HintPath>$(MTSharedHintPath)</HintPath>
-    </Reference>
-    <Reference Include="LiteNetLib">
-      <HintPath>$(LiteNetLibHintPath)</HintPath>
-    </Reference>
-  </ItemGroup>
-
-  <!-- Vendor-lib auto-fetch.
-       Runs scripts/fetch_vendor_libs.py before reference resolution when:
-         (a) neither lib/<rid>/MTShared.dll nor lib/MTShared.dll exists,
-             i.e. the build has no fallback source, OR
-         (b) -p:FetchVendorLibs=true was passed explicitly to refresh.
-       The script downloads the right MoonTrader tarball for $(MTCoreVendorRid),
-       verifies SHA-256 against the vendor manifest, extracts MTShared.dll
-       and LiteNetLib.dll into lib/<rid>/, and applies the PE Machine-field
-       patch on osx-arm64.  ContinueOnError so a missing python3 / offline
-       host can still build against the committed baseline.  -->
-  <Target Name="FetchVendorLibs"
-          BeforeTargets="ResolveAssemblyReferences"
-          Condition=" '$(FetchVendorLibs)' == 'true' OR (!Exists('$(_MTSharedRidPath)') AND !Exists('$(_MTSharedLegacyPath)')) ">
-    <Message Importance="high"
-             Text="[FetchVendorLibs] running scripts/fetch_vendor_libs.py --rid $(MTCoreVendorRid)" />
-    <Exec Command="python3 &quot;$(MSBuildThisFileDirectory)scripts/fetch_vendor_libs.py&quot; --rid $(MTCoreVendorRid)"
-          WorkingDirectory="$(MSBuildThisFileDirectory)"
-          ContinueOnError="WarnAndContinue" />
-  </Target>
-
-  <!-- The committed lib/MTShared.dll carries PE Machine=ARM64 so Apple
-       Silicon hosts load it natively. The CLR on linux-x64 rejects that
-       header during assembly probing (surfaces as FileNotFoundException),
-       so on Linux the build-output copy is flipped back to x64 after
-       every build. The repo file itself is never modified — only the
-       per-platform build output. -->
-  <Target Name="PatchMTSharedMachineLinux"
-          AfterTargets="Build"
-          Condition="$([MSBuild]::IsOSPlatform('Linux'))">
-    <Exec Command="python3 &quot;$(MSBuildThisFileDirectory)scripts/patch_mtshared_arm64.py&quot; --machine x64 &quot;$(TargetDir)MTShared.dll&quot;"
-          ContinueOnError="WarnAndContinue" />
-  </Target>
+  <!-- Vendor references and acquisition are shared in Directory.Build.targets. -->
 
   <!-- Vendored algoConfigs.json template file.
        mt_algos_create is clone-from-existing only: it scans the target
@@ -140,7 +53,7 @@
   <ItemGroup>
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <!-- BouncyCastle.Cryptography is the AES256 implementation that
-         lib/MTShared.dll's wire-protocol crypto path resolves to at runtime.
+         MTShared.dll's wire-protocol crypto path resolves to at runtime.
          Pinning explicitly here:
            (a) makes NuGet copy the DLL into bin/<config>/net8.0/ on every
                build, regardless of whether a transitive consumer touches it;

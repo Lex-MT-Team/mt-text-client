@@ -1,8 +1,7 @@
-# RID-specific vendor libs are produced by scripts/fetch_vendor_libs.py.
-# The committed MTShared.dll + LiteNetLib.dll at the top of this directory
-# are the active baseline and stay tracked.
+# Verified platform assemblies and archives are restored from vendor.json.
 /osx-x64/
 /osx-arm64/
 /linux-x64/
 /linux-arm64/
+/win-x64/
 /.cache/
