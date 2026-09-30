@@ -1,12 +1,15 @@
 # MoonTrader assemblies
 
 `MTShared.dll` supplies MoonTrader protocol types and the encrypted UDP client.
-`LiteNetLib.dll` supplies its UDP transport. Both are managed assemblies restored
-from the public MoonTrader CDN; they are no longer committed to this repository.
+`LiteNetLib.dll` supplies its UDP transport. Both are managed assemblies pinned in
+[`vendor.json`](vendor.json) and verified by SHA-256 on every build.
 
-The client is pinned to MTCore **0.7.25589** (archive version **725589**) in
-[`vendor.json`](vendor.json). Builds download the pinned release automatically.
-They do not follow the CDN's moving `version.txt` on every build: a newer release
+The client is pinned to MTCore **0.7.25925** (archive version **725925**) in
+[`vendor.json`](vendor.json). This build is **not yet published on the CDN**, so the
+verified per-platform pair is committed under `lib/<rid>/`: `fetch_vendor_libs.py`
+finds the committed, hash-matching DLLs and skips the download. Once the archives
+are published, the `url`/`sha256` entries let a `--force` fetch reproduce the exact
+same bytes. Builds do not follow the CDN's moving `version.txt`: a newer release
 can change the protocol and require source changes.
 
 ## Build prerequisites and selection
@@ -34,11 +37,11 @@ Use an explicit RID when the Python and .NET processes have different architectu
 
 | RID | CDN channel | Archive |
 |---|---|---|
-| `osx-arm64` | `macosx-x86_64` | `MoonTrader-version_725589.tar.xz` |
-| `osx-x64` | `macosx-x86_64` | `MoonTrader-version_725589.tar.xz` |
-| `linux-x64` | `linux-x86_64` | `MTCore-version_725589.tar.xz` |
-| `linux-arm64` | `linux-arm64` | `MTCore-version_725589.tar.xz` |
-| `win-x64` | `windows-x86_64` | `MTCore-version_725589.exe` |
+| `osx-arm64` | `macos-arm64` | `MoonTrader-macos-arm64-version_725925.tar.xz` |
+| `osx-x64` | `macosx-x86_64` | `MoonTrader-macosx-x86_64-version_725925.tar.xz` |
+| `linux-x64` | `linux-x86_64` | `MoonTrader-linux-x86_64-version_725925.tar.xz` |
+| `linux-arm64` | `linux-arm64` | `MoonTrader-linux-arm64-version_725925.tar.xz` |
+| `win-x64` | `windows-x86_64` | `MoonTrader-windows-x86_64-version_725925.exe` |
 
 Other targets fail explicitly, including native Windows ARM64. Selecting a target
 for a cross-build verifies and compiles its assemblies; running its tests still
@@ -48,8 +51,8 @@ are hash-pinned; this is not a general claim that other vendor DLLs are portable
 
 ## Cache and offline use
 
-Restored DLLs live in gitignored `lib/<rid>/`; archives live in
-`lib/.cache/<archive-sha256>/`. Separate archive hashes prevent identical Linux
+The verified DLLs are committed under `lib/<rid>/`; downloaded archives (when
+available) live in gitignored `lib/.cache/<archive-sha256>/`. Separate archive hashes prevent identical Linux
 archive names from colliding. Every build checks **both** final DLL hashes. If
 one is missing or corrupt, a verified cached archive can repair the pair offline.
 Downloads and extraction are staged; both DLLs must validate before publication.

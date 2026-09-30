@@ -31,7 +31,7 @@ public sealed class CoreStatusStore
     /// VENDOR_VERSION). A connected core reporting a different build means the
     /// wire layouts can disagree — several structs silently mis-deserialize under
     /// such skew, so callers should treat a mismatch as a hard warning.</summary>
-    public const string ExpectedCoreBuild = "0.7.25589";
+    public const string ExpectedCoreBuild = "0.7.25949";
 
     /// <summary>True when the connected core's reported build matches
     /// <see cref="ExpectedCoreBuild"/>. Defaults true until a build is observed.</summary>
@@ -125,6 +125,31 @@ public sealed class CoreStatusStore
 
     public CoreStatusSnapshot? GetStatus() => _current;
     public CoreLicenseSnapshot? GetLicense() => _license;
+
+    /// <summary>
+    /// Human-readable warning when the connected core reports a build that
+    /// differs from <see cref="ExpectedCoreBuild"/>, else null. Wire layouts can
+    /// drift silently between builds (e.g. an appended struct field shifts every
+    /// subsequent field), so callers rendering wire-decoded data should surface
+    /// this so a mis-decode is diagnosable rather than an opaque failure. Returns
+    /// null until a build has actually been observed, or when the builds match.
+    /// </summary>
+    public string? BuildMismatchWarning()
+    {
+        if (BuildVersionMatches)
+        {
+            return null;
+        }
+
+        string actual = _license?.BuildVersion ?? "";
+        if (string.IsNullOrEmpty(actual))
+        {
+            return null;
+        }
+
+        return $"Connected core build {actual} differs from client-pinned {ExpectedCoreBuild}; " +
+               "some wire-decoded fields may mis-decode. Re-pin the vendor DLLs to match the core.";
+    }
 
     /// <summary>Clear all stored data (on disconnect).</summary>
     public void Clear()

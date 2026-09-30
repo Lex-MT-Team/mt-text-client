@@ -1,16 +1,16 @@
 {
-  "version": "725589",
-  "core_build": "0.7.25589",
+  "version": "725949",
+  "core_build": "0.7.25949",
   "platforms": {
     "osx-arm64": {
-      "url": "https://cdn3.moontrader.com/beta/macosx-x86_64/MoonTrader-version_725589.tar.xz",
-      "sha256": "ca1e18dbd2252ad5ab77eb2dc30c97406cfc71cfb8f8784ef6eb143a65c27103",
+      "url": "https://cdn3.moontrader.com/beta/macos-arm64/MoonTrader-macos-arm64-version_725925.tar.xz",
+      "sha256": "ececca95a257d89f1ef77651c1970a7fd9f4ed8292c19c3f480c3d444938cc91",
       "format": "tar.xz",
       "machine": "arm64",
       "files": {
         "MTShared.dll": {
           "path": "MoonTrader.app/Contents/Resources/Data/Managed/MTShared.dll",
-          "sha256": "7dea507918c3004531d99274861e3daff5c78183f223a67a1892d9b3bc54632e"
+          "sha256": "521eece8911b5e8a4cf33b3d258a05927eb8aef6585fdfdd1a56fdd0bd5e8051"
         },
         "LiteNetLib.dll": {
           "path": "lib/LiteNetLib.dll",
@@ -19,14 +19,14 @@
       }
     },
     "osx-x64": {
-      "url": "https://cdn3.moontrader.com/beta/macosx-x86_64/MoonTrader-version_725589.tar.xz",
-      "sha256": "ca1e18dbd2252ad5ab77eb2dc30c97406cfc71cfb8f8784ef6eb143a65c27103",
+      "url": "https://cdn3.moontrader.com/beta/macosx-x86_64/MoonTrader-macosx-x86_64-version_725925.tar.xz",
+      "sha256": "a76c915909a5eba799503c1b8f5ba77f65a960fe3ed007d694c54fd7451448dd",
       "format": "tar.xz",
       "machine": "x64",
       "files": {
         "MTShared.dll": {
           "path": "MoonTrader.app/Contents/Resources/Data/Managed/MTShared.dll",
-          "sha256": "a737d74006a52c328642dc6f9497f170ff15baf70afceb3d3add6b610441d29a"
+          "sha256": "851bca2f6556b577c925329670afdaaa5dd2bf4990a3bed8bfdf25a8e05a4792"
         },
         "LiteNetLib.dll": {
           "path": "lib/LiteNetLib.dll",
@@ -35,14 +35,14 @@
       }
     },
     "linux-x64": {
-      "url": "https://cdn3.moontrader.com/beta/linux-x86_64/MTCore-version_725589.tar.xz",
-      "sha256": "e68117a12bed81c3c94c216e635443fd1318e61800fdd949781e654eb54c08fe",
+      "url": "https://cdn3.moontrader.com/beta/linux-x86_64/MoonTrader-linux-x86_64-version_725925.tar.xz",
+      "sha256": "c0363c8b779cc1879421654daedcc6c8e004b3b1484a4d2044f2f00ef3aa6951",
       "format": "tar.xz",
       "machine": "x64",
       "files": {
         "MTShared.dll": {
           "path": "BotClient/lib/MTShared.dll",
-          "sha256": "ccb1308def0b9d9afe2afbb8e727e3e73f5c4cc185e1f05008f1fa910a50032b"
+          "sha256": "9cf76f450916aada885ae78e08cab95b5faac966d34c6e209bb443dca56bc23d"
         },
         "LiteNetLib.dll": {
           "path": "lib/LiteNetLib.dll",
@@ -51,14 +51,14 @@
       }
     },
     "linux-arm64": {
-      "url": "https://cdn3.moontrader.com/beta/linux-arm64/MTCore-version_725589.tar.xz",
-      "sha256": "734d7fac318e2bd34ce1a77f48383ace12864df31da5010ce4c90c9ba948ff2b",
+      "url": "https://cdn3.moontrader.com/beta/linux-arm64/MoonTrader-linux-arm64-version_725925.tar.xz",
+      "sha256": "29256b914d0864107019bf7f90513286532631abb99163ab1384f82a365aab56",
       "format": "tar.xz",
       "machine": "arm64",
       "files": {
         "MTShared.dll": {
           "path": "BotClient/lib/MTShared.dll",
-          "sha256": "96e669036639ce23429e6fb2e3a1d71226745df4fcb1f21b8cbb05742e05c328"
+          "sha256": "e0bdda23c3db110e9122609f2ca1274acbaefd8834b1e2f99d155d4ca5f0a549"
         },
         "LiteNetLib.dll": {
           "path": "lib/LiteNetLib.dll",
@@ -67,14 +67,14 @@
       }
     },
     "win-x64": {
-      "url": "https://cdn3.moontrader.com/beta/windows-x86_64/MTCore-version_725589.exe",
-      "sha256": "2dd8256930eb5fac9e8bb348073f9c41178922bacf5ace8f77aa5fd3d9c1c960",
+      "url": "https://cdn3.moontrader.com/beta/windows-x86_64/MoonTrader-windows-x86_64-version_725949.exe",
+      "sha256": "ca2aa70a9691783a0668f861933658e7a511ed8a7faca0e6623039dc692632e8",
       "format": "7z-sfx",
       "machine": "x64",
       "files": {
         "MTShared.dll": {
           "path": "BotClient/lib/MTShared.dll",
-          "sha256": "9eb6f0d74d9efcda6992675a3fb79e195a83eab8df91fb2ddf48721f8485a886"
+          "sha256": "13cbb04c0ceb449dcb287a4073b4ccb92a0021d72f2d99be9b1b68a34fff7a48"
         },
         "LiteNetLib.dll": {
           "path": "lib/LiteNetLib.dll",

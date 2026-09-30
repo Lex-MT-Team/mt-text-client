@@ -5,8 +5,16 @@ obj/
 # IDE / editor
 .vs/
 .vscode/
+.idea/
 *.user
 *.suo
+
+# Python bytecode cache
+__pycache__/
+*.pyc
+
+# Local test scratch content — not part of the repo.
+MT text for Tests/
 
 # Debug symbols (keep in build, not in repo)
 *.pdb

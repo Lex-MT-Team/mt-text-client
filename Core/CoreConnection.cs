@@ -66,7 +66,7 @@ public sealed class CoreConnection : IDisposable
     private readonly ConcurrentDictionary<string, int> _klineSubscriptionIds = new ConcurrentDictionary<string, int>();
     private int _tickerSubscriptionId;
     private readonly ConcurrentDictionary<string, int> _profilingSubscriptionIds = new ConcurrentDictionary<string, int>();
-    private readonly ConcurrentDictionary<string, Action<MTShared.Network.AlgorithmProfilingData>> _profilingCallbacks = new ConcurrentDictionary<string, Action<MTShared.Network.AlgorithmProfilingData>>();
+    private readonly ConcurrentDictionary<string, Action<MTShared.Network.BaseAlgorithmProfilingData>> _profilingCallbacks = new ConcurrentDictionary<string, Action<MTShared.Network.BaseAlgorithmProfilingData>>();
 
     private bool _isConnected;
     private bool _disposed;
@@ -155,7 +155,7 @@ public sealed class CoreConnection : IDisposable
     public event Action<CoreConnection>? OnCoreStatusReceived;
     public event Action<CoreConnection, int>? OnTradePairsLoaded;
     public event Action<CoreConnection>? OnAccountDataReceived;
-    public event Action<CoreConnection, string, MTShared.Network.AlgorithmProfilingData>? OnProfilingDataReceived;
+    public event Action<CoreConnection, string, MTShared.Network.BaseAlgorithmProfilingData>? OnProfilingDataReceived;
     /// <summary>
     /// Fired when MTCore restarts while the UDP connection stays alive.
     /// Detected via connectionId or serverStartTime change in ConnectionInfoData.
@@ -2156,7 +2156,7 @@ public sealed class CoreConnection : IDisposable
         symbol = (symbol ?? string.Empty).ToLowerInvariant();
         string key = $"{marketType}:{symbol}:{algorithmId}";
         // Strong ref to the callback so the SDK's WeakDelegate isn't GC'd.
-        Action<MTShared.Network.AlgorithmProfilingData> cb = data => OnProfilingDataReceived?.Invoke(this, symbol, data);
+        Action<MTShared.Network.BaseAlgorithmProfilingData> cb = data => OnProfilingDataReceived?.Invoke(this, symbol, data);
         _profilingCallbacks[key] = cb;
         int existing = _profilingSubscriptionIds.TryGetValue(key, out int prev) ? prev : -1;
         int newId = _udpClient.SendAlgorithmProfilingDataSubscribe(

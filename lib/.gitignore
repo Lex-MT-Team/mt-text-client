@@ -1,7 +1,7 @@
-# Verified platform assemblies and archives are restored from vendor.json.
-/osx-x64/
-/osx-arm64/
-/linux-x64/
-/linux-arm64/
-/win-x64/
+# The verified per-platform assemblies (lib/<rid>/MTShared.dll, LiteNetLib.dll)
+# are committed: the pinned MoonTrader builds are not published on the CDN, so a
+# download-on-build restore would 404. fetch_vendor_libs.py finds the committed,
+# SHA-verified pair and skips the download. Only the large archive cache is
+# ignored — it is re-downloadable (once/if the archives are published) and never
+# needs to live in git.
 /.cache/

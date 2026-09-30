@@ -37,16 +37,17 @@ public sealed class ProfilingEventUnitTests
         overCapacity.First().Seq.Should().Be(2, "the oldest event is evicted first (FIFO)");
     }
 
-    // MTShared wire types (AlgorithmProfilingData, the live-algorithms result)
-    // expose their data as public FIELDS, not properties. System.Text.Json
-    // ignores fields by default and would emit "{}", silently dropping the
-    // payload; Newtonsoft serializes the fields. This is why the profiling /
-    // live-algorithms paths must use Newtonsoft — guards a regression back.
+    // MTShared wire types (BaseAlgorithmProfilingData + its subtypes, the
+    // live-algorithms result) expose their data as public FIELDS, not properties.
+    // System.Text.Json ignores fields by default and would emit "{}", silently
+    // dropping the payload; Newtonsoft serializes the fields. This is why the
+    // profiling / live-algorithms paths must use Newtonsoft — guards a regression
+    // back. (Base is abstract; use the concrete VectorAlgorithmProfilingData.)
     [Fact]
     [Trait("Category", "Unit")]
     public void Profiling_wire_type_fields_survive_newtonsoft_but_not_default_system_text_json()
     {
-        var data = new AlgorithmProfilingData { algorithmID = 4242, algorithmName = "probe" };
+        var data = new VectorAlgorithmProfilingData { algorithmID = 4242, algorithmName = "probe" };
 
         string newton = JsonConvert.SerializeObject(data);
         newton.Should().Contain("4242").And.Contain("probe",
@@ -65,7 +66,7 @@ public sealed class ProfilingEventUnitTests
     public void Algo_profiling_event_payload_carries_symbol_and_full_profiling_record()
     {
         var bus = new EventBroadcaster();
-        var data = new AlgorithmProfilingData { algorithmID = 7, algorithmName = "sg" };
+        var data = new VectorAlgorithmProfilingData { algorithmID = 7, algorithmName = "sg" };
 
         bus.Publish("algo_profiling", "core-a", new { symbol = "btcusdt", profiling = data });
 

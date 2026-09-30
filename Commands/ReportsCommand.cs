@@ -236,6 +236,11 @@ public sealed class ReportsCommand : ICommand
         List<OrderSideType>? orderSideTypes = ParseOrderSideFilter(sideFilter);
         TradeModeType tradeModeType = ParseTradeModeType(tradeModeFilter);
 
+        // Compute once: a known core/client build mismatch is relevant both to a
+        // silent timeout (a wire-skewed reply can be undecodable, so the callback
+        // never fires) and to a successful-but-skewed decode further down.
+        string? buildWarning = conn.CoreStatusStore.BuildMismatchWarning();
+
         // Request reports from MT-Core (with extended filters)
         ReportListData? reportList = conn.RequestReports(
             unixFrom, unixTo, symbolFilter, algoFilter, sigFilter,
@@ -243,13 +248,7 @@ public sealed class ReportsCommand : ICommand
 
         if (reportList == null)
         {
-            return CommandResult.Ok(
-                $"[{conn.Name}] No report rows returned. MTCore did not respond on this profile " +
-                $"within the request window — some builds drop ReportListRequest without firing a " +
-                $"callback when the underlying Firebird table is empty or uninitialised. " +
-                $"Fall back to: mt_reports_dates (lists available dates), mt_account_executions " +
-                $"(live fill stream), or mt_marketdata_trades for symbol-level trade history.",
-                new { Server = conn.Name, Reports = new List<object>(), TimedOut = true });
+            return TimedOutResult(conn, buildWarning);
         }
 
         List<ReportData>? reports = reportList.reports;
@@ -279,8 +278,20 @@ public sealed class ReportsCommand : ICommand
             return CommandResult.Ok(msg);
         }
 
-        // Sort by close time descending
-        var sorted = new List<ReportData>(reports);
+        // Sort by close time descending. Filter null rows first: a core whose
+        // wire layout has drifted from the pinned DLL can deserialise the list
+        // with null (or partially-null) elements, which would NRE in the sort
+        // comparer and every downstream loop. Dropping them degrades to a partial
+        // result with a visible note instead of an opaque crash.
+        var sorted = new List<ReportData>(reports.Count);
+        foreach (ReportData r in reports)
+        {
+            if (r != null)
+            {
+                sorted.Add(r);
+            }
+        }
+        int droppedRows = reports.Count - sorted.Count;
         sorted.Sort((a, b) => b.reportTime.CompareTo(a.reportTime));
 
         // Summary statistics
@@ -446,7 +457,18 @@ public sealed class ReportsCommand : ICommand
             });
         }
 
-        string? header = $"[{conn.Name}] Trade Reports — {rangeLabel} | {sorted.Count} trades";
+        var headerNotes = new StringBuilder();
+        if (buildWarning != null)
+        {
+            headerNotes.Append($"⚠ {buildWarning}\n");
+        }
+
+        if (droppedRows > 0)
+        {
+            headerNotes.Append($"⚠ Dropped {droppedRows} unreadable trade row(s) — possible core/client build skew.\n");
+        }
+
+        string? header = headerNotes.ToString() + $"[{conn.Name}] Trade Reports — {rangeLabel} | {sorted.Count} trades";
         string? table = rows.ToString();
 
         // Per-algo breakdown
@@ -534,6 +556,8 @@ public sealed class ReportsCommand : ICommand
         {
             Server = conn.Name,
             Exchange = conn.Profile.Exchange.ToString(),
+            BuildMismatchWarning = buildWarning,
+            DroppedRows = droppedRows,
             Period = rangeLabel,
             FromUnix = unixFrom,
             ToUnix = unixTo,
@@ -684,7 +708,35 @@ public sealed class ReportsCommand : ICommand
         };
 
     private static string Trunc(string s, int max) =>
-        s.Length <= max ? s : s[..max];
+        string.IsNullOrEmpty(s) ? "" : (s.Length <= max ? s : s[..max]);
+
+    /// <summary>
+    /// Result for a null (no-callback-within-window) reports reply. Shared by the
+    /// query and export paths so the shape (Reports:[] / TimedOut:true) and the
+    /// guidance stay consistent. A null reply is a timeout, not proof of an empty
+    /// table: a core/client build skew can leave the ReportList reply undecodable
+    /// so the callback never fires. Surface a detected build mismatch and name
+    /// both plausible causes rather than asserting the empty-table hypothesis.
+    /// </summary>
+    private static CommandResult TimedOutResult(CoreConnection conn, string? buildWarning)
+    {
+        var note = new StringBuilder();
+        if (buildWarning != null)
+        {
+            note.Append($"⚠ {buildWarning}\n");
+        }
+
+        note.Append(
+            $"[{conn.Name}] No report rows returned within the request window (no callback fired). " +
+            "Likely causes: (1) core/client build skew — a wire-layout mismatch can leave the " +
+            "ReportList reply undecodable, so the callback never fires; (2) the underlying report " +
+            "table is empty or uninitialised. Fall back to: mt_reports_dates (available dates), " +
+            "mt_account_executions (live fill stream), or mt_marketdata_trades (symbol trade history).");
+
+        return CommandResult.Ok(
+            note.ToString(),
+            new { Server = conn.Name, Reports = new List<object>(), TimedOut = true, BuildMismatchWarning = buildWarning });
+    }
 
 
 
@@ -845,13 +897,7 @@ public sealed class ReportsCommand : ICommand
 
         if (reportList == null)
         {
-            return CommandResult.Ok(
-                $"[{conn.Name}] No report rows returned. MTCore did not respond on this profile " +
-                $"within the request window — some builds drop ReportListRequest without firing a " +
-                $"callback when the underlying Firebird table is empty or uninitialised. " +
-                $"Fall back to: mt_reports_dates (lists available dates), mt_account_executions " +
-                $"(live fill stream), or mt_marketdata_trades for symbol-level trade history.",
-                new { Server = conn.Name, Reports = new List<object>(), TimedOut = true });
+            return TimedOutResult(conn, conn.CoreStatusStore.BuildMismatchWarning());
         }
 
         List<ReportData>? reports = reportList.reports;

@@ -56,7 +56,14 @@ public sealed class CommandRegistry
         }
         catch (Exception ex)
         {
-            return CommandResult.Fail($"Command error: {ex.Message}");
+            // Preserve the full exception (type + stack) on stderr — the MCP
+            // transport routes logs there. Without this, an opaque message like
+            // "Object reference not set to an instance of an object." reaches the
+            // caller with no way to localise it. Surfacing the exception type in
+            // the returned message keeps the wrapped result actionable too.
+            Console.Error.WriteLine($"[COMMAND] '{commandName}' threw {ex.GetType().Name}: {ex}");
+            Console.Error.Flush();
+            return CommandResult.Fail($"Command error ({ex.GetType().Name}): {ex.Message}");
         }
     }
 

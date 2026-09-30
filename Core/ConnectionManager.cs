@@ -116,7 +116,7 @@ public sealed class ConnectionManager : IDisposable
     public event Action<CoreConnection>? OnCoreStatusReceived;
     public event Action<CoreConnection, int>? OnTradePairsLoaded;
     public event Action<CoreConnection>? OnAccountDataReceived;
-    public event Action<CoreConnection, string, MTShared.Network.AlgorithmProfilingData>? OnProfilingDataReceived;
+    public event Action<CoreConnection, string, MTShared.Network.BaseAlgorithmProfilingData>? OnProfilingDataReceived;
 
     /// <summary>
     /// Connect to a server profile. Creates and starts a new CoreConnection.
