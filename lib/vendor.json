@@ -1,6 +1,6 @@
 {
-  "version": "725925",
-  "core_build": "0.7.25925",
+  "version": "725949",
+  "core_build": "0.7.25949",
   "platforms": {
     "osx-arm64": {
       "url": "https://cdn3.moontrader.com/beta/macos-arm64/MoonTrader-macos-arm64-version_725925.tar.xz",
@@ -67,14 +67,14 @@
       }
     },
     "win-x64": {
-      "url": "https://cdn3.moontrader.com/beta/windows-x86_64/MoonTrader-windows-x86_64-version_725925.exe",
-      "sha256": "068decfec996676cf53bde2b9e9693daf9607e30d5dad59988681a2be7160068",
+      "url": "https://cdn3.moontrader.com/beta/windows-x86_64/MoonTrader-windows-x86_64-version_725949.exe",
+      "sha256": "ca2aa70a9691783a0668f861933658e7a511ed8a7faca0e6623039dc692632e8",
       "format": "7z-sfx",
       "machine": "x64",
       "files": {
         "MTShared.dll": {
           "path": "BotClient/lib/MTShared.dll",
-          "sha256": "62c272366db634496c78eec1b5d13d2a55064e2f586c0fe5487fd41b9338ad9d"
+          "sha256": "13cbb04c0ceb449dcb287a4073b4ccb92a0021d72f2d99be9b1b68a34fff7a48"
         },
         "LiteNetLib.dll": {
           "path": "lib/LiteNetLib.dll",
