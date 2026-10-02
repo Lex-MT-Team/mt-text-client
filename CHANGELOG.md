@@ -9,6 +9,13 @@ Versions follow [SemVer](https://semver.org).
 
 ## Unreleased
 
+### Process exit after a core connection
+
+`exit` and `quit` in the REPL, one-shot commands, and `--mcp` mode at end of
+input now end the process. Previously, once a connection had been established,
+the MTShared logger's worker thread kept the process running after shutdown,
+and Ctrl+C in the REPL only printed `Use 'exit' to quit.`
+
 ### Callback request completion and timeouts
 
 Callback-based alert, dust, deposit, market-data, profile-settings, and

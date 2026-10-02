@@ -1,4 +1,5 @@
 using System;
+using MTShared;
 using MTTextClient.Commands;
 using MTTextClient.Core;
 using MTTextClient.MCP;
@@ -25,6 +26,20 @@ public static class Program
     private static readonly CommandRegistry Registry = new();
 
     public static void Main(string[] args)
+    {
+        try
+        {
+            Run(args);
+        }
+        finally
+        {
+            // MTShared's logger starts a foreground worker thread on its first log line.
+            // Until that thread is shut down, the process stays alive after Main returns.
+            MTLogger.Shutdown();
+        }
+    }
+
+    private static void Run(string[] args)
     {
         // MCP server mode — run stdio JSON-RPC server
         if (args.Length > 0 && args[0] == "--mcp")
