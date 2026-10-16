@@ -53,7 +53,7 @@
   "mt_exchange_summary": "exchange summary @<profile>",
   "mt_exchange_pairs": "exchange pairs @<profile>",
   "mt_exchange_search": "exchange search <query> @<profile>",
-  "mt_exchange_pair_detail": "exchange detail <symbol> @<profile>",
+  "mt_exchange_pair_detail": "exchange detail symbol market_type @<profile>",
   "mt_exchange_ticker24": "exchange ticker24 <symbol> @<profile>",
   "mt_exchange_klines": "exchange klines <symbol> <interval> <limit> @<profile>",
   "mt_exchange_trades": "exchange trades <symbol> @<profile>",

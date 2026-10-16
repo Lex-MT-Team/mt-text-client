@@ -75,21 +75,24 @@ public static class ToolRegistry
         yield return Tool("mt_exchange_search", "Search trade pairs",
             Prop("query", "string", "Search query", required: true),
             Prop("profile", "string", "Target server profile"));
-        yield return Tool("mt_exchange_pair_detail", "Get detailed info for a specific trade pair",
+        yield return Tool("mt_exchange_pair_detail",
+            "Get detailed info for a trade pair. market_type selects the market explicitly; " +
+            "without it, FUTURES is preferred when the symbol exists on several markets.",
             Prop("symbol", "string", "Symbol name (e.g. BTCUSDT)", required: true),
+            Prop("market_type", "string", "Market type (e.g. FUTURES, SPOT, DELIVERY, MARGIN)"),
             Prop("profile", "string", "Target server profile"));
 
         // ── Exchange Data ──
         yield return Tool("mt_exchange_ticker24",
-            "Get 24h ticker price statistics for a symbol. Returns price change, high/low, volume, trade count. market_type FUTURES or SPOT (default: exchange-dependent).",
+            "Get 24h ticker price statistics for a symbol. Returns price change, high/low, volume, trade count. market_type FUTURES or SPOT; when omitted, FUTURES is preferred for symbols on several markets.",
             Prop("symbol", "string", "Symbol (e.g. BTCUSDT)", required: true),
             Prop("market_type", "string", "FUTURES or SPOT"),
             Prop("profile", "string", "Target server profile"));
         yield return Tool("mt_exchange_klines",
             "Get candlestick/kline data for a symbol. Returns OHLCV data. " +
             "market (FUTURES|SPOT) lets you force the market type when a symbol exists on both; " +
-            "without it, the server falls back to its exchange-info pair cache and may pick the wrong one " +
-            "(e.g. BTCUSDT routes to SPOT on Binance unless overridden).",
+            "without it, the server uses its exchange-info pair cache and prefers FUTURES " +
+            "when the symbol exists on several markets.",
             Prop("symbol", "string", "Symbol (e.g. BTCUSDT)", required: true),
             Prop("interval", "string", "Candle interval: 1s,1m,3m,5m,15m,30m,1h,2h,4h,6h,12h,1d,3d,1w,1M (default: 1h)"),
             Prop("limit", "string", "Number of candles to return, 1-1000 (default: 100)"),

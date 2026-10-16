@@ -62,6 +62,23 @@ public sealed class ExchangeTests
 
     [SkippableFact]
     [Trait("Category", TraitCategories.Smoke)]
+    public async Task mt_exchange_pair_detail_selects_the_requested_futures_market()
+    {
+        Skip.If(!EnvFlags.TestingEnv || !_bench.BenchAvailable, _bench.PreflightMessage);
+        await _mcp.WaitForConnected(EnvFlags.DefaultBenchProfile);
+
+        var response = await _mcp.CallTool("mt_exchange_pair_detail", new
+        {
+            symbol = "BTCUSDT", market_type = "FUTURES", profile = EnvFlags.DefaultBenchProfile,
+        });
+
+        response.InnerSuccess.Should().BeTrue();
+        var data = response.ParsedBody!.Value.GetProperty("data");
+        data.GetProperty("MarketType").GetString().Should().Be("FUTURES");
+    }
+
+    [SkippableFact]
+    [Trait("Category", TraitCategories.Smoke)]
     public async Task mt_exchange_search_for_btc_returns_matching_pair()
     {
         Skip.If(!EnvFlags.TestingEnv || !_bench.BenchAvailable, _bench.PreflightMessage);

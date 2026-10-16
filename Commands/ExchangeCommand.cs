@@ -12,7 +12,7 @@ namespace MTTextClient.Commands;
 ///
 /// exchange pairs            — list all trade pairs (first 100)
 /// exchange search <query>   — search trade pairs
-/// exchange detail <symbol>  — detail view of a specific pair
+/// exchange detail <symbol> [market_type] — detail view of a specific pair
 /// exchange summary          — exchange info summary
 /// exchange limits           — API loading percentages
 /// exchange ticker24 <symbol> — 24h ticker statistics
@@ -228,11 +228,24 @@ public sealed class ExchangeCommand : ICommand
     {
         if (args.Length == 0)
         {
-            return CommandResult.Fail("Usage: exchange detail <symbol>");
+            return CommandResult.Fail("Usage: exchange detail <symbol> [market_type]");
         }
 
         string? symbol = args[0].ToUpperInvariant();
-        TradePairSnapshot? pair = store.GetTradePair(symbol);
+        TradePairSnapshot? pair;
+        if (args.Length >= 2)
+        {
+            if (!Enum.TryParse(args[1], ignoreCase: true, out MarketType marketType) ||
+                !Enum.IsDefined(marketType))
+            {
+                return CommandResult.Fail($"Invalid market type: {args[1]}.");
+            }
+            pair = store.GetTradePair(symbol, marketType);
+        }
+        else
+        {
+            pair = store.GetTradePair(symbol);
+        }
 
         if (pair == null)
         {
@@ -373,13 +386,18 @@ public sealed class ExchangeCommand : ICommand
         string? symbol = args[0].ToUpperInvariant();
         MarketType marketType = MarketType.FUTURES;
 
-        if (args.Length >= 2 && Enum.TryParse<MarketType>(args[1].ToUpperInvariant(), out MarketType mt))
+        bool hasMarketOverride = args.Length >= 2;
+        if (hasMarketOverride)
         {
-            marketType = mt;
+            if (!Enum.TryParse(args[1], ignoreCase: true, out marketType) || !Enum.IsDefined(marketType))
+            {
+                return CommandResult.Fail($"Invalid market type: {args[1]}.");
+            }
         }
 
-        // Auto-detect market type from exchange info
-        TradePairSnapshot? pairInfo = conn.ExchangeInfoStore.GetTradePair(symbol);
+        TradePairSnapshot? pairInfo = hasMarketOverride
+            ? conn.ExchangeInfoStore.GetTradePair(symbol, marketType)
+            : conn.ExchangeInfoStore.GetTradePair(symbol);
         if (pairInfo != null)
         {
             marketType = pairInfo.MarketType;
@@ -463,7 +481,7 @@ public sealed class ExchangeCommand : ICommand
                 "Usage: exchange klines <symbol> [interval] [limit] [--market FUTURES|SPOT]\n" +
                 "  interval: 1m,3m,5m,15m,30m,1h,2h,4h,6h,12h,1d,3d,1w,1M (default: 1h)\n" +
                 "  limit: 1-1000 (default: 100)\n" +
-                "  --market overrides the pair-cache lookup (e.g. BTCUSDT on Binance routes to SPOT by default)");
+                "  --market overrides the pair-cache lookup (FUTURES is preferred for symbols on several markets)");
         }
 
         string? symbol = args[0].ToUpperInvariant();
@@ -706,7 +724,7 @@ public sealed class ExchangeCommand : ICommand
             Enum.IsDefined(typeof(MarketType), mt))
             marketType = mt;
         // Quote derived from the pair-cache snapshot if present.
-        string quote = conn.ExchangeInfoStore.GetTradePair(symbol)?.QuoteAsset ?? "";
+        string quote = conn.ExchangeInfoStore.GetTradePair(symbol, marketType)?.QuoteAsset ?? "";
 
         conn.SubscribeLiveMarkets(marketType, symbol, quote);
         // Wait briefly for a metrics push.

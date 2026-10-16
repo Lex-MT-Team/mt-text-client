@@ -1188,13 +1188,9 @@ public sealed class OrdersCommand : ICommand
     private static MarketType ResolvePanicSellMarketType(
         AccountStore accountStore, ExchangeInfoStore exchangeInfoStore, string symbol)
     {
-        // Market type must match the actual open position. The pair cache
-        // (ExchangeInfoStore) is keyed by symbol only, so a symbol listed on
-        // both spot and futures (e.g. Binance VELVETUSDT) collides on one key
-        // and can resolve to the WRONG MarketType — the CORE then panic-sells
-        // an empty market and reports "There was nothing to sell". Prefer the
-        // live position's MarketType (authoritative, same as `orders close`);
-        // fall back to the pair cache, then FUTURES, when no position is open.
+        // Symbols can exist on several markets. Prefer the actual open position
+        // over the pair cache's default market; fall back to the cache, then
+        // FUTURES, when no matching position is open.
         MarketType marketType = MarketType.FUTURES;
         PositionSnapshot? openPosition = null;
         foreach (PositionSnapshot p in accountStore.GetPositions(openOnly: true))

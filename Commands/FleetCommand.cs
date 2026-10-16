@@ -1534,7 +1534,7 @@ private CommandResult HandleBatchConfig(string[] args)
 
             if (!conn.IsConnected) { row.SkipReason = "disconnected"; rows.Add(row); continue; }
 
-            TradePairSnapshot? pair = conn.ExchangeInfoStore.GetTradePair(symbol);
+            TradePairSnapshot? pair = conn.ExchangeInfoStore.GetTradePair(symbol, market);
             if (pair == null)
             { row.SkipReason = "symbol_not_in_pair_cache"; rows.Add(row); continue; }
             if (pair.MarketType != market)
