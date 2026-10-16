@@ -22,7 +22,7 @@ namespace MTTextClient.Core;
 /// </summary>
 public sealed class ExchangeInfoStore
 {
-    // Key: symbol (e.g. "BTCUSDT")
+    // Key: market and case-insensitive symbol (e.g. "FUTURES:btcusdt").
     private readonly ConcurrentDictionary<string, TradePairSnapshot> _tradePairs = new(StringComparer.OrdinalIgnoreCase);
 
     // API loading % per market type (from MaxApiLimitData)
@@ -97,7 +97,7 @@ public sealed class ExchangeInfoStore
 
             string symbol = tp.symbol ?? "?";
 
-            _tradePairs[symbol] = new TradePairSnapshot
+            _tradePairs[MarketKey(tp.marketType, symbol)] = new TradePairSnapshot
             {
                 Symbol = symbol,
                 MarketType = tp.marketType,
@@ -151,9 +151,10 @@ public sealed class ExchangeInfoStore
                     continue;
                 }
 
-                if (_tradePairs.TryGetValue(priceUpdate.symbol, out TradePairSnapshot? existing))
+                string key = MarketKey(priceUpdate.marketType, priceUpdate.symbol);
+                if (_tradePairs.TryGetValue(key, out TradePairSnapshot? existing))
                 {
-                    _tradePairs[priceUpdate.symbol] = existing with
+                    _tradePairs[key] = existing with
                     {
                         TickerPrice = priceUpdate.price,
                         Timestamp = DateTime.UtcNow
@@ -176,9 +177,10 @@ public sealed class ExchangeInfoStore
                     continue;
                 }
 
-                if (_tradePairs.TryGetValue(tp.symbol, out TradePairSnapshot? existing))
+                string key = MarketKey(tp.marketType, tp.symbol);
+                if (_tradePairs.TryGetValue(key, out TradePairSnapshot? existing))
                 {
-                    _tradePairs[tp.symbol] = existing with
+                    _tradePairs[key] = existing with
                     {
                         TickerPrice = tp.TickerPrice,
                         TickerEventTime = tp.TickerEventTime,
@@ -308,7 +310,11 @@ public sealed class ExchangeInfoStore
     public IReadOnlyList<TradePairSnapshot> GetTradePairs()
     {
         var list = new List<TradePairSnapshot>(_tradePairs.Values);
-        list.Sort((a, b) => string.Compare(a.Symbol, b.Symbol, StringComparison.Ordinal));
+        list.Sort((a, b) =>
+        {
+            int symbolOrder = string.Compare(a.Symbol, b.Symbol, StringComparison.OrdinalIgnoreCase);
+            return symbolOrder != 0 ? symbolOrder : a.MarketType.CompareTo(b.MarketType);
+        });
         return list;
     }
 
@@ -323,7 +329,11 @@ public sealed class ExchangeInfoStore
                 list.Add(t);
             }
         }
-        list.Sort((a, b) => string.Compare(a.Symbol, b.Symbol, StringComparison.Ordinal));
+        list.Sort((a, b) =>
+        {
+            int symbolOrder = string.Compare(a.Symbol, b.Symbol, StringComparison.OrdinalIgnoreCase);
+            return symbolOrder != 0 ? symbolOrder : a.MarketType.CompareTo(b.MarketType);
+        });
         return list;
     }
 
@@ -339,15 +349,53 @@ public sealed class ExchangeInfoStore
                 list.Add(t);
             }
         }
-        list.Sort((a, b) => string.Compare(a.Symbol, b.Symbol, StringComparison.Ordinal));
+        list.Sort((a, b) =>
+        {
+            int symbolOrder = string.Compare(a.Symbol, b.Symbol, StringComparison.OrdinalIgnoreCase);
+            return symbolOrder != 0 ? symbolOrder : a.MarketType.CompareTo(b.MarketType);
+        });
         return list;
     }
 
-    /// <summary>Get a specific trade pair.</summary>
+    /// <summary>
+    /// Get a pair without an explicit market. Prefer FUTURES, then the first
+    /// available market in numeric order, so packet arrival order cannot select it.
+    /// Call the market-specific overload when the caller has selected a market.
+    /// </summary>
     public TradePairSnapshot? GetTradePair(string symbol)
     {
-        _tradePairs.TryGetValue(symbol, out TradePairSnapshot? tp);
-        return tp;
+        TradePairSnapshot? futures = GetTradePair(symbol, MarketType.FUTURES);
+        if (futures != null)
+        {
+            return futures;
+        }
+
+        string normalizedSymbol = NormalizeSymbol(symbol);
+        TradePairSnapshot? fallback = null;
+        foreach (KeyValuePair<string, TradePairSnapshot> entry in _tradePairs)
+        {
+            TradePairSnapshot pair = entry.Value;
+            if (!pair.Symbol.Trim().Equals(normalizedSymbol, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+            if (pair.MarketType == MarketType.FUTURES)
+            {
+                return pair;
+            }
+            if (fallback == null || pair.MarketType.CompareTo(fallback.MarketType) < 0)
+            {
+                fallback = pair;
+            }
+        }
+        return fallback;
+    }
+
+    /// <summary>Get the exact symbol/market pair without falling back to another market.</summary>
+    public TradePairSnapshot? GetTradePair(string symbol, MarketType marketType)
+    {
+        _tradePairs.TryGetValue(MarketKey(marketType, symbol), out TradePairSnapshot? pair);
+        return pair;
     }
 
     /// <summary>Get API loading percentages per market type.</summary>

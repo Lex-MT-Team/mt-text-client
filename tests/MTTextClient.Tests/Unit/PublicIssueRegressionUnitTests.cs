@@ -343,7 +343,6 @@ public sealed class PublicIssueRegressionUnitTests
     {
         AccountStore account = CreatePanicSellAccount("velvetusdt", 1);
         var exchange = new ExchangeInfoStore();
-        AddPanicSellPair(exchange, MarketType.FUTURES);
         AddPanicSellPair(exchange, MarketType.SPOT);
         exchange.GetTradePair("VELVETUSDT")!.MarketType.Should().Be(MarketType.SPOT);
 
@@ -586,6 +585,101 @@ public sealed class PublicIssueRegressionUnitTests
             // Observe worker failures without replacing the test's original failure.
             _ = waiting.Exception;
         }
+    }
+
+    [Theory]
+    [Trait("Category", "Unit")]
+    [InlineData("SPOT", 100)]
+    [InlineData("FUTURES", 200)]
+    public void Pair_detail_respects_the_requested_market(string market, double price)
+    {
+        using var connection = CreateCollidingPairConnection();
+        var command = new ExchangeCommand(null!);
+        MethodInfo detail = typeof(ExchangeCommand).GetMethod("PairDetail",
+            BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+        var result = (CommandResult)detail.Invoke(command,
+            new object[] { "test-server", connection.ExchangeInfoStore, new[] { "ETHUSDT", market } })!;
+
+        result.Success.Should().BeTrue();
+        JObject data = JObject.FromObject(result.Data!);
+        data["MarketType"]!.Value<string>().Should().Be(market);
+        double.Parse(data["TickerPrice"]!.Value<string>()!, System.Globalization.CultureInfo.InvariantCulture)
+            .Should().Be(price);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void Pair_detail_rejects_an_unknown_market()
+    {
+        using var connection = CreateCollidingPairConnection();
+        var command = new ExchangeCommand(null!);
+        MethodInfo detail = typeof(ExchangeCommand).GetMethod("PairDetail",
+            BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+        var result = (CommandResult)detail.Invoke(command,
+            new object[] { "test-server", connection.ExchangeInfoStore, new[] { "ETHUSDT", "invalid" } })!;
+
+        result.Success.Should().BeFalse();
+        result.Message.Should().Contain("market");
+    }
+
+    [Theory]
+    [Trait("Category", "Unit")]
+    [InlineData("SPOT", 100)]
+    [InlineData("FUTURES", 200)]
+    public void Per_symbol_ticker_cache_fallback_respects_the_requested_market(string market, double price)
+    {
+        using var connection = CreateCollidingPairConnection();
+        var command = new ExchangeCommand(null!);
+        MethodInfo ticker = typeof(ExchangeCommand).GetMethod("Ticker24",
+            BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+        var result = (CommandResult)ticker.Invoke(command,
+            new object[] { connection, new[] { "ETHUSDT", market } })!;
+
+        result.Success.Should().BeTrue();
+        JObject data = JObject.FromObject(result.Data!);
+        data["MarketType"]!.Value<string>().Should().Be(market);
+        data["LastPrice"]!.Value<double>().Should().Be(price);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void Per_symbol_ticker_does_not_use_a_different_markets_cached_price()
+    {
+        using var connection = new CoreConnection(new ServerProfile { Name = "test-server" });
+        var pairs = new TradePairListData { marketType = MarketType.FUTURES };
+        pairs.TradePairs["ethusdt"] = new TradePairData
+        {
+            symbol = "ethusdt", marketType = MarketType.FUTURES, TickerPrice = 200,
+        };
+        connection.ExchangeInfoStore.ProcessData(NetworkMessageType.TRADE_PAIR_LIST_RESULT, pairs);
+        var command = new ExchangeCommand(null!);
+        MethodInfo ticker = typeof(ExchangeCommand).GetMethod("Ticker24",
+            BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+        var result = (CommandResult)ticker.Invoke(command,
+            new object[] { connection, new[] { "ETHUSDT", "SPOT" } })!;
+
+        result.Success.Should().BeFalse();
+    }
+
+    private static CoreConnection CreateCollidingPairConnection()
+    {
+        var connection = new CoreConnection(new ServerProfile { Name = "test-server" });
+        foreach (MarketType market in new[] { MarketType.SPOT, MarketType.FUTURES })
+        {
+            var list = new TradePairListData { marketType = market };
+            list.TradePairs["ethusdt"] = new TradePairData
+            {
+                symbol = "ethusdt", marketType = market, baseAsset = "eth", quoteAsset = "usdt",
+                minQty = market == MarketType.SPOT ? 1 : 0.001,
+                TickerPrice = market == MarketType.SPOT ? 100 : 200,
+            };
+            connection.ExchangeInfoStore.ProcessData(NetworkMessageType.TRADE_PAIR_LIST_RESULT, list);
+        }
+        return connection;
     }
 
     private static AccountStore CreatePanicSellAccount(string symbol, int amount)

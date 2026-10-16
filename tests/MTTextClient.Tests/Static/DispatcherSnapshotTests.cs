@@ -60,6 +60,22 @@ public sealed class DispatcherSnapshotTests
             because: $"snapshot file should have at least {toolCount} lines (one per tool, plus braces)");
     }
 
+    [Theory]
+    [InlineData("SPOT")]
+    [InlineData("FUTURES")]
+    [InlineData("DELIVERY")]
+    public void Pair_detail_dispatches_the_explicit_market(string market)
+    {
+        var arguments = new Newtonsoft.Json.Linq.JObject
+        {
+            ["symbol"] = "ETHUSDT", ["market_type"] = market, ["profile"] = "test-server",
+        };
+
+        string? command = MTTextClient.MCP.McpServer.MapToolToCommand("mt_exchange_pair_detail", arguments);
+
+        command.Should().Be($"exchange detail ETHUSDT {market} @test-server");
+    }
+
     private static string ResolveSnapshotPath()
     {
         // RepoPaths.Root walks up to find MTTextClient.csproj.

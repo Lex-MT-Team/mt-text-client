@@ -946,9 +946,9 @@ MIT — see [LICENSE](LICENSE).
 | `mt_exchange_summary` | Get exchange info summary | — | — |
 | `mt_exchange_pairs` | List trade pairs | — | — |
 | `mt_exchange_search` | Search trade pairs | `query` | — |
-| `mt_exchange_pair_detail` | Get detailed info for a specific trade pair | `symbol` | — |
-| `mt_exchange_ticker24` | Get 24h ticker price statistics for a symbol. Returns price change, high/low, volume, trade count. market_type FUTURES or SPOT (default: exchange-dependent). | `symbol` | — |
-| `mt_exchange_klines` | Get candlestick/kline data for a symbol. Returns OHLCV data. market (FUTURES\|SPOT) lets you force the market type when a symbol exists on both; without it, the server falls back to its exchange-info pair cache and may pick the wrong one (e.g. BTCUSDT routes to SPOT on Binance unless overridden). | `symbol` | — |
+| `mt_exchange_pair_detail` | Get detailed info for a trade pair. market_type selects the market explicitly; without it, FUTURES is preferred when the symbol exists on several markets. | `symbol` | — |
+| `mt_exchange_ticker24` | Get 24h ticker price statistics for a symbol. Returns price change, high/low, volume, trade count. market_type FUTURES or SPOT; when omitted, FUTURES is preferred for symbols on several markets. | `symbol` | — |
+| `mt_exchange_klines` | Get candlestick/kline data for a symbol. Returns OHLCV data. market (FUTURES\|SPOT) lets you force the market type when a symbol exists on both; without it, the server uses its exchange-info pair cache and prefers FUTURES when the symbol exists on several markets. | `symbol` | — |
 | `mt_exchange_trades` | Get recent trades for a symbol from the exchange. | `symbol` | — |
 | `mt_exchange_funding_rate` | Get the funding-rate fields for a symbol (last funding rate/time, next funding rate/time, mark price, last price). Read-only; no confirm. Returns whatever the symbol's live-markets cache currently holds, with up to a few seconds of warm-up after first subscription. | `symbol` | — |
 | `mt_exchange_leverage_info` | Get configured/effective leverage, max leverage, and risk-limit data for a symbol from MTCore's LeverageInfoUpdateData cache. Read-only; no confirm. Does not require an open position, but the cache must have observed a core leverage refresh in this mt-text-client session. | `symbol` | — |

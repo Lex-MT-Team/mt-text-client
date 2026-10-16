@@ -230,7 +230,7 @@ public sealed class WhitelistCommand : ICommand
                     ["TimeFilter"] = new JObject(),
                 });
                 // Pre-flight: warn if not in pair cache.
-                var pair = conn.ExchangeInfoStore.GetTradePair(s);
+                var pair = conn.ExchangeInfoStore.GetTradePair(s, market);
                 if (pair == null) notTradable.Add(s);
             }
             else

@@ -9,6 +9,19 @@ Versions follow [SemVer](https://semver.org).
 
 ## Unreleased
 
+### Keep trade pairs and prices separate by market
+
+Trade pairs with the same symbol on different markets now coexist in the
+exchange-info cache. Pair lists, search results, and market counts retain every
+market, and price updates change only the matching symbol and market, including
+updates sent as full pair records.
+
+`mt_exchange_pair_detail` accepts an optional `market_type` (CLI: `exchange detail
+<symbol> [market_type]`). Explicit ticker markets and market-specific funding,
+fleet, and whitelist lookups use the requested market without borrowing another
+market's cached pair. Calls that omit a market prefer FUTURES when available,
+then the first available market in numeric order, independent of arrival order.
+
 ### Callback request completion and timeouts
 
 Callback-based alert, dust, deposit, market-data, profile-settings, and

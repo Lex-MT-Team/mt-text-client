@@ -746,6 +746,21 @@ public sealed class McpServer
         return ""; // silently ignore garbage; sanitizer handles \r/\n already
     }
 
+    /// <summary>Forward the optional pair-detail market through the shared command path.</summary>
+    private static string BuildExchangePairDetail(JObject arguments, string profileSuffix)
+    {
+        var parts = new List<string>
+        {
+            "exchange detail", SanitiseToken(arguments["symbol"]?.Value<string>()),
+        };
+        string market = SanitiseToken(arguments["market_type"]?.Value<string>());
+        if (!string.IsNullOrEmpty(market))
+        {
+            parts.Add(market);
+        }
+        return string.Join(" ", parts) + profileSuffix;
+    }
+
     /// <summary>Two-mode dispatch for mt_marketdata_ticker:
     ///   - symbol present → "marketdata ticker &lt;SYMBOL&gt; [&lt;MARKET&gt;]"
     ///     routes HandleTicker through the per-symbol one-shot ticker24 path
@@ -894,7 +909,7 @@ public sealed class McpServer
             "mt_exchange_summary" => $"exchange summary{profileSuffix}",
             "mt_exchange_pairs" => $"exchange pairs{profileSuffix}",
             "mt_exchange_search" => $"exchange search {arguments["query"]?.Value<string>() ?? ""}{profileSuffix}",
-            "mt_exchange_pair_detail" => $"exchange detail {arguments["symbol"]?.Value<string>() ?? ""}{profileSuffix}",
+            "mt_exchange_pair_detail" => BuildExchangePairDetail(arguments, profileSuffix),
 
             // Exchange data queries
             "mt_exchange_ticker24" => $"exchange ticker24 {arguments["symbol"]?.Value<string>() ?? ""}{ResolveTicker24Market(arguments)}{profileSuffix}",

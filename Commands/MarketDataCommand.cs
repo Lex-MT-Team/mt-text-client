@@ -573,7 +573,9 @@ public sealed class MarketDataCommand : ICommand
         {
             string symbol = parts[0].ToUpperInvariant();
             MarketType marketType = ParseMarketType(parts, 1);
-            TradePairSnapshot? pairInfo = conn.ExchangeInfoStore.GetTradePair(symbol);
+            TradePairSnapshot? pairInfo = parts.Length >= 2
+                ? conn.ExchangeInfoStore.GetTradePair(symbol, marketType)
+                : conn.ExchangeInfoStore.GetTradePair(symbol);
             if (pairInfo != null) { marketType = pairInfo.MarketType; }
 
             var snap = conn.RequestTicker24(marketType, symbol);
