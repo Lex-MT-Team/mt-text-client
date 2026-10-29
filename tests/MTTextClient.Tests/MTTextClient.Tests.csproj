@@ -25,6 +25,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\MTTextClient.csproj" />
+    <ProjectReference Include="..\..\Core\Diagnostics\Companion\MTDiag.Companion.csproj" Aliases="companion" />
     <ProjectReference Include="..\..\tools\RegistryReadmeGenerator\RegistryReadmeGenerator.csproj" />
     <ProjectReference Include="..\..\tools\DispatcherSnapshotGenerator\DispatcherSnapshotGenerator.csproj" />
   </ItemGroup>

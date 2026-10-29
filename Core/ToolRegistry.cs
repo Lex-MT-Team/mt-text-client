@@ -67,6 +67,71 @@ public static class ToolRegistry
         yield return Tool("mt_core_dashboard", "Get multi-server dashboard",
             Prop("profile", "string", "Target server profile"));
 
+        // ── Optional diagnostics ──
+        yield return Tool("mt_diag_capabilities", "Get the configured diagnostic companion capabilities",
+            Prop("profile", "string", "Saved profile to inspect", required: true),
+            Prop("diag_port", "integer", "Optional diagnostic companion port override (1-65535)", minimum: 1, maximum: 65535),
+            Prop("timeout_ms", "integer", "Diagnostic timeout in milliseconds (1-15000)", minimum: 1, maximum: 15000));
+        yield return Tool("mt_diag_health", "Get a read-only diagnostic companion health observation",
+            Prop("profile", "string", "Saved profile to inspect", required: true),
+            Prop("diag_port", "integer", "Optional diagnostic companion port override (1-65535)", minimum: 1, maximum: 65535),
+            Prop("timeout_ms", "integer", "Diagnostic timeout in milliseconds (1-15000)", minimum: 1, maximum: 15000));
+        yield return Tool("mt_diag_logs", "Read a bounded set of diagnostic companion log entries",
+            Prop("profile", "string", "Saved profile to inspect", required: true),
+            Prop("diag_port", "integer", "Optional diagnostic companion port override (1-65535)", minimum: 1, maximum: 65535),
+            Prop("timeout_ms", "integer", "Diagnostic timeout in milliseconds (1-15000)", minimum: 1, maximum: 15000),
+            Prop("lines", "integer", "Number of recent log entries (1-500)", required: true, minimum: 1, maximum: 500),
+            Prop("grep", "string", "Optional log text filter (up to 512 UTF-8 bytes)"));
+        yield return Tool("mt_diag_guardian_status", "Get the diagnostic companion Guardian status",
+            Prop("profile", "string", "Saved profile to inspect", required: true),
+            Prop("diag_port", "integer", "Optional diagnostic companion port override (1-65535)", minimum: 1, maximum: 65535),
+            Prop("timeout_ms", "integer", "Diagnostic timeout in milliseconds (1-15000)", minimum: 1, maximum: 15000));
+        yield return Tool("mt_diag_guardian_events", "Read a bounded set of diagnostic companion Guardian events",
+            Prop("profile", "string", "Saved profile to inspect", required: true),
+            Prop("diag_port", "integer", "Optional diagnostic companion port override (1-65535)", minimum: 1, maximum: 65535),
+            Prop("timeout_ms", "integer", "Diagnostic timeout in milliseconds (1-15000)", minimum: 1, maximum: 15000),
+            Prop("lines", "integer", "Number of recent Guardian events (1-500)", required: true, minimum: 1, maximum: 500));
+        yield return Tool("mt_diag_fleet_collect", "Collect one bounded read-only diagnostic operation for an explicit saved-profile list",
+            Prop("profiles", "array", "Explicit saved profile names to inspect (1-128)", required: true),
+            Prop("operation", "string", "One native operation: capabilities, health, logs, guardian-status, or guardian-events", required: true),
+            Prop("diag_port", "integer", "Optional diagnostic companion port override (1-65535)", minimum: 1, maximum: 65535),
+            Prop("concurrency", "integer", "Concurrent native requests (1-16; default 8)", minimum: 1, maximum: 16),
+            Prop("deadline_ms", "integer", "Total fleet deadline in milliseconds (1-60000; default 15000)", minimum: 1, maximum: 60000),
+            Prop("retry_once", "boolean", "Retry one transient timeout or transport failure within the same total deadline"),
+            Prop("lines", "integer", "Required for logs or guardian-events (1-500)", minimum: 1, maximum: 500),
+            Prop("grep", "string", "Optional logs filter (up to 512 UTF-8 bytes)"));
+        foreach (string operation in new[] { "page", "close" })
+            yield return Tool("mt_diag_history_" + operation, operation == "page" ? "Read or replay one retained-history page; continue until has_more=false and inspect coverage gaps. No total history depth cap." : "Release a history cursor using its original query binding",
+                Prop("profile", "string", "Saved profile", required: true),
+                Prop("source", "string", "logs or guardian-events", required: true),
+                Prop("since", "string", "Inclusive ISO timestamp with explicit UTC offset", required: true),
+                Prop("until", "string", "Exclusive ISO timestamp with explicit UTC offset", required: true),
+                Prop("unknown_time", "string", "include (default) returns untimed records; report-only counts them as coverage gaps without returning unrelated text"),
+                Prop("query_id", "string", "Caller-generated 32-hex ID; preserve on retries and continuation", required: true),
+                Prop("page_lines", "integer", "Per-page maximum (1-500; default 200); preserve for the query", minimum: 1, maximum: 500),
+                Prop("cursor", "string", "Opaque continuation; required for close"),
+                Prop("sequence", "integer", "Start at zero; use next_sequence; same sequence replays the last page", minimum: 0),
+                Prop("diag_port", "integer", "Explicit companion port override", minimum: 1, maximum: 65535),
+                Prop("timeout_ms", "integer", "Per-page timeout", minimum: 1, maximum: 15000));
+        yield return Tool("mt_diag_history_fleet", "Read one bounded page per explicit profile. Persist each returned cursor and next_sequence; repeat until every retained window is exhausted. Page success does not mean complete historical coverage.",
+            Prop("requests", "array", "1-128 objects: profile, source, since, until, page_lines, query_id, cursor (null initially), sequence (0 initially), optional unknown_time=include|report-only", required: true),
+            Prop("diag_port", "integer", "Companion port override", minimum: 1, maximum: 65535),
+            Prop("concurrency", "integer", "Concurrent profiles; default 8", minimum: 1, maximum: 16),
+            Prop("deadline_ms", "integer", "Invocation deadline; default 15000", minimum: 1, maximum: 60000));
+        yield return Tool("mt_diag_investigation_start", "Start a finite diagnostic evidence session for one saved profile",
+            Prop("profile", "string", "Saved profile to investigate", required: true),
+            Prop("ttl_seconds", "integer", "Session lifetime in seconds (1-300)", required: true, minimum: 1, maximum: 300),
+            Prop("event_types", "array", "Allowlisted event types to correlate", required: true));
+        yield return Tool("mt_diag_investigation_collect", "Collect a bounded portable diagnostic evidence bundle",
+            Prop("profile", "string", "Saved profile to inspect", required: true),
+            Prop("diag_port", "integer", "Optional diagnostic companion port override (1-65535)", minimum: 1, maximum: 65535),
+            Prop("deadline_ms", "integer", "Collection deadline in milliseconds (1-60000)", minimum: 1, maximum: 60000),
+            Prop("hash", "boolean", "Include hashes computed after sanitation"));
+        yield return Tool("mt_diag_investigation_export", "Return the current sanitized evidence from one finite session",
+            Prop("session_id", "string", "Investigation session identifier", required: true));
+        yield return Tool("mt_diag_investigation_stop", "Stop one finite diagnostic evidence session",
+            Prop("session_id", "string", "Investigation session identifier", required: true));
+
         // ── Exchange ──
         yield return Tool("mt_exchange_summary", "Get exchange info summary",
             Prop("profile", "string", "Target server profile"));
@@ -1377,6 +1442,10 @@ public static class ToolRegistry
             };
             if (p["items"] != null)
                 propDef["items"] = p["items"];
+            if (p["minimum"] != null)
+                propDef["minimum"] = p["minimum"];
+            if (p["maximum"] != null)
+                propDef["maximum"] = p["maximum"];
             props[propName] = propDef;
 
             if (p["_required"]?.Value<bool>() == true)
@@ -1398,7 +1467,7 @@ public static class ToolRegistry
         };
     }
 
-    private static JObject Prop(string name, string type, string description, bool required = false)
+    private static JObject Prop(string name, string type, string description, bool required = false, int? minimum = null, int? maximum = null)
     {
         var prop = new JObject
         {
@@ -1409,6 +1478,10 @@ public static class ToolRegistry
         };
         if (type == "array")
             prop["items"] = new JObject { ["type"] = "string" };
+        if (minimum is not null)
+            prop["minimum"] = minimum.Value;
+        if (maximum is not null)
+            prop["maximum"] = maximum.Value;
         return prop;
     }
     private static IEnumerable<JObject> GetInternalToolDefinitions()

@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>MTTextClient.Core.Diagnostics.Companion</RootNamespace>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <PublishTrimmed>false</PublishTrimmed>
+    <PublishAot>false</PublishAot>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\ServerProfile.cs" Link="ServerProfile.cs" />
+    <Compile Include="..\DiagnosticContracts.cs" Link="DiagnosticContracts.cs" />
+    <Compile Include="..\DiagnosticReplyValidator.cs" Link="DiagnosticReplyValidator.cs" />
+    <Compile Include="..\NativeDiagnosticProtocol.cs" Link="NativeDiagnosticProtocol.cs" />
+    <Compile Include="..\NativeDiagnosticVendorAdapter.cs" Link="NativeDiagnosticVendorAdapter.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>MTTextClient.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+</Project>

@@ -1,6 +1,6 @@
 {
   "_comment": "Locked baseline as of repo @ 0604e31. PR-gate CI fails if any name disappears or any 'required' array shrinks. Generated from tools_catalog_v3.json.",
-  "tool_count_minimum": 259,
+  "tool_count_minimum": 271,
   "tools": [
     {
       "name": "mt_account_balance",
@@ -452,6 +452,71 @@
     {
       "name": "mt_core_health",
       "required": []
+    },
+    {
+      "name": "mt_diag_capabilities",
+      "required": [
+        "profile"
+      ]
+    },
+    {
+      "name": "mt_diag_fleet_collect",
+      "required": [
+        "profiles",
+        "operation"
+      ]
+    },
+    {
+      "name": "mt_diag_guardian_events",
+      "required": [
+        "profile",
+        "lines"
+      ]
+    },
+    {
+      "name": "mt_diag_guardian_status",
+      "required": [
+        "profile"
+      ]
+    },
+    {
+      "name": "mt_diag_health",
+      "required": [
+        "profile"
+      ]
+    },
+    {
+      "name": "mt_diag_investigation_collect",
+      "required": [
+        "profile"
+      ]
+    },
+    {
+      "name": "mt_diag_investigation_export",
+      "required": [
+        "session_id"
+      ]
+    },
+    {
+      "name": "mt_diag_investigation_start",
+      "required": [
+        "profile",
+        "ttl_seconds",
+        "event_types"
+      ]
+    },
+    {
+      "name": "mt_diag_investigation_stop",
+      "required": [
+        "session_id"
+      ]
+    },
+    {
+      "name": "mt_diag_logs",
+      "required": [
+        "profile",
+        "lines"
+      ]
     },
     {
       "name": "mt_core_license",
@@ -1432,6 +1497,32 @@
     {
       "name": "mt_market_live_algorithms",
       "required": []
+    },
+    {
+      "name": "mt_diag_history_page",
+      "required": [
+        "profile",
+        "source",
+        "since",
+        "until",
+        "query_id"
+      ]
+    },
+    {
+      "name": "mt_diag_history_close",
+      "required": [
+        "profile",
+        "source",
+        "since",
+        "until",
+        "query_id"
+      ]
+    },
+    {
+      "name": "mt_diag_history_fleet",
+      "required": [
+        "requests"
+      ]
     }
   ]
 }

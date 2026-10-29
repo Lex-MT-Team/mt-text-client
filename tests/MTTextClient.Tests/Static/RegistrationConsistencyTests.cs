@@ -89,6 +89,48 @@ public sealed class RegistrationConsistencyTests
                      string.Join("; ", orphans.Select(o => $"{o.Tool} → '{o.Hint}'")));
     }
 
+    [Theory]
+    [InlineData("mt_diag_logs")]
+    [InlineData("mt_diag_guardian_events")]
+    public async Task RegisteredDiagnosticTool_WithOutOfRangeLines_ReturnsSafeRangeGuidance(string toolName)
+    {
+        var response = await _mcp.CallTool(toolName, new { profile = "diagnostic-probe", lines = 501 });
+
+        response.IsRpcError.Should().BeTrue();
+        response.Envelope.GetProperty("message").GetString().Should().Be("Diagnostic lines must be between 1 and 500.");
+    }
+
+    [Fact]
+    public async Task RegisteredDiagnosticFleet_WithOutOfRangeLines_ReturnsSafeRangeGuidance()
+    {
+        var response = await _mcp.CallTool("mt_diag_fleet_collect", new { profiles = new[] { "diagnostic-probe" }, operation = "logs", lines = 501 });
+
+        response.IsRpcError.Should().BeTrue();
+        response.Envelope.GetProperty("message").GetString().Should().Be("Diagnostic lines must be between 1 and 500.");
+    }
+
+    [Fact]
+    public async Task RegisteredDiagnosticFleet_NonStringOperationWithInvalidLinesReturnsSafeInvalidArguments()
+    {
+        object[] operations =
+        {
+            new { packet = "synthetic-secret-value" },
+            new[] { "logs" },
+            42,
+            true
+        };
+
+        foreach (object operation in operations)
+        {
+            var response = await _mcp.CallTool("mt_diag_fleet_collect", new { profiles = new[] { "diagnostic-probe" }, operation, lines = 501 });
+
+            response.IsRpcError.Should().BeTrue();
+            response.Envelope.GetProperty("code").GetInt32().Should().Be(-32602);
+            response.Envelope.GetProperty("message").GetString().Should().Be("Invalid arguments for tool: mt_diag_fleet_collect.");
+            response.Text.Should().NotContain("synthetic-secret-value");
+        }
+    }
+
     /// <summary>
     /// Tools handled by <c>HandleInternalTool</c> or <c>HandleEventTool</c> in
     /// <see cref="MCP.McpServer"/>'s top-level switch — they skip the

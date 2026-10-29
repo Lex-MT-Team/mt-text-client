@@ -21,6 +21,15 @@
     <None Remove="tools\**" />
     <Content Remove="tools\**" />
     <EmbeddedResource Remove="tools\**" />
+    <Compile Remove="Core\Diagnostics\Companion\**" />
+    <None Remove="Core\Diagnostics\Companion\**" />
+    <Content Remove="Core\Diagnostics\Companion\**" />
+    <EmbeddedResource Remove="Core\Diagnostics\Companion\**" />
+  </ItemGroup>
+
+  <!-- Share the descriptor-checked local reader with private history exports. -->
+  <ItemGroup>
+    <Compile Include="Core\Diagnostics\Companion\CompanionFileAccess.cs" />
   </ItemGroup>
 
   <!-- Vendor references and acquisition are shared in Directory.Build.targets. -->

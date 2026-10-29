@@ -37,3 +37,6 @@ TestResults/
 # Local code-intelligence index — machine-specific SQLite graph,
 # may be referenced cross-project via the codegraph projectPath argument.
 .codegraph/
+
+# Checked local diagnostic candidate handoff artifacts.
+.mtdiag-artifacts/

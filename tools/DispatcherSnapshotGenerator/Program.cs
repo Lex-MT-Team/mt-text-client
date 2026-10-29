@@ -150,6 +150,12 @@ public static class Program
             };
             result[key] = value;
         }
+        if (tool["name"]?.Value<string>()?.StartsWith("mt_diag_history_", StringComparison.Ordinal) == true)
+        {
+            var query = new JObject { ["profile"] = "saved-profile", ["source"] = "logs", ["unknown_time"] = "report-only", ["since"] = "2026-01-01T00:00:00Z", ["until"] = "2026-01-02T00:00:00Z", ["query_id"] = new string('a', 32), ["page_lines"] = 200, ["cursor"] = new string('b', 32), ["sequence"] = 1 };
+            if (result.ContainsKey("requests")) result["requests"] = new JArray(query);
+            else foreach (var property in query.Properties()) result[property.Name] = property.Value.DeepClone();
+        }
         return result;
     }
 

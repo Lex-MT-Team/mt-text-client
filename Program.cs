@@ -1,6 +1,7 @@
 using System;
 using MTTextClient.Commands;
 using MTTextClient.Core;
+using MTTextClient.Core.Diagnostics;
 using MTTextClient.MCP;
 using MTTextClient.Output;
 namespace MTTextClient;
@@ -23,6 +24,8 @@ public static class Program
     private static readonly ConnectionManager Manager = new();
     private static readonly OutputManager Output = new();
     private static readonly CommandRegistry Registry = new();
+    private static readonly DiagnosticInvestigationManager Investigations = new();
+    private static readonly System.Threading.CancellationTokenSource DiagnosticCancellation = new();
 
     public static void Main(string[] args)
     {
@@ -51,22 +54,44 @@ public static class Program
             return;
         }
 
-        PrintBanner();
-        InitializeCommands();
+        // Diagnostic evidence must survive one-shot output without the table
+        // formatter's per-cell truncation, including every fleet coverage row.
+        bool diagnosticCli = args.Length > 0 && string.Equals(args[0], "diag", StringComparison.OrdinalIgnoreCase);
+        if (diagnosticCli)
+        {
+            Output.Mode = OutputMode.Json;
+        }
+        else
+        {
+            PrintBanner();
+        }
+        Investigations.UseConnectionEvents(Manager);
+        Registry.DispatchObserver = Investigations.RecordDispatch;
+        Registry.ActiveProfileResolver = () => Manager.ActiveConnection?.Name;
+        // One-shot command invocations exit immediately, so they may collect evidence but
+        // must not claim to start a session that cannot outlive this process.
+        InitializeCommands(supportsPersistentInvestigations: args.Length == 0);
         WireEvents();
 
         // Handle Ctrl+C gracefully
         Console.CancelKeyPress += (_, e) =>
         {
             e.Cancel = true;
+            if (diagnosticCli) { DiagnosticCancellation.Cancel(); return; }
             Console.WriteLine("\nUse 'exit' to quit.");
         };
 
         // Handle command-line arguments (non-interactive mode)
         if (args.Length > 0)
         {
-            CommandResult result = Registry.Dispatch(string.Join(" ", args));
+            CommandResult result = diagnosticCli ? Registry.DispatchArguments(args) : Registry.Dispatch(string.Join(" ", args));
             Console.WriteLine(Output.Format(result));
+            if (diagnosticCli)
+            {
+                Environment.ExitCode = result.Success ? 0 : 1;
+            }
+            Investigations.Dispose();
+            (Registry.Find("diag") as IDisposable)?.Dispose();
             Manager.Dispose();
             return;
         }
@@ -74,6 +99,8 @@ public static class Program
         // Interactive REPL
         RunRepl();
 
+        Investigations.Dispose();
+        (Registry.Find("diag") as IDisposable)?.Dispose();
         Manager.Dispose();
     }
 
@@ -91,7 +118,7 @@ public static class Program
         Console.WriteLine("Type 'help' for available commands, 'exit' to quit.\n");
     }
 
-    private static void InitializeCommands()
+    private static void InitializeCommands(bool supportsPersistentInvestigations)
     {
         // Connection management
         Registry.Register(new ConnectCommand(Manager));
@@ -145,6 +172,9 @@ public static class Program
         Registry.Register(new DepositCommand(Manager));
         Registry.Register(new FundingCommand(Manager));
         Registry.Register(new BuyApiLimitCommand(Manager));
+
+        // Optional read-only companion diagnostics; this never uses the MTCore connection manager.
+        Registry.Register(new DiagnosticCommand(investigations: Investigations, supportsPersistentSessions: supportsPersistentInvestigations, cancellationToken: DiagnosticCancellation.Token));
 
         // Configuration
         Registry.Register(new ProfileCommand());

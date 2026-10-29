@@ -15,8 +15,10 @@ license; see the linked sources for authoritative terms.
 * Component: Microsoft.NETCore.App (System.*, Microsoft.Extensions.*, etc.)
 * License: MIT
 * Source: https://github.com/dotnet/runtime
-* Notes: Used as the host runtime. Not redistributed in source form by this
-  repository; the user installs the .NET SDK / runtime independently.
+* Notes: Self-contained MTTextClient/MTDiag distributions bundle the runtime.
+  Their `licenses/` directory includes the runtime LICENSE.TXT and
+  THIRD-PARTY-NOTICES.TXT from the exact published runtime pack. Framework-dependent
+  distributions require a separately installed runtime.
 
 ### Newtonsoft.Json 13.0.3
 
@@ -48,6 +50,27 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
+
+---
+
+### BouncyCastle.Cryptography 2.0.0
+
+* Component: pinned NuGet package used by MTTextClient.
+* License: MIT-style license, retained in the package's LICENSE.md.
+* Source and license: https://github.com/bcgit/bc-csharp
+* Self-contained distributions retain the exact package license in `licenses/`.
+
+### Vendor-supplied native protocol assemblies
+
+`MTShared.dll` and `LiteNetLib.dll` are bundled from the per-platform MoonTrader
+artifacts pinned in `lib/vendor.json`. MTShared is a MoonTrader vendor component;
+the repository's MIT license does not relicense it. Distribution must retain
+applicable vendor terms. No MTCore executable is included in MTDiag packages.
+
+LiteNetLib upstream and its MIT license are available at
+https://github.com/RevenantX/LiteNetLib. This does not assert source equivalence
+between upstream HEAD and the pinned vendor assembly. Distribution bundles must
+retain the applicable notices.
 
 ---
 

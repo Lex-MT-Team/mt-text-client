@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
@@ -110,6 +111,84 @@ public sealed class EntryPointModeTests
         string outp = p.StandardOutput.ReadToEnd();
         p.WaitForExit(20_000).Should().BeTrue();
         outp.Should().Contain("Json", "one-shot CLI must dispatch 'output' via the REPL registry");
+    }
+
+    [Fact]
+    public async Task OneShot_diagnostics_emit_complete_json_without_banner_or_table_truncation()
+    {
+        string home = Path.Combine(Path.GetTempPath(), "diagnostic-cli-home-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(home);
+        string[] names = Enumerable.Range(0, 77).Select(index => "synthetic-missing-" + index).ToArray();
+        ProcessStartInfo start = Psi("diag", "fleet", "collect", "--profiles", string.Join(',', names), "--operation", "health", "--diag-port", "4343");
+        start.Environment["HOME"] = home;
+        start.Environment["USERPROFILE"] = home;
+        using Process process = Process.Start(start)!;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        try
+        {
+            Task<string> output = process.StandardOutput.ReadToEndAsync();
+            await process.WaitForExitAsync(timeout.Token);
+            JObject response = JObject.Parse(await output);
+            JArray rows = (JArray)response["data"]!["rows"]!;
+            response["success"]!.Value<bool>().Should().BeFalse();
+            rows.Should().HaveCount(77);
+            rows.Select(row => row["requested_profile"]!.Value<string>()).Should().Equal(names);
+            rows.Should().OnlyContain(row => row["code"]!.Value<string>() == "not_configured");
+            response["data"]!["coverage"]!["not_attempted"]!.Value<int>().Should().Be(77);
+            response["data"]!["coverage"]!["completed"]!.Value<int>().Should().Be(0);
+            process.ExitCode.Should().Be(1, "unvalidated fleet rows must make a one-shot check fail");
+        }
+        finally
+        {
+            Kill(process);
+            if (Directory.Exists(home)) Directory.Delete(home, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task OneShot_failed_diagnostic_returns_nonzero_and_keeps_json_error()
+    {
+        using Process process = Process.Start(Psi("diag", "logs", "synthetic", "--lines", "501"))!;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        try
+        {
+            Task<string> output = process.StandardOutput.ReadToEndAsync();
+            await process.WaitForExitAsync(timeout.Token);
+            JObject response = JObject.Parse(await output);
+            response["success"]!.Value<bool>().Should().BeFalse();
+            process.ExitCode.Should().Be(1);
+        }
+        finally
+        {
+            Kill(process);
+        }
+    }
+
+    [Fact]
+    public void Mcp_failed_fleet_marks_error_and_preserves_coverage()
+    {
+        string home = Path.Combine(Path.GetTempPath(), "diagnostic-mcp-home-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(home);
+        ProcessStartInfo start = Psi("--mcp");
+        start.Environment["HOME"] = home;
+        start.Environment["USERPROFILE"] = home;
+        using Process process = Process.Start(start)!;
+        try
+        {
+            process.StandardInput.WriteLine(Req(1, "tools/call", "{\"name\":\"mt_diag_fleet_collect\",\"arguments\":{\"profiles\":[\"synthetic-missing\"],\"operation\":\"health\",\"diag_port\":4343}}"));
+            process.StandardInput.Flush();
+            JObject response = ReadResponses(process.StandardOutput, new[] { 1 }, 15)[1];
+            response["result"]!["isError"]!.Value<bool>().Should().BeTrue();
+            JObject content = JObject.Parse(response["result"]!["content"]![0]!["text"]!.Value<string>()!);
+            content["success"]!.Value<bool>().Should().BeFalse();
+            content["data"]!["coverage"]!["not_attempted"]!.Value<int>().Should().Be(1);
+            content["data"]!["rows"]!.Should().HaveCount(1);
+        }
+        finally
+        {
+            Kill(process);
+            Directory.Delete(home, recursive: true);
+        }
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────

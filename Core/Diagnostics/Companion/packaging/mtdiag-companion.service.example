@@ -1,0 +1,42 @@
+# Synthetic, opt-in systemd example. Adjust only after reviewing every path in
+# the companion configuration. This unit manages MTDiag.Companion only.
+[Unit]
+Description=MTDiag read-only diagnostic companion
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+## Synthetic assumption: this is the existing unprivileged owner of core.auth.
+## Do not create a second reader account, copy credentials, or widen file modes.
+User=moontrader
+Group=moontrader
+ExecStart=/opt/mtdiag/MTDiag.Companion --config /etc/mtdiag/companion.json
+Restart=on-failure
+RestartPreventExitStatus=2 78
+RestartSec=5
+# Self-contained single-file builds extract native runtime files. Keep that
+# cache private to this existing service account and writable under hardening.
+StateDirectory=mtdiag
+StateDirectoryMode=0700
+UMask=0077
+Environment=DOTNET_BUNDLE_EXTRACT_BASE_DIR=/var/lib/mtdiag/bundle
+
+# ReadOnlyPaths makes these mount locations read-only; it does not grant DAC read
+# permission or define the application's source allowlist. The configuration does
+# the latter, and the existing file owner supplies the former.
+# Replace every path together with the matching configuration entry before use.
+ReadOnlyPaths=/etc/mtdiag/companion.json
+ReadOnlyPaths=/srv/moontrader/example/core.auth
+ReadOnlyPaths=/srv/moontrader/example/logs
+ReadOnlyPaths=-/srv/moontrader/example/guardian.snapshot
+ReadOnlyPaths=-/srv/moontrader/example/guardian.events
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+RestrictAddressFamilies=AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

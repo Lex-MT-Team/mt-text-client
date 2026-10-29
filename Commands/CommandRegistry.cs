@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using MTTextClient.Core.Diagnostics;
 namespace MTTextClient.Commands;
 
 /// <summary>
@@ -10,6 +11,12 @@ public sealed class CommandRegistry
 {
     private readonly Dictionary<string, ICommand> _commands = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<ICommand> _orderedCommands = new();
+
+    /// <summary>Optional post-dispatch observer that receives sanitized facts only.</summary>
+    public Action<DiagnosticDispatchFact>? DispatchObserver { get; set; }
+
+    /// <summary>Optional selected-profile resolver for commands without an explicit override.</summary>
+    public Func<string?>? ActiveProfileResolver { get; set; }
 
     public void Register(ICommand command)
     {
@@ -35,7 +42,12 @@ public sealed class CommandRegistry
             return CommandResult.Fail("No command entered. Type 'help' for available commands.");
         }
 
-        string[] parts = ParseCommandLine(input);
+        return DispatchArguments(ParseCommandLine(input));
+    }
+
+    /// <summary>Dispatches already tokenized process arguments without reinterpreting spaces or quotes.</summary>
+    public CommandResult DispatchArguments(string[] parts)
+    {
         if (parts.Length == 0)
         {
             return CommandResult.Fail("No command entered.");
@@ -50,14 +62,18 @@ public sealed class CommandRegistry
             return CommandResult.Fail($"Unknown command: '{commandName}'. Type 'help' for available commands.");
         }
 
+        DateTimeOffset startedAt = DateTimeOffset.UtcNow;
+        CommandResult result;
         try
         {
-            return command.Execute(args);
+            result = command.Execute(args);
         }
         catch (Exception ex)
         {
-            return CommandResult.Fail($"Command error: {ex.Message}");
+            result = CommandResult.Fail($"Command error: {ex.Message}");
         }
+        NotifyObserver(commandName, args, startedAt, DateTimeOffset.UtcNow, result);
+        return result;
     }
 
     /// <summary>
@@ -122,5 +138,86 @@ public sealed class CommandRegistry
         }
 
         return parts.ToArray();
+    }
+
+    private void NotifyObserver(string commandName, string[] args, DateTimeOffset startedAt, DateTimeOffset endedAt, CommandResult result)
+    {
+        try
+        {
+            if (DispatchObserver is null || !TryBuildDispatchFact(commandName, args, startedAt, endedAt, result.Success, out DiagnosticDispatchFact? fact)) return;
+            DispatchObserver(fact!);
+        }
+        catch
+        {
+            // A diagnostic observer is optional and never changes the original command result.
+        }
+    }
+
+    private bool TryBuildDispatchFact(string commandName, string[] args, DateTimeOffset startedAt, DateTimeOffset endedAt, bool success, out DiagnosticDispatchFact? fact)
+    {
+        fact = null;
+        string noun = commandName.ToLowerInvariant();
+        if (!TryGetObservedCommand(noun, args, out string? subcommand, out string? explicitProfile)) return false;
+        string? profile = explicitProfile ?? ActiveProfileResolver?.Invoke();
+        if (!IsSafeProfile(profile)) return false;
+        fact = new DiagnosticDispatchFact(noun, subcommand, profile, startedAt, endedAt, success);
+        return true;
+    }
+
+    private static bool TryGetObservedCommand(string noun, string[] args, out string? subcommand, out string? explicitProfile)
+    {
+        subcommand = null;
+        explicitProfile = null;
+        switch (noun)
+        {
+            case "orders":
+                return TryGetProfileOverride(args, out subcommand, out explicitProfile) && subcommand is "place" or "cancel" or "cancel-all" or "close" or "close-all" or "panic-sell" or "update-tpsl";
+            case "algos":
+                // Copy may operate on a source and destination; do not claim it as one server action.
+                return TryGetProfileOverride(args, out subcommand, out explicitProfile) && subcommand is "start" or "stop" or "delete";
+            case "disconnect":
+                if (args.Length == 0) return true;
+                if (args.Length != 1 || args[0].Equals("all", StringComparison.OrdinalIgnoreCase) || !IsSafeProfile(args[0])) return false;
+                explicitProfile = args[0];
+                return true;
+            case "connect":
+                if (args.Length != 1 || args[0].Equals("all", StringComparison.OrdinalIgnoreCase) || !IsSafeProfile(args[0])) return false;
+                explicitProfile = args[0];
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static bool TryGetProfileOverride(string[] args, out string? subcommand, out string? explicitProfile)
+    {
+        subcommand = null;
+        explicitProfile = null;
+        var commandParts = new List<string>();
+        foreach (string argument in args)
+        {
+            if (argument.StartsWith('@'))
+            {
+                if (!IsSafeProfile(argument[1..]) || explicitProfile is not null) return false;
+                explicitProfile = argument[1..];
+            }
+            else if (!argument.Equals("--confirm", StringComparison.OrdinalIgnoreCase) && !argument.Equals("-y", StringComparison.OrdinalIgnoreCase))
+            {
+                commandParts.Add(argument);
+            }
+        }
+        if (commandParts.Count == 0) return false;
+        subcommand = commandParts[0].ToLowerInvariant();
+        return true;
+    }
+
+    private static bool IsSafeProfile(string? profile)
+    {
+        if (string.IsNullOrWhiteSpace(profile) || profile.Length > 128) return false;
+        foreach (char character in profile)
+        {
+            if (!char.IsLetterOrDigit(character) && character is not '_' and not '-' and not '.') return false;
+        }
+        return true;
     }
 }

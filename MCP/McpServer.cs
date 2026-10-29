@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using MTTextClient.Commands;
 using MTTextClient.Core;
+using MTTextClient.Core.Diagnostics;
 using MTTextClient.Output;
 using MTShared;
 using MTShared.Network;
@@ -42,6 +43,7 @@ public sealed class McpServer
     private readonly ConnectionManager _manager;
     private readonly OutputManager _output;
     private readonly CommandRegistry _registry;
+    private readonly DiagnosticInvestigationManager _investigations;
     private TextWriter _stdoutWriter = Console.Out;
 
     // ── Parallel dispatch (A) ────────────────────────────────────────────────
@@ -111,6 +113,10 @@ public sealed class McpServer
         _manager = new ConnectionManager();
         _output = new OutputManager { Mode = OutputMode.Json }; // MCP always returns JSON
         _registry = new CommandRegistry();
+        _investigations = new DiagnosticInvestigationManager();
+        _investigations.UseConnectionEvents(_manager);
+        _registry.DispatchObserver = _investigations.RecordDispatch;
+        _registry.ActiveProfileResolver = () => _manager.ActiveConnection?.Name;
 
         InitializeCommands();
         WireEvents();
@@ -143,6 +149,9 @@ public sealed class McpServer
 
         // Trade Reports
         _registry.Register(new ReportsCommand(_manager, new ReportStore()));
+
+        // Optional read-only companion diagnostics; this never uses the MTCore connection manager.
+        _registry.Register(new DiagnosticCommand(investigations: _investigations, supportsPersistentSessions: true));
 
         // Fleet-wide operations
         _registry.Register(new FleetCommand(_manager));
@@ -279,6 +288,8 @@ public sealed class McpServer
             });
         }
 
+        _investigations.Dispose();
+        (_registry.Find("diag") as IDisposable)?.Dispose();
         _manager.Dispose();
         LogStderr("MCP Server shutting down.");
     }
@@ -289,7 +300,7 @@ public sealed class McpServer
     {
         try
         {
-            JObject request = JObject.Parse(line);
+            JObject request = ParseRequestLine(line);
             return HandleRequestGated(request);
         }
         catch (Exception ex)
@@ -302,6 +313,16 @@ public sealed class McpServer
             LogStderr($"Error processing request: {ex.Message}");
             return MakeErrorResponse(recoveredId, -32700, $"Parse error: {ex.Message}");
         }
+    }
+
+    // JSON strings are protocol strings. Automatic DateTime coercion loses
+    // explicit offsets and prevents canonical history argument validation.
+    private static JObject ParseRequestLine(string line)
+    {
+        using var reader = new JsonTextReader(new StringReader(line)) { DateParseHandling = DateParseHandling.None };
+        JObject request = JObject.Load(reader);
+        if (reader.Read()) throw new JsonReaderException("Unexpected trailing JSON.");
+        return request;
     }
 
     // Bump the thread-pool floor so a burst of concurrent (synchronously
@@ -439,6 +460,8 @@ public sealed class McpServer
         try { _sseServer?.Stop(); } catch { /* best effort */ }
         try { listener.Close(); } catch { /* best effort */ }
         try { if (File.Exists(socketPath)) File.Delete(socketPath); } catch { /* best effort */ }
+        _investigations.Dispose();
+        (_registry.Find("diag") as IDisposable)?.Dispose();
         _manager.Dispose();
         LogStderr("MCP daemon stopped.");
     }
@@ -701,6 +724,17 @@ public sealed class McpServer
         string? commandLine = MapToolToCommand(toolName, arguments);
         if (commandLine == null)
         {
+            if (GetToolSchemaMap().ContainsKey(toolName))
+            {
+                _metrics.RecordError(toolName);
+                _metrics.RecordLatency(toolName, _latencySw.ElapsedMilliseconds);
+                string? diagnosticLineError = GetDiagnosticLineRangeError(toolName, arguments);
+                if (diagnosticLineError is not null)
+                {
+                    return MakeErrorResponse(id, -32602, diagnosticLineError);
+                }
+                return MakeErrorResponse(id, -32602, $"Invalid arguments for tool: {toolName}.");
+            }
             return MakeErrorResponse(id, -32602, $"Unknown tool: {toolName}");
         }
 
@@ -855,7 +889,8 @@ public sealed class McpServer
     /// </summary>
     public static string? MapToolToCommand(string toolName, JObject arguments)
     {
-        string? profile = arguments["profile"]?.Value<string>();
+        JToken? profileToken = arguments["profile"];
+        string? profile = profileToken?.Type == JTokenType.String ? profileToken.Value<string>() : null;
         string? profileSuffix = profile != null ? $" @{profile}" : "";
         string? confirm = arguments["confirm"]?.Value<bool>() == true ? " --confirm" : "";
 
@@ -889,6 +924,21 @@ public sealed class McpServer
             "mt_core_license" => $"core license{profileSuffix}",
             "mt_core_health" => $"core health{profileSuffix}",
             "mt_core_dashboard" => $"core dashboard{profileSuffix}",
+
+            // Optional diagnostic companion. All inputs lower through one bounded command family.
+            "mt_diag_capabilities" => BuildDiagCommand("capabilities", arguments),
+            "mt_diag_health" => BuildDiagCommand("health", arguments),
+            "mt_diag_logs" => BuildDiagCommand("logs", arguments),
+            "mt_diag_guardian_status" => BuildDiagCommand("guardian-status", arguments),
+            "mt_diag_guardian_events" => BuildDiagCommand("guardian-events", arguments),
+            "mt_diag_history_page" => BuildHistoryCommand("page", arguments),
+            "mt_diag_history_close" => BuildHistoryCommand("close", arguments),
+            "mt_diag_history_fleet" => BuildHistoryCommand("fleet", arguments),
+            "mt_diag_fleet_collect" => BuildDiagnosticFleetCommand(arguments),
+            "mt_diag_investigation_start" => BuildInvestigationCommand("start", arguments),
+            "mt_diag_investigation_collect" => BuildInvestigationCommand("collect", arguments),
+            "mt_diag_investigation_export" => BuildInvestigationCommand("export", arguments),
+            "mt_diag_investigation_stop" => BuildInvestigationCommand("stop", arguments),
 
             // Exchange
             "mt_exchange_summary" => $"exchange summary{profileSuffix}",
@@ -1214,9 +1264,277 @@ public sealed class McpServer
         };
     }
     /// <summary>
-    /// Build the REPL command string for mt_connection_tag.
-    /// Format: tag <profile> <key> <value>
+    /// Builds an allowlisted, bounded read-only diagnostic command. Numeric
+    /// values must be JSON integers so a string cannot introduce flags or a
+    /// second command at the MCP-to-REPL boundary.
     /// </summary>
+    private static string? BuildDiagCommand(string operation, JObject arguments)
+    {
+        if (arguments["profile"]?.Type != JTokenType.String) return null;
+        string rawProfile = arguments["profile"]!.Value<string>()!;
+        string profile = rawProfile == "<profile>" ? rawProfile : SanitiseToken(rawProfile, allowDot: true);
+        if (string.IsNullOrEmpty(profile) ||
+            (rawProfile != "<profile>" && !string.Equals(profile, rawProfile, StringComparison.Ordinal)))
+        {
+            return null;
+        }
+
+        var parts = new List<string> { "diag", operation, profile };
+        if (arguments.ContainsKey("diag_port"))
+        {
+            if (!TryGetDiagnosticInteger(arguments, "diag_port", 1, 65535, required: false, out int diagnosticPort)) return null;
+            parts.Add("--diag-port");
+            parts.Add(diagnosticPort.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        if (arguments.ContainsKey("timeout_ms"))
+        {
+            if (!TryGetDiagnosticInteger(arguments, "timeout_ms", 1, 15000, required: false, out int timeoutMilliseconds)) return null;
+            parts.Add("--timeout-ms");
+            parts.Add(timeoutMilliseconds.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        bool needsLines = operation is "logs" or "guardian-events";
+        if (needsLines)
+        {
+            if (!TryGetDiagnosticInteger(arguments, "lines", 1, 500, required: true, out int lines)) return null;
+            parts.Add("--lines");
+            parts.Add(lines.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        else if (arguments.ContainsKey("lines"))
+        {
+            return null;
+        }
+
+        if (operation == "logs" && arguments.ContainsKey("grep"))
+        {
+            if (!TryGetDiagnosticGrep(arguments["grep"], out string grep)) return null;
+            parts.Add("--grep");
+            parts.Add($"\"{grep}\"");
+        }
+        else if (arguments.ContainsKey("grep"))
+        {
+            return null;
+        }
+
+        return string.Join(" ", parts);
+    }
+
+    private static string? GetDiagnosticLineRangeError(string toolName, JObject arguments)
+    {
+        bool fleetNeedsLines = toolName == "mt_diag_fleet_collect" &&
+            arguments["operation"]?.Type == JTokenType.String &&
+            arguments["operation"]!.Value<string>() is "logs" or "guardian-events";
+        bool requiresLines = toolName is "mt_diag_logs" or "mt_diag_guardian_events" ||
+            fleetNeedsLines;
+        return requiresLines && !TryGetDiagnosticInteger(arguments, "lines", 1, 500, required: true, out _)
+            ? "Diagnostic lines must be between 1 and 500."
+            : null;
+    }
+
+    /// <summary>Builds one explicit, bounded allowlist fleet diagnostic command without an implicit all-profiles form.</summary>
+    private static string? BuildHistoryCommand(string operation, JObject arguments)
+    {
+        bool fleet = operation == "fleet";
+        if (!ContainsOnly(arguments, fleet ? new[] { "requests", "diag_port", "concurrency", "deadline_ms" } : new[] { "profile", "source", "since", "until", "unknown_time", "query_id", "page_lines", "cursor", "sequence", "diag_port", "timeout_ms" })) return null;
+        var parts = new List<string> { "diag", "history", operation };
+        if (fleet)
+        {
+            if (arguments["requests"] is not JArray rows || rows.Count is < 1 or > 128) return null;
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            foreach (JToken token in rows)
+            {
+                if (token is not JObject row || !HistoryProfile(row["profile"], out string profile) || !names.Add(profile)) return null;
+                var queryArgs = (JObject)row.DeepClone(); queryArgs.Remove("profile");
+                if (!DiagnosticHistoryQuery.TryParse(queryArgs, out _)) return null;
+            }
+            byte[] encoded = System.Text.Encoding.UTF8.GetBytes(rows.ToString(Newtonsoft.Json.Formatting.None));
+            if (encoded.Length > 64 * 1024) return null;
+            parts.Add("--requests"); parts.Add(Convert.ToBase64String(encoded));
+        }
+        else
+        {
+            if (!HistoryProfile(arguments["profile"], out string profile)) return null;
+            var queryArgs = (JObject)arguments.DeepClone();
+            foreach (string key in new[] { "profile", "diag_port", "timeout_ms" }) queryArgs.Remove(key);
+            if (!queryArgs.ContainsKey("page_lines")) queryArgs["page_lines"] = 200;
+            if (!queryArgs.ContainsKey("sequence")) queryArgs["sequence"] = 0;
+            if (!queryArgs.ContainsKey("cursor")) queryArgs["cursor"] = null;
+            if (!DiagnosticHistoryQuery.TryParse(queryArgs, out DiagnosticHistoryQuery? query) || operation == "close" && query!.Cursor is null) return null;
+            parts.Add(profile);
+            foreach (var pair in query!.ToArgs().Properties())
+            {
+                if (pair.Value.Type == JTokenType.Null || pair.Name == "cursor" && query.Cursor is null) continue;
+                parts.Add("--" + pair.Name.Replace('_', '-'));
+                // Normalize date strings to remove whitespace at the canonical CLI boundary.
+                string value = pair.Name == "since" ? query.Since.ToString("O") : pair.Name == "until" ? query.Until.ToString("O") : pair.Value.ToString();
+                parts.Add(value);
+            }
+        }
+        foreach (var bound in new[] { ("diag_port", 1, 65535), ("timeout_ms", 1, 15000), ("concurrency", 1, 16), ("deadline_ms", 1, 60000) })
+        {
+            if (!arguments.ContainsKey(bound.Item1)) continue;
+            if (!TryGetDiagnosticInteger(arguments, bound.Item1, bound.Item2, bound.Item3, false, out int value)) return null;
+            parts.Add("--" + bound.Item1.Replace('_', '-')); parts.Add(value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        return string.Join(" ", parts);
+    }
+
+    private static bool HistoryProfile(JToken? token, out string profile)
+    {
+        profile = token?.Type == JTokenType.String ? token.Value<string>()! : string.Empty;
+        return profile.Length is > 0 and <= 128 && profile.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-' or '.');
+    }
+
+    private static string? BuildDiagnosticFleetCommand(JObject arguments)
+    {
+        if (!ContainsOnly(arguments, "profiles", "operation", "diag_port", "concurrency", "deadline_ms", "retry_once", "lines", "grep") || arguments["profiles"] is not JArray profiles || profiles.Count is < 1 or > 128 || arguments["operation"]?.Type != JTokenType.String)
+        {
+            return null;
+        }
+        string[] names = profiles.Values<string?>().ToArray()!;
+        if (names.Any(name => name is null)) return null;
+        var cleanNames = new List<string>(names.Length);
+        foreach (string rawName in names!)
+        {
+            string clean = rawName == "<item>" ? rawName : SanitiseToken(rawName, allowDot: true);
+            if (string.IsNullOrEmpty(clean) || !string.Equals(clean, rawName, StringComparison.Ordinal)) return null;
+            cleanNames.Add(clean);
+        }
+        string operation = arguments["operation"]!.Value<string>()!;
+        bool generatorPlaceholder = operation == "<operation>";
+        if (!generatorPlaceholder && operation is not ("capabilities" or "health" or "logs" or "guardian-status" or "guardian-events")) return null;
+        var parts = new List<string> { "diag", "fleet", "collect", "--profiles", string.Join(",", cleanNames), "--operation", operation };
+        if (arguments.ContainsKey("diag_port"))
+        {
+            if (!TryGetDiagnosticInteger(arguments, "diag_port", 1, 65535, required: false, out int port)) return null;
+            parts.Add("--diag-port");
+            parts.Add(port.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        if (arguments.ContainsKey("concurrency"))
+        {
+            if (!TryGetDiagnosticInteger(arguments, "concurrency", 1, 16, required: false, out int concurrency)) return null;
+            parts.Add("--concurrency");
+            parts.Add(concurrency.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        if (arguments.ContainsKey("deadline_ms"))
+        {
+            if (!TryGetDiagnosticInteger(arguments, "deadline_ms", 1, 60000, required: false, out int deadline)) return null;
+            parts.Add("--deadline-ms");
+            parts.Add(deadline.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        if (arguments["retry_once"]?.Type == JTokenType.Boolean)
+        {
+            if (arguments["retry_once"]!.Value<bool>()) parts.Add("--retry-once");
+        }
+        else if (arguments.ContainsKey("retry_once")) return null;
+
+        bool needsLines = operation is "logs" or "guardian-events";
+        if (needsLines || generatorPlaceholder && arguments.ContainsKey("lines"))
+        {
+            if (!TryGetDiagnosticInteger(arguments, "lines", 1, 500, required: needsLines, out int lines)) return null;
+            if (arguments.ContainsKey("lines"))
+            {
+                parts.Add("--lines");
+                parts.Add(lines.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+        }
+        else if (arguments.ContainsKey("lines")) return null;
+        if (operation == "logs" || generatorPlaceholder && arguments.ContainsKey("grep"))
+        {
+            if (arguments.ContainsKey("grep"))
+            {
+                if (!TryGetDiagnosticGrep(arguments["grep"], out string grep)) return null;
+                parts.Add("--grep");
+                parts.Add($"\"{grep}\"");
+            }
+        }
+        else if (arguments.ContainsKey("grep")) return null;
+        return string.Join(" ", parts);
+    }
+
+    private static bool TryGetDiagnosticInteger(JObject arguments, string name, int minimum, int maximum, bool required, out int value)
+    {
+        value = default;
+        if (!arguments.TryGetValue(name, out JToken? token)) return !required;
+        if (token.Type != JTokenType.Integer) return false;
+        string numericText = System.Convert.ToString(((JValue)token).Value, System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
+        if (!long.TryParse(numericText, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out long numeric) ||
+            numeric < minimum || numeric > maximum) return false;
+        value = (int)numeric;
+        return true;
+    }
+
+    private static string? BuildInvestigationCommand(string operation, JObject arguments)
+    {
+        if (operation is "export" or "stop")
+        {
+            if (!ContainsOnly(arguments, "session_id") || arguments["session_id"]?.Type != JTokenType.String) return null;
+            string? rawId = arguments["session_id"]!.Value<string>();
+            return Guid.TryParseExact(rawId, "N", out Guid sessionId) ? $"diag investigation {operation} {sessionId:N}" : null;
+        }
+
+        if (arguments["profile"]?.Type != JTokenType.String) return null;
+        string rawProfile = arguments["profile"]!.Value<string>()!;
+        string profile = rawProfile == "<profile>" ? rawProfile : SanitiseToken(rawProfile, allowDot: true);
+        if (string.IsNullOrEmpty(profile) || (rawProfile != "<profile>" && !string.Equals(profile, rawProfile, StringComparison.Ordinal))) return null;
+
+        if (operation == "start")
+        {
+            if (!ContainsOnly(arguments, "profile", "ttl_seconds", "event_types") || !TryGetDiagnosticInteger(arguments, "ttl_seconds", 1, 300, required: true, out int ttlSeconds)) return null;
+            if (arguments["event_types"] is not JArray eventTypes || eventTypes.Count is < 1 or > 4) return null;
+            string[] allowed = { "connection_established", "connection_lost", "connection_error", "core_status" };
+            string[] values = eventTypes.Values<string?>().ToArray()!;
+            if (values.Any(value => value is null || !allowed.Contains(value, StringComparer.Ordinal)) || values.Distinct(StringComparer.Ordinal).Count() != values.Length) return null;
+            return $"diag investigation start {profile} --ttl-seconds {ttlSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture)} --event-types {string.Join(",", values)}";
+        }
+
+        if (operation == "collect")
+        {
+            if (!ContainsOnly(arguments, "profile", "diag_port", "deadline_ms", "hash")) return null;
+            var parts = new List<string> { "diag", "investigation", "collect", profile };
+            if (arguments.ContainsKey("diag_port"))
+            {
+                if (!TryGetDiagnosticInteger(arguments, "diag_port", 1, 65535, required: false, out int port)) return null;
+                parts.Add("--diag-port");
+                parts.Add(port.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+            if (arguments.ContainsKey("deadline_ms"))
+            {
+                if (!TryGetDiagnosticInteger(arguments, "deadline_ms", 1, 60000, required: false, out int deadline)) return null;
+                parts.Add("--deadline-ms");
+                parts.Add(deadline.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+            if (arguments.ContainsKey("hash"))
+            {
+                if (arguments["hash"]?.Type != JTokenType.Boolean) return null;
+                if (arguments["hash"]!.Value<bool>()) parts.Add("--hash");
+            }
+            return string.Join(" ", parts);
+        }
+
+        return null;
+    }
+
+    private static bool ContainsOnly(JObject arguments, params string[] names) => arguments.Properties().All(property => names.Contains(property.Name, StringComparer.Ordinal));
+
+    private static bool TryGetDiagnosticGrep(JToken? token, out string grep)
+    {
+        grep = string.Empty;
+        if (token?.Type != JTokenType.String) return false;
+        string? raw = token.Value<string>();
+        if (string.IsNullOrEmpty(raw) || raw.IndexOfAny(new[] { '\r', '\n', '"' }) >= 0) return false;
+        try
+        {
+            if (new UTF8Encoding(false, true).GetByteCount(raw) > 512) return false;
+        }
+        catch (EncoderFallbackException)
+        {
+            return false;
+        }
+        grep = raw;
+        return true;
+    }
+
     /// <summary>Build: algos start-verify <id> [wait_secs] [@profile]</summary>
     /// <summary>Build: algos verify <id> [@profile]</summary>
     private static string? BuildVerifyCommand(JObject arguments, string profileSuffix)
@@ -1240,6 +1558,10 @@ public sealed class McpServer
         return $"algos start-verify {id}{waitArg}{profileSuffix}";
     }
 
+    /// <summary>
+    /// Build the REPL command string for mt_connection_tag.
+    /// Format: tag <profile> <key> <value>
+    /// </summary>
     private static string? BuildTagCommand(JObject arguments)
     {
         string? p    = arguments["profile"]?.Value<string>();

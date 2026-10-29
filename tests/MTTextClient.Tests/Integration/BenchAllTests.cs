@@ -184,4 +184,71 @@ public sealed class BenchAllTests
         first.TryGetProperty("Key",   out _).Should().BeTrue();
         first.TryGetProperty("Value", out _).Should().BeTrue();
     }
+
+    [SkippableTheory]
+    [MemberData(nameof(AllBenchData))]
+    public async Task DiagnosticCapabilitiesAndHealth_UseConfiguredCompanionOnly(string profile, int port, string exchange)
+    {
+        Skip.If(!EnvFlags.TestingEnv, "MTC_TESTING_ENV not set");
+        string portVariable = "MTC_DIAGNOSTIC_PORT_" + profile.ToUpperInvariant();
+        string? configured = Environment.GetEnvironmentVariable(portVariable);
+        Skip.If(!int.TryParse(configured, out int diagnosticPort) || diagnosticPort is < 1 or > 65535,
+            $"{portVariable} must name the explicit diagnostic companion endpoint for {profile}.");
+        Skip.If(diagnosticPort == port,
+            $"The diagnostic companion port for {exchange} must differ from the MTCore port.");
+
+        var capabilities = await _mcp.CallTool("mt_diag_capabilities", new
+        {
+            profile,
+            diag_port = diagnosticPort,
+            timeout_ms = 5000,
+        });
+        capabilities.InnerSuccess.Should().BeTrue(
+            because: "the diagnostic call must use its explicit companion endpoint, not an MTCore fallback");
+
+        var health = await _mcp.CallTool("mt_diag_health", new
+        {
+            profile,
+            diag_port = diagnosticPort,
+            timeout_ms = 5000,
+        });
+        health.InnerSuccess.Should().BeTrue(
+            because: "the configured companion exposes an exchange-agnostic health observation");
+    }
+
+    [SkippableTheory]
+    [MemberData(nameof(AllBenchData))]
+    public async Task DiagnosticFleetHealth_UsesOnlyTheExplicitConfiguredProfile(string profile, int port, string exchange)
+    {
+        Skip.If(!EnvFlags.TestingEnv, "MTC_TESTING_ENV not set");
+        string portVariable = "MTC_DIAGNOSTIC_PORT_" + profile.ToUpperInvariant();
+        string? configured = Environment.GetEnvironmentVariable(portVariable);
+        Skip.If(!int.TryParse(configured, out int diagnosticPort) || diagnosticPort is < 1 or > 65535,
+            $"{portVariable} must name the explicit diagnostic companion endpoint for {profile}.");
+        Skip.If(diagnosticPort == port,
+            $"The diagnostic companion port for {exchange} must differ from the MTCore port.");
+
+        var response = await _mcp.CallTool("mt_diag_fleet_collect", new
+        {
+            profiles = new[] { profile },
+            operation = "health",
+            diag_port = diagnosticPort,
+            concurrency = 1,
+            deadline_ms = 5000,
+            retry_once = false
+        });
+
+        response.InnerSuccess.Should().BeTrue(
+            because: "the fleet diagnostic path must keep its explicit per-profile companion routing");
+    }
+    [SkippableTheory]
+    [MemberData(nameof(AllBenchData))]
+    public async Task DiagnosticHistory_PageFleetClose(string profile, int port, string exchange)
+    {
+        Skip.If(!EnvFlags.TestingEnv, "MTC_TESTING_ENV not set");
+        string? configured = Environment.GetEnvironmentVariable("MTC_DIAGNOSTIC_PORT_" + profile.ToUpperInvariant());
+        Skip.If(!int.TryParse(configured, out int diagnosticPort) || diagnosticPort is < 1 or > 65535 || diagnosticPort == port, "Explicit separate companion port required.");
+        await MTTextClient.Tests.Tools.DiagnosticToolsTests.CheckHistoryTools(_mcp, profile, diagnosticPort);
+    }
+
 }
